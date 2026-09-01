@@ -20,6 +20,10 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { createClient } from "@/lib/supabase/client"
+
+// Force dynamic rendering to avoid prerendering issues
+export const dynamic = 'force-dynamic'
 
 const menuItems = [
   { href: "/dashboard", label: "الرئيسية", icon: Home, color: "from-blue-500 to-indigo-600" },
@@ -39,20 +43,42 @@ export default function DashboardLayout({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [userEmail, setUserEmail] = useState<string>('')
 
   useEffect(() => {
     setMounted(true)
-    // التحقق من تسجيل الدخول
-    const token = localStorage.getItem("auth_token")
-    if (!token) {
-      router.push("/login")
+    
+    // Check Supabase auth
+    const getUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      
+      if (!session) {
+        router.push("/login")
+        return
+      }
+      
+      setUserEmail(session.user.email || '')
     }
-  }, [router])
+    
+    getUser()
+    
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        router.push("/login")
+      } else {
+        setUserEmail(session.user.email || '')
+      }
+    })
+    
+    return () => subscription.unsubscribe()
+  }, [router, supabase.auth])
 
-  const handleLogout = () => {
-    localStorage.removeItem("auth_token")
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
     router.push("/login")
   }
 
@@ -215,10 +241,10 @@ export default function DashboardLayout({
           <div className="flex items-center gap-4">
             <div className="text-right hidden sm:block">
               <p className="font-semibold text-gray-900 dark:text-white">مرحباً بك</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">doha alaraby</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">{userEmail || 'مدير النظام'}</p>
             </div>
             <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold shadow-lg">
-              D
+              {userEmail ? userEmail.charAt(0).toUpperCase() : 'D'}
             </div>
           </div>
 

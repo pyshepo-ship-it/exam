@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { createClient } from "@/lib/supabase/client"
 import {
   Dialog,
   DialogContent,
@@ -49,6 +50,7 @@ import {
 } from "@/lib/data-storage"
 
 export default function SettingsPage() {
+  const supabase = createClient()
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const [backupDialogOpen, setBackupDialogOpen] = useState(false)
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
@@ -57,6 +59,7 @@ export default function SettingsPage() {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [passwordMessage, setPasswordMessage] = useState("")
+  const [userEmail, setUserEmail] = useState("")
 
   const [dataStats, setDataStats] = useState({
     grades: 0,
@@ -78,14 +81,19 @@ export default function SettingsPage() {
       sessions: getSessions().length,
       attendance: getAttendance().length,
     })
-  }, [])
+    
+    // Get user email from Supabase
+    const getUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user?.email) {
+        setUserEmail(session.user.email)
+      }
+    }
+    getUser()
+  }, [supabase.auth])
 
   // Change password
-  const changePassword = () => {
-    if (currentPassword !== "789789789") {
-      toast.error("كلمة المرور الحالية غير صحيحة")
-      return
-    }
+  const changePassword = async () => {
     if (newPassword.length < 6) {
       toast.error("كلمة المرور يجب أن تكون 6 أحرف على الأقل")
       return
@@ -95,7 +103,9 @@ export default function SettingsPage() {
       return
     }
     
-    toast.success("تم تغيير كلمة المرور بنجاح")
+    // Note: Supabase password update requires re-authentication
+    // For now, we'll show a message directing users to use the forgot password flow
+    toast.success("لتغيير كلمة المرور، استخدم خيار 'نسيت كلمة المرور' من صفحة تسجيل الدخول")
     setPasswordDialogOpen(false)
     setCurrentPassword("")
     setNewPassword("")
@@ -194,15 +204,14 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <Label>اسم المستخدم</Label>
-                <Input defaultValue="doha alaraby" disabled className="mt-1 bg-gray-50" />
-              </div>
-              <div>
                 <Label>البريد الإلكتروني</Label>
                 <div className="flex items-center gap-2 mt-1">
-                  <Input defaultValue="py.shepo@gmail.com" disabled className="bg-gray-50" />
+                  <Input value={userEmail} disabled className="bg-gray-50" dir="ltr" />
                   <Mail className="w-5 h-5 text-gray-400 shrink-0" />
                 </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  البريد الإلكتروني هو اسم المستخدم الخاص بك
+                </p>
               </div>
               <Button 
                 variant="outline" 
