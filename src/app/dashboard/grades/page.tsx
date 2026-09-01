@@ -1,0 +1,722 @@
+"use client"
+
+import React, { useState } from "react"
+import { motion, AnimatePresence } from "framer-motion"
+import { 
+  Calendar, 
+  Plus, 
+  Clock, 
+  Users, 
+  Edit2, 
+  Trash2, 
+  Search,
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  DollarSign
+} from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Checkbox } from "@/components/ui/checkbox"
+
+// Types
+interface Group {
+  id: string
+  name: string
+  days: string[]
+  startTime: string
+  endTime: string
+  monthlyFee: number
+  studentsCount: number
+}
+
+interface Grade {
+  id: string
+  name: string
+  academicYear: string
+  groups: Group[]
+  createdAt: string
+}
+
+// Days of week
+const DAYS = [
+  { value: "السبت", label: "السبت" },
+  { value: "الأحد", label: "الأحد" },
+  { value: "الاثنين", label: "الاثنين" },
+  { value: "الثلاثاء", label: "الثلاثاء" },
+  { value: "الأربعاء", label: "الأربعاء" },
+  { value: "الخميس", label: "الخميس" },
+  { value: "الجمعة", label: "الجمعة" },
+]
+
+// Day colors
+const dayColors: Record<string, string> = {
+  "السبت": "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300",
+  "الأحد": "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
+  "الاثنين": "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
+  "الثلاثاء": "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300",
+  "الأربعاء": "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
+  "الخميس": "bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300",
+  "الجمعة": "bg-pink-100 text-pink-700 dark:bg-pink-900 dark:text-pink-300",
+}
+
+export default function GradesPage() {
+  // State
+  const [grades, setGrades] = useState<Grade[]>([
+    {
+      id: "1",
+      name: "الصف الرابع الابتدائي",
+      academicYear: "2025-2026",
+      createdAt: new Date().toISOString(),
+      groups: [
+        {
+          id: "1",
+          name: "مجموعة 1",
+          days: ["الأربعاء", "السبت"],
+          startTime: "16:00",
+          endTime: "17:00",
+          monthlyFee: 150,
+          studentsCount: 12,
+        },
+        {
+          id: "2",
+          name: "مجموعة 2",
+          days: ["الأحد", "الثلاثاء"],
+          startTime: "12:00",
+          endTime: "13:00",
+          monthlyFee: 150,
+          studentsCount: 10,
+        },
+      ],
+    },
+    {
+      id: "2",
+      name: "الصف الخامس الابتدائي",
+      academicYear: "2025-2026",
+      createdAt: new Date().toISOString(),
+      groups: [
+        {
+          id: "3",
+          name: "مجموعة 1",
+          days: ["الاثنين", "الخميس"],
+          startTime: "15:00",
+          endTime: "16:00",
+          monthlyFee: 160,
+          studentsCount: 15,
+        },
+      ],
+    },
+  ])
+  
+  const [searchTerm, setSearchTerm] = useState("")
+  const [expandedGrades, setExpandedGrades] = useState<string[]>(["1"])
+  const [gradeDialogOpen, setGradeDialogOpen] = useState(false)
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false)
+  const [editingGrade, setEditingGrade] = useState<Grade | null>(null)
+  const [editingGroup, setEditingGroup] = useState<Group | null>(null)
+  const [selectedGradeId, setSelectedGradeId] = useState<string>("")
+  
+  // Form states
+  const [gradeForm, setGradeForm] = useState({
+    name: "",
+    academicYear: "2025-2026",
+  })
+  
+  const [groupForm, setGroupForm] = useState({
+    name: "",
+    days: [] as string[],
+    startTime: "",
+    endTime: "",
+    monthlyFee: 0,
+  })
+
+  // Filter grades
+  const filteredGrades = grades.filter(grade =>
+    grade.name.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+
+  // Toggle grade expansion
+  const toggleGrade = (gradeId: string) => {
+    setExpandedGrades(prev =>
+      prev.includes(gradeId)
+        ? prev.filter(id => id !== gradeId)
+        : [...prev, gradeId]
+    )
+  }
+
+  // Open grade dialog
+  const openGradeDialog = (grade?: Grade) => {
+    if (grade) {
+      setEditingGrade(grade)
+      setGradeForm({
+        name: grade.name,
+        academicYear: grade.academicYear,
+      })
+    } else {
+      setEditingGrade(null)
+      setGradeForm({ name: "", academicYear: "2025-2026" })
+    }
+    setGradeDialogOpen(true)
+  }
+
+  // Save grade
+  const saveGrade = () => {
+    if (!gradeForm.name.trim()) return
+
+    if (editingGrade) {
+      // Update
+      setGrades(prev =>
+        prev.map(g =>
+          g.id === editingGrade.id
+            ? { ...g, name: gradeForm.name, academicYear: gradeForm.academicYear }
+            : g
+        )
+      )
+    } else {
+      // Create
+      const newGrade: Grade = {
+        id: Date.now().toString(),
+        name: gradeForm.name,
+        academicYear: gradeForm.academicYear,
+        createdAt: new Date().toISOString(),
+        groups: [],
+      }
+      setGrades(prev => [...prev, newGrade])
+    }
+    setGradeDialogOpen(false)
+  }
+
+  // Delete grade
+  const deleteGrade = (gradeId: string) => {
+    if (confirm("هل أنت متأكد من حذف هذا الصف وجميع مجموعاته؟")) {
+      setGrades(prev => prev.filter(g => g.id !== gradeId))
+    }
+  }
+
+  // Open group dialog
+  const openGroupDialog = (gradeId: string, group?: Group) => {
+    setSelectedGradeId(gradeId)
+    if (group) {
+      setEditingGroup(group)
+      setGroupForm({
+        name: group.name,
+        days: group.days,
+        startTime: group.startTime,
+        endTime: group.endTime,
+        monthlyFee: group.monthlyFee,
+      })
+    } else {
+      setEditingGroup(null)
+      setGroupForm({
+        name: "",
+        days: [],
+        startTime: "",
+        endTime: "",
+        monthlyFee: 0,
+      })
+    }
+    setGroupDialogOpen(true)
+  }
+
+  // Toggle day selection
+  const toggleDay = (day: string) => {
+    setGroupForm(prev => ({
+      ...prev,
+      days: prev.days.includes(day)
+        ? prev.days.filter(d => d !== day)
+        : [...prev.days, day],
+    }))
+  }
+
+  // Save group
+  const saveGroup = () => {
+    if (!groupForm.name.trim() || groupForm.days.length === 0 || !groupForm.startTime || !groupForm.endTime) {
+      alert("يرجى ملء جميع الحقول المطلوبة")
+      return
+    }
+
+    const groupData: Group = {
+      id: editingGroup?.id || Date.now().toString(),
+      name: groupForm.name,
+      days: groupForm.days,
+      startTime: groupForm.startTime,
+      endTime: groupForm.endTime,
+      monthlyFee: groupForm.monthlyFee,
+      studentsCount: editingGroup?.studentsCount || 0,
+    }
+
+    setGrades(prev =>
+      prev.map(grade => {
+        if (grade.id === selectedGradeId) {
+          if (editingGroup) {
+            // Update
+            return {
+              ...grade,
+              groups: grade.groups.map(g =>
+                g.id === editingGroup.id ? groupData : g
+              ),
+            }
+          } else {
+            // Create
+            return {
+              ...grade,
+              groups: [...grade.groups, groupData],
+            }
+          }
+        }
+        return grade
+      })
+    )
+    setGroupDialogOpen(false)
+  }
+
+  // Delete group
+  const deleteGroup = (gradeId: string, groupId: string) => {
+    if (confirm("هل أنت متأكد من حذف هذه المجموعة؟")) {
+      setGrades(prev =>
+        prev.map(grade => {
+          if (grade.id === gradeId) {
+            return {
+              ...grade,
+              groups: grade.groups.filter(g => g.id !== groupId),
+            }
+          }
+          return grade
+        })
+      )
+    }
+  }
+
+  // Calculate stats
+  const totalGrades = grades.length
+  const totalGroups = grades.reduce((sum, g) => sum + g.groups.length, 0)
+  const totalStudents = grades.reduce(
+    (sum, g) => sum + g.groups.reduce((s, gr) => s + gr.studentsCount, 0),
+    0
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
+      >
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+            الصفوف والمواعيد
+          </h1>
+          <p className="text-gray-500 dark:text-gray-400">
+            إدارة الصفوف الدراسية والمجموعات والمواعيد
+          </p>
+        </div>
+        <Button 
+          onClick={() => openGradeDialog()}
+          className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg"
+        >
+          <Plus className="w-5 h-5" />
+          <span>إضافة صف جديد</span>
+        </Button>
+      </motion.div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {[
+          { icon: BookOpen, label: "الصفوف", value: totalGrades, color: "from-purple-500 to-pink-600" },
+          { icon: Calendar, label: "المجموعات", value: totalGroups, color: "from-blue-500 to-indigo-600" },
+          { icon: Users, label: "إجمالي الطلاب", value: totalStudents, color: "from-green-500 to-emerald-600" },
+        ].map((stat, index) => {
+          const Icon = stat.icon
+          return (
+            <motion.div
+              key={stat.label}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: index * 0.1 }}
+              className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800 shadow-lg"
+            >
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center shadow-lg mb-4`}>
+                <Icon className="w-6 h-6 text-white" />
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{stat.label}</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">{stat.value}</p>
+            </motion.div>
+          )
+        })}
+      </div>
+
+      {/* Search */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.3 }}
+        className="relative"
+      >
+        <Search className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+        <Input
+          placeholder="ابحث عن صف..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="pr-12 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg h-12"
+        />
+      </motion.div>
+
+      {/* Grades List */}
+      <div className="space-y-4">
+        <AnimatePresence>
+          {filteredGrades.map((grade, index) => {
+            const isExpanded = expandedGrades.includes(grade.id)
+            
+            return (
+              <motion.div
+                key={grade.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ delay: index * 0.05 }}
+              >
+                <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">
+                  <CardHeader 
+                    className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    onClick={() => toggleGrade(grade.id)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-lg">
+                          <BookOpen className="w-6 h-6 text-white" />
+                        </div>
+                        <div>
+                          <CardTitle className="text-xl text-gray-900 dark:text-white">
+                            {grade.name}
+                          </CardTitle>
+                          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                            العام الدراسي: {grade.academicYear} • {grade.groups.length} مجموعة
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openGradeDialog(grade)
+                          }}
+                          className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                        >
+                          <Edit2 className="w-5 h-5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteGrade(grade.id)
+                          }}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </Button>
+                        {isExpanded ? (
+                          <ChevronUp className="w-5 h-5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-gray-400" />
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                      >
+                        <CardContent className="pt-0">
+                          <div className="flex items-center justify-between mb-4">
+                            <h3 className="font-semibold text-gray-900 dark:text-white">
+                              المجموعات ({grade.groups.length})
+                            </h3>
+                            <Button
+                              size="sm"
+                              onClick={() => openGroupDialog(grade.id)}
+                              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+                            >
+                              <Plus className="w-4 h-4" />
+                              <span>إضافة مجموعة</span>
+                            </Button>
+                          </div>
+
+                          {grade.groups.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                              <Calendar className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                              <p>لا توجد مجموعات في هذا الصف</p>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openGroupDialog(grade.id)}
+                                className="mt-3"
+                              >
+                                <Plus className="w-4 h-4" />
+                                <span>إضافة أول مجموعة</span>
+                              </Button>
+                            </div>
+                          ) : (
+                            <Table>
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead>اسم المجموعة</TableHead>
+                                  <TableHead>الأيام</TableHead>
+                                  <TableHead>الوقت</TableHead>
+                                  <TableHead>السعر الشهري</TableHead>
+                                  <TableHead>عدد الطلاب</TableHead>
+                                  <TableHead className="text-left">إجراءات</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {grade.groups.map((group) => (
+                                  <TableRow key={group.id}>
+                                    <TableCell className="font-medium text-gray-900 dark:text-white">
+                                      {group.name}
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="flex flex-wrap gap-1">
+                                        {group.days.map((day) => (
+                                          <Badge
+                                            key={day}
+                                            variant="outline"
+                                            className={dayColors[day]}
+                                          >
+                                            {day}
+                                          </Badge>
+                                        ))}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="text-gray-600 dark:text-gray-400">
+                                      <div className="flex items-center gap-1">
+                                        <Clock className="w-4 h-4" />
+                                        {group.startTime} - {group.endTime}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="text-gray-900 dark:text-white font-semibold">
+                                      <div className="flex items-center gap-1">
+                                        <DollarSign className="w-4 h-4" />
+                                        {group.monthlyFee} ج.م
+                                      </div>
+                                    </TableCell>
+                                    <TableCell>
+                                      <Badge variant="secondary" className="bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300">
+                                        {group.studentsCount} طالب
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell>
+                                      <div className="flex items-center gap-1">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => openGroupDialog(grade.id, group)}
+                                          className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950"
+                                        >
+                                          <Edit2 className="w-4 h-4" />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => deleteGroup(grade.id, group.id)}
+                                          className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                                        >
+                                          <Trash2 className="w-4 h-4" />
+                                        </Button>
+                                      </div>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          )}
+                        </CardContent>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </Card>
+              </motion.div>
+            )
+          })}
+        </AnimatePresence>
+
+        {filteredGrades.length === 0 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center py-12"
+          >
+            <BookOpen className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
+            <p className="text-gray-500 dark:text-gray-400">لا توجد صفوف</p>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Grade Dialog */}
+      <Dialog open={gradeDialogOpen} onOpenChange={setGradeDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {editingGrade ? "تعديل الصف" : "إضافة صف جديد"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingGrade ? "قم بتعديل بيانات الصف" : "أدخل بيانات الصف الجديد"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="gradeName">اسم الصف *</Label>
+              <Input
+                id="gradeName"
+                placeholder="مثال: الصف الرابع الابتدائي"
+                value={gradeForm.name}
+                onChange={(e) => setGradeForm(prev => ({ ...prev, name: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label htmlFor="academicYear">العام الدراسي *</Label>
+              <Input
+                id="academicYear"
+                placeholder="مثال: 2025-2026"
+                value={gradeForm.academicYear}
+                onChange={(e) => setGradeForm(prev => ({ ...prev, academicYear: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGradeDialogOpen(false)}>
+              إلغاء
+            </Button>
+            <Button 
+              onClick={saveGrade}
+              className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700"
+            >
+              {editingGrade ? "حفظ التعديلات" : "إضافة الصف"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Group Dialog */}
+      <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {editingGroup ? "تعديل المجموعة" : "إضافة مجموعة جديدة"}
+            </DialogTitle>
+            <DialogDescription>
+              {editingGroup ? "قم بتعديل بيانات المجموعة" : "أدخل بيانات المجموعة الجديدة"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="groupName">اسم المجموعة *</Label>
+              <Input
+                id="groupName"
+                placeholder="مثال: مجموعة 1"
+                value={groupForm.name}
+                onChange={(e) => setGroupForm(prev => ({ ...prev, name: e.target.value }))}
+                className="mt-1"
+              />
+            </div>
+            
+            <div>
+              <Label>أيام الدرس *</Label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                {DAYS.map((day) => (
+                  <div
+                    key={day.value}
+                    className="flex items-center space-x-2 space-x-reverse"
+                  >
+                    <Checkbox
+                      id={day.value}
+                      checked={groupForm.days.includes(day.value)}
+                      onCheckedChange={() => toggleDay(day.value)}
+                    />
+                    <Label htmlFor={day.value} className="cursor-pointer">
+                      {day.label}
+                    </Label>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="startTime">وقت البداية *</Label>
+                <Input
+                  id="startTime"
+                  type="time"
+                  value={groupForm.startTime}
+                  onChange={(e) => setGroupForm(prev => ({ ...prev, startTime: e.target.value }))}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="endTime">وقت النهاية *</Label>
+                <Input
+                  id="endTime"
+                  type="time"
+                  value={groupForm.endTime}
+                  onChange={(e) => setGroupForm(prev => ({ ...prev, endTime: e.target.value }))}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="monthlyFee">السعر الشهري (ج.م) *</Label>
+              <Input
+                id="monthlyFee"
+                type="number"
+                placeholder="150"
+                value={groupForm.monthlyFee || ""}
+                onChange={(e) => setGroupForm(prev => ({ ...prev, monthlyFee: parseFloat(e.target.value) || 0 }))}
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setGroupDialogOpen(false)}>
+              إلغاء
+            </Button>
+            <Button 
+              onClick={saveGroup}
+              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+            >
+              {editingGroup ? "حفظ التعديلات" : "إضافة المجموعة"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
