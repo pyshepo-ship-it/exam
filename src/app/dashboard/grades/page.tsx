@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
   Calendar, 
@@ -37,25 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
-
-// Types
-interface Group {
-  id: string
-  name: string
-  days: string[]
-  startTime: string
-  endTime: string
-  monthlyFee: number
-  studentsCount: number
-}
-
-interface Grade {
-  id: string
-  name: string
-  academicYear: string
-  groups: Group[]
-  createdAt: string
-}
+import { Grade, Group, getGrades, saveGrades, getStudents, initializeSampleData } from "@/lib/data-storage"
 
 // Days of week
 const DAYS = [
@@ -80,62 +62,15 @@ const dayColors: Record<string, string> = {
 }
 
 export default function GradesPage() {
-  // State
-  const [grades, setGrades] = useState<Grade[]>([
-    {
-      id: "1",
-      name: "الصف الرابع الابتدائي",
-      academicYear: "2025-2026",
-      createdAt: new Date().toISOString(),
-      groups: [
-        {
-          id: "1",
-          name: "مجموعة 1",
-          days: ["الأربعاء", "السبت"],
-          startTime: "16:00",
-          endTime: "17:00",
-          monthlyFee: 150,
-          studentsCount: 12,
-        },
-        {
-          id: "2",
-          name: "مجموعة 2",
-          days: ["الأحد", "الثلاثاء"],
-          startTime: "12:00",
-          endTime: "13:00",
-          monthlyFee: 150,
-          studentsCount: 10,
-        },
-      ],
-    },
-    {
-      id: "2",
-      name: "الصف الخامس الابتدائي",
-      academicYear: "2025-2026",
-      createdAt: new Date().toISOString(),
-      groups: [
-        {
-          id: "3",
-          name: "مجموعة 1",
-          days: ["الاثنين", "الخميس"],
-          startTime: "15:00",
-          endTime: "16:00",
-          monthlyFee: 160,
-          studentsCount: 15,
-        },
-      ],
-    },
-  ])
-  
+  const [grades, setGrades] = useState<Grade[]>([])
   const [searchTerm, setSearchTerm] = useState("")
-  const [expandedGrades, setExpandedGrades] = useState<string[]>(["1"])
+  const [expandedGrades, setExpandedGrades] = useState<string[]>([])
   const [gradeDialogOpen, setGradeDialogOpen] = useState(false)
   const [groupDialogOpen, setGroupDialogOpen] = useState(false)
   const [editingGrade, setEditingGrade] = useState<Grade | null>(null)
   const [editingGroup, setEditingGroup] = useState<Group | null>(null)
   const [selectedGradeId, setSelectedGradeId] = useState<string>("")
   
-  // Form states
   const [gradeForm, setGradeForm] = useState({
     name: "",
     academicYear: "2025-2026",
@@ -149,6 +84,12 @@ export default function GradesPage() {
     monthlyFee: 0,
   })
 
+  // Load data
+  useEffect(() => {
+    initializeSampleData()
+    setGrades(getGrades())
+  }, [])
+
   // Filter grades
   const filteredGrades = grades.filter(grade =>
     grade.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -161,6 +102,19 @@ export default function GradesPage() {
         ? prev.filter(id => id !== gradeId)
         : [...prev, gradeId]
     )
+  }
+
+  // Update student counts
+  const updateStudentCounts = (gradesList: Grade[]) => {
+    const students = getStudents()
+    const updated = gradesList.map(grade => ({
+      ...grade,
+      groups: grade.groups.map(group => ({
+        ...group,
+        studentsCount: students.filter(s => s.groupId === group.id && s.status === 'active').length,
+      })),
+    }))
+    return updated
   }
 
   // Open grade dialog
@@ -182,17 +136,14 @@ export default function GradesPage() {
   const saveGrade = () => {
     if (!gradeForm.name.trim()) return
 
+    let updatedGrades: Grade[]
     if (editingGrade) {
-      // Update
-      setGrades(prev =>
-        prev.map(g =>
-          g.id === editingGrade.id
-            ? { ...g, name: gradeForm.name, academicYear: gradeForm.academicYear }
-            : g
-        )
+      updatedGrades = grades.map(g =>
+        g.id === editingGrade.id
+          ? { ...g, name: gradeForm.name, academicYear: gradeForm.academicYear }
+          : g
       )
     } else {
-      // Create
       const newGrade: Grade = {
         id: Date.now().toString(),
         name: gradeForm.name,
@@ -200,15 +151,21 @@ export default function GradesPage() {
         createdAt: new Date().toISOString(),
         groups: [],
       }
-      setGrades(prev => [...prev, newGrade])
+      updatedGrades = [...grades, newGrade]
     }
+
+    updatedGrades = updateStudentCounts(updatedGrades)
+    setGrades(updatedGrades)
+    saveGrades(updatedGrades)
     setGradeDialogOpen(false)
   }
 
   // Delete grade
   const deleteGrade = (gradeId: string) => {
     if (confirm("هل أنت متأكد من حذف هذا الصف وجميع مجموعاته؟")) {
-      setGrades(prev => prev.filter(g => g.id !== gradeId))
+      const updatedGrades = grades.filter(g => g.id !== gradeId)
+      setGrades(updatedGrades)
+      saveGrades(updatedGrades)
     }
   }
 
@@ -264,45 +221,47 @@ export default function GradesPage() {
       studentsCount: editingGroup?.studentsCount || 0,
     }
 
-    setGrades(prev =>
-      prev.map(grade => {
-        if (grade.id === selectedGradeId) {
-          if (editingGroup) {
-            // Update
-            return {
-              ...grade,
-              groups: grade.groups.map(g =>
-                g.id === editingGroup.id ? groupData : g
-              ),
-            }
-          } else {
-            // Create
-            return {
-              ...grade,
-              groups: [...grade.groups, groupData],
-            }
+    let updatedGrades = grades.map(grade => {
+      if (grade.id === selectedGradeId) {
+        if (editingGroup) {
+          return {
+            ...grade,
+            groups: grade.groups.map(g =>
+              g.id === editingGroup.id ? groupData : g
+            ),
+          }
+        } else {
+          return {
+            ...grade,
+            groups: [...grade.groups, groupData],
           }
         }
-        return grade
-      })
-    )
+      }
+      return grade
+    })
+
+    updatedGrades = updateStudentCounts(updatedGrades)
+    setGrades(updatedGrades)
+    saveGrades(updatedGrades)
     setGroupDialogOpen(false)
   }
 
   // Delete group
   const deleteGroup = (gradeId: string, groupId: string) => {
     if (confirm("هل أنت متأكد من حذف هذه المجموعة؟")) {
-      setGrades(prev =>
-        prev.map(grade => {
-          if (grade.id === gradeId) {
-            return {
-              ...grade,
-              groups: grade.groups.filter(g => g.id !== groupId),
-            }
+      let updatedGrades = grades.map(grade => {
+        if (grade.id === gradeId) {
+          return {
+            ...grade,
+            groups: grade.groups.filter(g => g.id !== groupId),
           }
-          return grade
-        })
-      )
+        }
+        return grade
+      })
+
+      updatedGrades = updateStudentCounts(updatedGrades)
+      setGrades(updatedGrades)
+      saveGrades(updatedGrades)
     }
   }
 
@@ -410,7 +369,7 @@ export default function GradesPage() {
                             {grade.name}
                           </CardTitle>
                           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                            العام الدراسي: {grade.academicYear} • {grade.groups.length} مجموعة
+                            العام الدراسي: {grade.academicYear} • {grade.groups.length} مجموعة • {grade.groups.reduce((s, g) => s + g.studentsCount, 0)} طالب
                           </p>
                         </div>
                       </div>
@@ -570,10 +529,18 @@ export default function GradesPage() {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="text-center py-12"
+            className="text-center py-12 bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800"
           >
             <BookOpen className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
-            <p className="text-gray-500 dark:text-gray-400">لا توجد صفوف</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">
+              {grades.length === 0 ? "لا توجد صفوف بعد" : "لا توجد نتائج مطابقة"}
+            </p>
+            {grades.length === 0 && (
+              <Button onClick={() => openGradeDialog()} className="bg-gradient-to-r from-purple-500 to-pink-600">
+                <Plus className="w-4 h-4" />
+                <span>إضافة أول صف</span>
+              </Button>
+            )}
           </motion.div>
         )}
       </div>
@@ -657,11 +624,11 @@ export default function GradesPage() {
                     className="flex items-center space-x-2 space-x-reverse"
                   >
                     <Checkbox
-                      id={day.value}
+                      id={`day-${day.value}`}
                       checked={groupForm.days.includes(day.value)}
                       onCheckedChange={() => toggleDay(day.value)}
                     />
-                    <Label htmlFor={day.value} className="cursor-pointer">
+                    <Label htmlFor={`day-${day.value}`} className="cursor-pointer">
                       {day.label}
                     </Label>
                   </div>

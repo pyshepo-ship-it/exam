@@ -1,86 +1,128 @@
 "use client"
 
-import React from "react"
+import React, { useState, useEffect } from "react"
 import { motion } from "framer-motion"
 import { 
   Users, 
   DollarSign, 
   Calendar, 
   FileText, 
-  TrendingUp,
   BookOpen,
   ClipboardCheck,
-  AlertCircle
+  CheckCircle,
+  AlertCircle,
+  TrendingUp
 } from "lucide-react"
 import Link from "next/link"
-
-const stats = [
-  {
-    label: "الطلاب",
-    value: "0",
-    icon: Users,
-    color: "from-blue-500 to-indigo-600",
-    bgLight: "bg-blue-50 dark:bg-blue-950",
-    change: "+12%",
-  },
-  {
-    label: "المجموعات",
-    value: "0",
-    icon: Calendar,
-    color: "from-purple-500 to-pink-600",
-    bgLight: "bg-purple-50 dark:bg-purple-950",
-    change: "+5%",
-  },
-  {
-    label: "التحصيل الشهري",
-    value: "0 ج.م",
-    icon: DollarSign,
-    color: "from-green-500 to-emerald-600",
-    bgLight: "bg-green-50 dark:bg-green-950",
-    change: "+8%",
-  },
-  {
-    label: "الاختبارات",
-    value: "0",
-    icon: FileText,
-    color: "from-orange-500 to-red-600",
-    bgLight: "bg-orange-50 dark:bg-orange-950",
-    change: "+3%",
-  },
-]
-
-const quickActions = [
-  {
-    label: "إضافة طالب",
-    description: "تسجيل طالب جديد في النظام",
-    icon: Users,
-    href: "/dashboard/students",
-    color: "from-green-500 to-emerald-600",
-  },
-  {
-    label: "تسجيل تحصيل",
-    description: "تسجيل دفعة من طالب",
-    icon: DollarSign,
-    href: "/dashboard/payments",
-    color: "from-yellow-500 to-orange-600",
-  },
-  {
-    label: "إنشاء اختبار",
-    description: "إنشاء اختبار جديد وتحويله لـ PDF",
-    icon: FileText,
-    href: "/dashboard/exams",
-    color: "from-red-500 to-rose-600",
-  },
-  {
-    label: "تسجيل حضور",
-    description: "تسجيل حضور وغياب الطلاب",
-    icon: ClipboardCheck,
-    href: "/dashboard/attendance",
-    color: "from-teal-500 to-cyan-600",
-  },
-]
+import {
+  getGrades,
+  getStudents,
+  getDues,
+  getPayments,
+  getExams,
+  getAttendance,
+  initializeSampleData,
+} from "@/lib/data-storage"
 
 export default function DashboardPage() {
+  const [stats, setStats] = useState({
+    totalStudents: 0,
+    totalGroups: 0,
+    totalDues: 0,
+    totalPayments: 0,
+    totalBalance: 0,
+    totalExams: 0,
+    attendanceRate: "0",
+    totalGrades: 0,
+  })
+
+  useEffect(() => {
+    initializeSampleData()
+
+    const grades = getGrades()
+    const students = getStudents()
+    const dues = getDues()
+    const payments = getPayments()
+    const exams = getExams()
+    const attendance = getAttendance()
+
+    const totalGroups = grades.reduce((sum, g) => sum + g.groups.length, 0)
+    const totalDues = dues.reduce((sum, d) => sum + d.amount, 0)
+    const totalPayments = payments.reduce((sum, p) => sum + p.amount, 0)
+    const attendanceRate = attendance.length > 0 
+      ? ((attendance.filter(a => a.status === 'present').length / attendance.length) * 100).toFixed(1)
+      : "0"
+
+    setStats({
+      totalStudents: students.filter(s => s.status === 'active').length,
+      totalGroups,
+      totalDues,
+      totalPayments,
+      totalBalance: totalDues - totalPayments,
+      totalExams: exams.length,
+      attendanceRate,
+      totalGrades: grades.length,
+    })
+  }, [])
+
+  const statsCards = [
+    {
+      label: "الطلاب النشطين",
+      value: stats.totalStudents.toString(),
+      icon: Users,
+      color: "from-blue-500 to-indigo-600",
+    },
+    {
+      label: "المجموعات",
+      value: stats.totalGroups.toString(),
+      icon: Calendar,
+      color: "from-purple-500 to-pink-600",
+    },
+    {
+      label: "التحصيل الشهري",
+      value: `${stats.totalPayments} ج.م`,
+      icon: DollarSign,
+      color: "from-green-500 to-emerald-600",
+    },
+    {
+      label: "الاختبارات",
+      value: stats.totalExams.toString(),
+      icon: FileText,
+      color: "from-orange-500 to-red-600",
+    },
+  ]
+
+  const quickActions = [
+    {
+      label: "إضافة طالب",
+      description: "تسجيل طالب جديد في النظام",
+      icon: Users,
+      href: "/dashboard/students",
+      color: "from-green-500 to-emerald-600",
+    },
+    {
+      label: "تسجيل تحصيل",
+      description: "تسجيل دفعة من طالب",
+      icon: DollarSign,
+      href: "/dashboard/payments",
+      color: "from-yellow-500 to-orange-600",
+    },
+    {
+      label: "إنشاء اختبار",
+      description: "إنشاء اختبار جديد",
+      icon: FileText,
+      href: "/dashboard/exams",
+      color: "from-red-500 to-rose-600",
+    },
+    {
+      label: "تسجيل حضور",
+      description: "تسجيل حضور وغياب الطلاب",
+      icon: ClipboardCheck,
+      href: "/dashboard/attendance",
+      color: "from-teal-500 to-cyan-600",
+    },
+  ]
+
   return (
     <div className="space-y-8">
       {/* Welcome Section */}
@@ -103,7 +145,7 @@ export default function DashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat, index) => {
+        {statsCards.map((stat, index) => {
           const Icon = stat.icon
           return (
             <motion.div
@@ -117,9 +159,6 @@ export default function DashboardPage() {
                 <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${stat.color} flex items-center justify-center shadow-lg`}>
                   <Icon className="w-6 h-6 text-white" />
                 </div>
-                <span className="text-xs font-semibold text-green-600 bg-green-50 dark:bg-green-950 dark:text-green-400 px-2 py-1 rounded-full">
-                  {stat.change}
-                </span>
               </div>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">{stat.label}</p>
               <p className="text-2xl font-bold text-gray-900 dark:text-white">{stat.value}</p>
@@ -127,6 +166,43 @@ export default function DashboardPage() {
           )
         })}
       </div>
+
+      {/* Financial Summary */}
+      {(stats.totalDues > 0 || stats.totalPayments > 0) && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white dark:bg-gray-900 rounded-2xl p-6 border border-gray-200 dark:border-gray-800 shadow-lg"
+        >
+          <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <TrendingUp className="w-6 h-6 text-green-500" />
+            الملخص المالي
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-yellow-50 dark:bg-yellow-950/30 rounded-xl p-4">
+              <p className="text-sm text-gray-500">إجمالي المستحقات</p>
+              <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-300 mt-1">{stats.totalDues} ج.م</p>
+            </div>
+            <div className="bg-green-50 dark:bg-green-950/30 rounded-xl p-4">
+              <p className="text-sm text-gray-500">إجمالي المحصل</p>
+              <p className="text-2xl font-bold text-green-700 dark:text-green-300 mt-1">{stats.totalPayments} ج.م</p>
+            </div>
+            <div className={`rounded-xl p-4 ${stats.totalBalance > 0 ? 'bg-red-50 dark:bg-red-950/30' : 'bg-green-50 dark:bg-green-950/30'}`}>
+              <p className="text-sm text-gray-500">المتبقي</p>
+              <p className={`text-2xl font-bold mt-1 ${stats.totalBalance > 0 ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
+                {stats.totalBalance} ج.م
+              </p>
+            </div>
+            <div className="bg-blue-50 dark:bg-blue-950/30 rounded-xl p-4">
+              <p className="text-sm text-gray-500">نسبة التحصيل</p>
+              <p className="text-2xl font-bold text-blue-700 dark:text-blue-300 mt-1">
+                {stats.totalDues > 0 ? ((stats.totalPayments / stats.totalDues) * 100).toFixed(1) : "0"}%
+              </p>
+            </div>
+          </div>
+        </motion.div>
+      )}
 
       {/* Quick Actions */}
       <motion.div
@@ -172,8 +248,9 @@ export default function DashboardPage() {
             نصيحة اليوم
           </h3>
           <p className="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">
-            ابدأ بإضافة الصفوف والمجموعات، ثم أضف الطلاب، وبعدها يمكنك تسجيل التحصيل وإنشاء الاختبارات بسهولة. 
-            استخدم القسم الجانبي للتنقل بين الأقسام.
+            ابدأ بإضافة الصفوف والمجموعات في قسم "الصفوف والمواعيد"، ثم أضف الطلاب في قسم "الطلاب".
+            بعد ذلك يمكنك استخدام "التحصيل الشهري" لإنشاء الاستحقاقات وتسجيل المدفوعات.
+            جميع البيانات تُحفظ تلقائياً على جهازك.
           </p>
         </div>
       </motion.div>
