@@ -37,6 +37,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
+import toast from "react-hot-toast"
 import { Grade, Group, getGrades, saveGrades, getStudents, initializeSampleData } from "@/lib/data-storage"
 
 // Days of week
@@ -70,6 +71,7 @@ export default function GradesPage() {
   const [editingGrade, setEditingGrade] = useState<Grade | null>(null)
   const [editingGroup, setEditingGroup] = useState<Group | null>(null)
   const [selectedGradeId, setSelectedGradeId] = useState<string>("")
+  const [showSchedule, setShowSchedule] = useState(false)
   
   const [gradeForm, setGradeForm] = useState({
     name: "",
@@ -158,6 +160,7 @@ export default function GradesPage() {
     setGrades(updatedGrades)
     saveGrades(updatedGrades)
     setGradeDialogOpen(false)
+    toast.success(editingGrade ? "تم تحديث الصف بنجاح" : "تم إضافة الصف بنجاح")
   }
 
   // Delete grade
@@ -166,6 +169,7 @@ export default function GradesPage() {
       const updatedGrades = grades.filter(g => g.id !== gradeId)
       setGrades(updatedGrades)
       saveGrades(updatedGrades)
+      toast.success("تم حذف الصف بنجاح")
     }
   }
 
@@ -207,7 +211,7 @@ export default function GradesPage() {
   // Save group
   const saveGroup = () => {
     if (!groupForm.name.trim() || groupForm.days.length === 0 || !groupForm.startTime || !groupForm.endTime) {
-      alert("يرجى ملء جميع الحقول المطلوبة")
+      toast.error("يرجى ملء جميع الحقول المطلوبة")
       return
     }
 
@@ -244,6 +248,7 @@ export default function GradesPage() {
     setGrades(updatedGrades)
     saveGrades(updatedGrades)
     setGroupDialogOpen(false)
+    toast.success(editingGroup ? "تم تحديث المجموعة بنجاح" : "تم إضافة المجموعة بنجاح")
   }
 
   // Delete group
@@ -262,6 +267,7 @@ export default function GradesPage() {
       updatedGrades = updateStudentCounts(updatedGrades)
       setGrades(updatedGrades)
       saveGrades(updatedGrades)
+      toast.success("تم حذف المجموعة بنجاح")
     }
   }
 
@@ -289,13 +295,23 @@ export default function GradesPage() {
             إدارة الصفوف الدراسية والمجموعات والمواعيد
           </p>
         </div>
-        <Button 
-          onClick={() => openGradeDialog()}
-          className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg"
-        >
-          <Plus className="w-5 h-5" />
-          <span>إضافة صف جديد</span>
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline"
+            onClick={() => setShowSchedule(!showSchedule)}
+            className="border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
+          >
+            <Calendar className="w-5 h-5" />
+            <span>{showSchedule ? 'عرض القوائم' : 'الجدول الأسبوعي'}</span>
+          </Button>
+          <Button 
+            onClick={() => openGradeDialog()}
+            className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg"
+          >
+            <Plus className="w-5 h-5" />
+            <span>إضافة صف جديد</span>
+          </Button>
+        </div>
       </motion.div>
 
       {/* Stats */}
@@ -340,7 +356,65 @@ export default function GradesPage() {
         />
       </motion.div>
 
+      {/* Weekly Schedule View */}
+      {showSchedule && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="bg-white dark:bg-gray-900 rounded-xl p-6 border border-gray-200 dark:border-gray-800 shadow-lg"
+        >
+          <h3 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-purple-500" />
+            الجدول الأسبوعي
+          </h3>
+          <div className="overflow-x-auto">
+            <div className="grid grid-cols-7 gap-2 min-w-[700px]">
+              {DAYS.map(day => {
+                const dayGroups = grades.flatMap(g => 
+                  g.groups
+                    .filter(gr => gr.days.includes(day.value))
+                    .map(gr => ({ ...gr, gradeName: g.name }))
+                ).sort((a, b) => a.startTime.localeCompare(b.startTime))
+                
+                return (
+                  <div key={day.value} className="space-y-2">
+                    <div className={`${dayColors[day.value]} rounded-lg p-2 text-center font-bold`}>
+                      {day.label}
+                    </div>
+                    <div className="space-y-2 min-h-[200px]">
+                      {dayGroups.length === 0 ? (
+                        <p className="text-center text-gray-400 text-xs py-4">لا توجد حصص</p>
+                      ) : (
+                        dayGroups.map(group => (
+                          <div
+                            key={group.id}
+                            className="bg-gray-50 dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-xs"
+                          >
+                            <p className="font-semibold text-gray-900 dark:text-white truncate">
+                              {group.gradeName}
+                            </p>
+                            <p className="text-gray-500 truncate">{group.name}</p>
+                            <p className="text-indigo-600 dark:text-indigo-400 font-medium mt-1">
+                              {group.startTime} - {group.endTime}
+                            </p>
+                            <p className="text-gray-500 mt-1">
+                              {group.studentsCount} طالب • {group.monthlyFee} ج.م
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
       {/* Grades List */}
+      {!showSchedule && (
       <div className="space-y-4">
         <AnimatePresence>
           {filteredGrades.map((grade, index) => {
@@ -544,6 +618,7 @@ export default function GradesPage() {
           </motion.div>
         )}
       </div>
+      )}
 
       {/* Grade Dialog */}
       <Dialog open={gradeDialogOpen} onOpenChange={setGradeDialogOpen}>

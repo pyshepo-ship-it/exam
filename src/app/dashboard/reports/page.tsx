@@ -32,6 +32,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import toast from "react-hot-toast"
+import { exportToPDF } from "@/lib/pdf-utils"
 import {
   Grade,
   Student,
@@ -164,8 +166,29 @@ export default function ReportsPage() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            onClick={async () => {
+              try {
+                await exportToPDF(
+                  'reports-content',
+                  `تقرير-${MONTHS[parseInt(selectedMonth) - 1]}-${selectedYear}`,
+                  { orientation: 'portrait', scale: 2 }
+                )
+                toast.success('تم تحميل التقرير بنجاح')
+              } catch (error) {
+                toast.error('حدث خطأ أثناء التصدير')
+              }
+            }}
+            className="bg-gradient-to-r from-blue-500 to-indigo-600"
+          >
+            <Download className="w-4 h-4" />
+            <span>تصدير PDF</span>
+          </Button>
         </div>
       </motion.div>
+
+      {/* Reports Content */}
+      <div id="reports-content" className="space-y-6">
 
       {/* Overall Financial Summary */}
       <motion.div
@@ -422,6 +445,7 @@ export default function ReportsPage() {
             )}
           </div>
         </motion.div>
+      </div>
       </div>
     </div>
   )

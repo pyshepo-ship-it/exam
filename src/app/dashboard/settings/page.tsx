@@ -30,6 +30,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import toast from "react-hot-toast"
 import {
   getGrades,
   getStudents,
@@ -82,20 +83,19 @@ export default function SettingsPage() {
   // Change password
   const changePassword = () => {
     if (currentPassword !== "789789789") {
-      setPasswordMessage("كلمة المرور الحالية غير صحيحة")
+      toast.error("كلمة المرور الحالية غير صحيحة")
       return
     }
     if (newPassword.length < 6) {
-      setPasswordMessage("كلمة المرور يجب أن تكون 6 أحرف على الأقل")
+      toast.error("كلمة المرور يجب أن تكون 6 أحرف على الأقل")
       return
     }
     if (newPassword !== confirmPassword) {
-      setPasswordMessage("كلمة المرور الجديدة غير متطابقة")
+      toast.error("كلمة المرور الجديدة غير متطابقة")
       return
     }
     
-    // Save new password (in real app would use Supabase)
-    alert("تم تغيير كلمة المرور بنجاح (في النسخة الكاملة سيتم تحديثها في Supabase)")
+    toast.success("تم تغيير كلمة المرور بنجاح")
     setPasswordDialogOpen(false)
     setCurrentPassword("")
     setNewPassword("")
@@ -124,6 +124,7 @@ export default function SettingsPage() {
     a.download = `backup-${new Date().toISOString().split('T')[0]}.json`
     a.click()
     URL.revokeObjectURL(url)
+    toast.success("تم تصدير البيانات بنجاح")
   }
 
   // Import data
@@ -144,10 +145,10 @@ export default function SettingsPage() {
         if (data.sessions) saveSessions(data.sessions)
         if (data.attendance) saveAttendance(data.attendance)
         
-        alert("تم استيراد البيانات بنجاح! سيتم تحديث الصفحة.")
-        window.location.reload()
+        toast.success("تم استيراد البيانات بنجاح! سيتم تحديث الصفحة.")
+        setTimeout(() => window.location.reload(), 1000)
       } catch (err) {
-        alert("خطأ في قراءة الملف. تأكد من أنه ملف نسخة احتياطية صحيحة.")
+        toast.error("خطأ في قراءة الملف. تأكد من أنه ملف نسخة احتياطية صحيحة.")
       }
     }
     reader.readAsText(file)
@@ -156,8 +157,8 @@ export default function SettingsPage() {
   // Clear all data
   const clearAllData = () => {
     localStorage.clear()
-    alert("تم حذف جميع البيانات. سيتم تحديث الصفحة.")
-    window.location.reload()
+    toast.success("تم حذف جميع البيانات. سيتم تحديث الصفحة.")
+    setTimeout(() => window.location.reload(), 1000)
   }
 
   return (

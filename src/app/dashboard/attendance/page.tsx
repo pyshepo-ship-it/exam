@@ -26,6 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import toast from "react-hot-toast"
 import {
   Grade,
   Student,
@@ -103,7 +104,7 @@ export default function AttendancePage() {
   // Create new session
   const createSession = () => {
     if (!sessionForm.groupId || !sessionForm.sessionDate) {
-      alert("يرجى ملء جميع الحقول المطلوبة")
+      toast.error("يرجى ملء جميع الحقول المطلوبة")
       return
     }
 
@@ -129,12 +130,13 @@ export default function AttendancePage() {
       endTime: "",
       notes: "",
     })
+    toast.success("تم إضافة الحصة بنجاح")
   }
 
   // Save attendance
   const saveAttendanceData = () => {
     if (!selectedSession) {
-      alert("يرجى اختيار الحصة أولاً")
+      toast.error("يرجى اختيار الحصة أولاً")
       return
     }
 
@@ -166,7 +168,7 @@ export default function AttendancePage() {
     const updatedAttendance = [...attendance, ...newAttendance]
     setAttendance(updatedAttendance)
     saveAttendance(updatedAttendance)
-    alert("تم حفظ الحضور بنجاح")
+    toast.success("تم حفظ الحضور بنجاح")
   }
 
   // Calculate attendance stats for group

@@ -28,6 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import toast from "react-hot-toast"
+import { exportToPDF } from "@/lib/pdf-utils"
 import {
   Select,
   SelectContent,
@@ -345,7 +347,7 @@ export default function ExamsPage() {
   // Save exam
   const saveExam = () => {
     if (!examForm.gradeId || !examForm.title) {
-      alert("يرجى ملء جميع الحقول المطلوبة")
+      toast.error("يرجى ملء جميع الحقول المطلوبة")
       return
     }
 
@@ -374,6 +376,7 @@ export default function ExamsPage() {
     setExams(updatedExams)
     saveExams(updatedExams)
     setCreateDialogOpen(false)
+    toast.success(editingExam ? "تم تحديث الاختبار بنجاح" : "تم إنشاء الاختبار بنجاح")
   }
 
   // Delete exam
@@ -382,6 +385,7 @@ export default function ExamsPage() {
       const updatedExams = exams.filter(e => e.id !== examId)
       setExams(updatedExams)
       saveExams(updatedExams)
+      toast.success("تم حذف الاختبار بنجاح")
     }
   }
 
@@ -872,7 +876,7 @@ export default function ExamsPage() {
             <DialogTitle>معاينة الاختبار</DialogTitle>
           </DialogHeader>
           {previewExam && (
-            <div className="py-4 space-y-6 bg-white dark:bg-gray-900 p-6 rounded-lg">
+            <div id="exam-preview-content" className="py-4 space-y-6 bg-white dark:bg-gray-900 p-6 rounded-lg">
               {/* Exam Header */}
               <div className="text-center border-b border-gray-300 dark:border-gray-700 pb-4">
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
@@ -958,7 +962,20 @@ export default function ExamsPage() {
             <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>
               إغلاق
             </Button>
-            <Button className="bg-gradient-to-r from-blue-500 to-indigo-600">
+            <Button 
+              onClick={async () => {
+                try {
+                  await exportToPDF('exam-preview-content', `${previewExam?.title || 'اختبار'}-${new Date().toLocaleDateString('ar-EG')}`, {
+                    orientation: 'portrait',
+                    scale: 2,
+                  })
+                  toast.success('تم تحميل الاختبار بنجاح')
+                } catch (error) {
+                  toast.error('حدث خطأ أثناء التصدير')
+                }
+              }}
+              className="bg-gradient-to-r from-blue-500 to-indigo-600"
+            >
               <Download className="w-4 h-4" />
               <span>تحميل PDF</span>
             </Button>

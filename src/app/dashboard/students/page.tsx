@@ -16,7 +16,10 @@ import {
   UserX,
   DollarSign,
   Download,
-  X
+  X,
+  FileText,
+  CheckCircle,
+  AlertCircle
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -46,6 +49,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import toast from "react-hot-toast"
+import { exportToPDF } from "@/lib/pdf-utils"
 import {
   Grade,
   Student,
@@ -54,8 +59,15 @@ import {
   saveStudents,
   saveGrades,
   getStudentBalance,
+  getDues,
+  getPayments,
   initializeSampleData,
 } from "@/lib/data-storage"
+
+const MONTHS = [
+  "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
+  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
+]
 
 export default function StudentsPage() {
   const [students, setStudents] = useState<Student[]>([])
@@ -66,6 +78,7 @@ export default function StudentsPage() {
   const [filterStatus, setFilterStatus] = useState<string>("all")
   const [dialogOpen, setDialogOpen] = useState(false)
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
+  const [statementDialogOpen, setStatementDialogOpen] = useState(false)
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
   
@@ -128,15 +141,15 @@ export default function StudentsPage() {
   // Save student
   const saveStudent = () => {
     if (!form.name.trim()) {
-      alert("يرجى إدخال اسم الطالب")
+      toast.error("يرجى إدخال اسم الطالب")
       return
     }
     if (!form.gradeId) {
-      alert("يرجى اختيار الصف")
+      toast.error("يرجى اختيار الصف")
       return
     }
     if (!form.groupId) {
-      alert("يرجى اختيار المجموعة")
+      toast.error("يرجى اختيار المجموعة")
       return
     }
 
@@ -158,6 +171,7 @@ export default function StudentsPage() {
             }
           : s
       )
+      toast.success("تم تحديث بيانات الطالب بنجاح")
     } else {
       // Create
       const newStudent: Student = {
@@ -172,6 +186,7 @@ export default function StudentsPage() {
         updatedAt: new Date().toISOString(),
       }
       updatedStudents = [...students, newStudent]
+      toast.success("تم إضافة الطالب بنجاح")
     }
 
     setStudents(updatedStudents)
@@ -203,6 +218,7 @@ export default function StudentsPage() {
       setStudents(updatedStudents)
       saveStudents(updatedStudents)
       updateGroupStudentCounts(updatedStudents)
+      toast.success("تم حذف الطالب بنجاح")
     }
   }
 
@@ -217,12 +233,19 @@ export default function StudentsPage() {
     setStudents(updatedStudents)
     saveStudents(updatedStudents)
     updateGroupStudentCounts(updatedStudents)
+    toast.success(newStatus === 'active' ? "تم تفعيل الطالب" : "تم إلغاء تفعيل الطالب")
   }
 
   // View details
   const viewDetails = (student: Student) => {
     setSelectedStudent(student)
     setDetailsDialogOpen(true)
+  }
+
+  // View statement
+  const viewStatement = (student: Student) => {
+    setSelectedStudent(student)
+    setStatementDialogOpen(true)
   }
 
   // Get grade and group names
@@ -233,6 +256,40 @@ export default function StudentsPage() {
       if (group) return group.name
     }
     return 'غير محدد'
+  }
+
+  // Get student statement
+  const getStudentStatement = (studentId: string) => {
+    const dues = getDues().filter(d => d.studentId === studentId)
+    const payments = getPayments().filter(p => p.studentId === studentId)
+    
+    const monthlyData: Record<string, { dues: number; payments: number }> = {}
+    
+    dues.forEach(due => {
+      const key = `${due.year}-${due.month}`
+      if (!monthlyData[key]) monthlyData[key] = { dues: 0, payments: 0 }
+      monthlyData[key].dues += due.amount
+    })
+    
+    payments.forEach(payment => {
+      const key = `${payment.year}-${payment.month}`
+      if (!monthlyData[key]) monthlyData[key] = { dues: 0, payments: 0 }
+      monthlyData[key].payments += payment.amount
+    })
+    
+    return Object.entries(monthlyData)
+      .map(([key, data]) => {
+        const [year, month] = key.split('-')
+        return {
+          month: parseInt(month),
+          year: parseInt(year),
+          monthName: MONTHS[parseInt(month) - 1],
+          ...data,
+          balance: data.dues - data.payments,
+          status: data.dues - data.payments === 0 ? 'paid' : data.payments > 0 ? 'partial' : 'pending'
+        }
+      })
+      .sort((a, b) => b.year - a.year || b.month - a.month)
   }
 
   // Stats
@@ -423,6 +480,15 @@ export default function StudentsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => viewStatement(student)}
+                          className="h-8 w-8 text-purple-600 hover:text-purple-700 hover:bg-purple-50 dark:hover:bg-purple-950"
+                          title="كشف حساب"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -672,6 +738,124 @@ export default function StudentsPage() {
             >
               <Edit2 className="w-4 h-4" />
               <span>تعديل البيانات</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Student Statement Dialog */}
+      <Dialog open={statementDialogOpen} onOpenChange={setStatementDialogOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              كشف حساب - {selectedStudent?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <div id="student-statement-content" className="py-4">
+            {selectedStudent && (() => {
+              const statement = getStudentStatement(selectedStudent.id)
+              const balance = getStudentBalance(selectedStudent.id)
+              
+              return (
+                <div className="space-y-4">
+                  {/* Student Info Header */}
+                  <div className="text-center border-b pb-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">كشف حساب طالب</h2>
+                    <p className="text-lg text-gray-700 dark:text-gray-300 mt-1">{selectedStudent.name}</p>
+                    <p className="text-sm text-gray-500">
+                      {getGradeName(selectedStudent.gradeId)} - {getGroupName(selectedStudent.groupId)}
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      التاريخ: {new Date().toLocaleDateString('ar-EG')}
+                    </p>
+                  </div>
+
+                  {/* Summary */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="bg-yellow-50 dark:bg-yellow-950/30 rounded-lg p-3 text-center">
+                      <p className="text-xs text-gray-500">المستحقات</p>
+                      <p className="text-lg font-bold text-yellow-700 dark:text-yellow-300">{balance.totalDues} ج.م</p>
+                    </div>
+                    <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3 text-center">
+                      <p className="text-xs text-gray-500">المدفوع</p>
+                      <p className="text-lg font-bold text-green-700 dark:text-green-300">{balance.totalPayments} ج.م</p>
+                    </div>
+                    <div className={`rounded-lg p-3 text-center ${balance.balance > 0 ? 'bg-red-50 dark:bg-red-950/30' : 'bg-green-50 dark:bg-green-950/30'}`}>
+                      <p className="text-xs text-gray-500">المتبقي</p>
+                      <p className={`text-lg font-bold ${balance.balance > 0 ? 'text-red-700 dark:text-red-300' : 'text-green-700 dark:text-green-300'}`}>
+                        {balance.balance} ج.م
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Monthly breakdown */}
+                  {statement.length === 0 ? (
+                    <p className="text-center text-gray-500 py-8">لا توجد بيانات مالية</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>الشهر</TableHead>
+                          <TableHead>المستحق</TableHead>
+                          <TableHead>المدفوع</TableHead>
+                          <TableHead>المتبقي</TableHead>
+                          <TableHead>الحالة</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {statement.map((item, index) => (
+                          <TableRow key={index}>
+                            <TableCell className="font-medium">
+                              {item.monthName} {item.year}
+                            </TableCell>
+                            <TableCell>{item.dues} ج.م</TableCell>
+                            <TableCell className="text-green-600">{item.payments} ج.م</TableCell>
+                            <TableCell className={item.balance > 0 ? 'text-red-600 font-bold' : 'text-green-600'}>
+                              {item.balance} ج.م
+                            </TableCell>
+                            <TableCell>
+                              {item.status === 'paid' ? (
+                                <Badge variant="success" className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300">
+                                  <CheckCircle className="w-3 h-3 ml-1" /> مدفوع
+                                </Badge>
+                              ) : item.status === 'partial' ? (
+                                <Badge variant="warning">جزئي</Badge>
+                              ) : (
+                                <Badge variant="destructive">
+                                  <AlertCircle className="w-3 h-3 ml-1" /> مستحق
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStatementDialogOpen(false)}>
+              إغلاق
+            </Button>
+            <Button 
+              onClick={async () => {
+                try {
+                  await exportToPDF(
+                    'student-statement-content', 
+                    `كشف-حساب-${selectedStudent?.name}-${new Date().toLocaleDateString('ar-EG')}`,
+                    { orientation: 'portrait', scale: 2 }
+                  )
+                  toast.success('تم تحميل كشف الحساب بنجاح')
+                } catch (error) {
+                  toast.error('حدث خطأ أثناء التصدير')
+                }
+              }}
+              className="bg-gradient-to-r from-purple-500 to-pink-600"
+            >
+              <Download className="w-4 h-4" />
+              <span>تحميل PDF</span>
             </Button>
           </DialogFooter>
         </DialogContent>

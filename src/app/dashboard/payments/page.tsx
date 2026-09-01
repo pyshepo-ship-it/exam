@@ -13,7 +13,8 @@ import {
   Calendar,
   FileText,
   Eye,
-  Download
+  Download,
+  Printer
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -44,6 +45,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
+import toast from "react-hot-toast"
+import { exportTableToPDF, exportToPDF } from "@/lib/pdf-utils"
 import {
   Grade,
   Student,
@@ -112,11 +115,11 @@ export default function PaymentsPage() {
   // Save payment
   const savePayment = () => {
     if (!paymentForm.studentId) {
-      alert("يرجى اختيار الطالب")
+      toast.error("يرجى اختيار الطالب")
       return
     }
     if (paymentForm.amount <= 0) {
-      alert("يرجى إدخال مبلغ صحيح")
+      toast.error("يرجى إدخال مبلغ صحيح")
       return
     }
 
@@ -142,12 +145,13 @@ export default function PaymentsPage() {
       year: new Date().getFullYear(),
       notes: "",
     })
+    toast.success("تم تسجيل الدفعة بنجاح")
   }
 
   // Create monthly dues
   const createMonthlyDues = () => {
     if (dueForm.selectedGroups.length === 0) {
-      alert("يرجى اختيار مجموعة واحدة على الأقل")
+      toast.error("يرجى اختيار مجموعة واحدة على الأقل")
       return
     }
 
@@ -181,7 +185,7 @@ export default function PaymentsPage() {
     })
 
     if (newDues.length === 0) {
-      alert("لا توجد استحقاقات جديدة لإنشائها (قد تكون موجودة مسبقاً)")
+      toast.error("لا توجد استحقاقات جديدة لإنشائها (قد تكون موجودة مسبقاً)")
       return
     }
 
@@ -195,7 +199,7 @@ export default function PaymentsPage() {
       selectedGroups: [],
     })
 
-    alert(`تم إنشاء ${newDues.length} استحقاق جديد بنجاح`)
+    toast.success(`تم إنشاء ${newDues.length} استحقاق جديد بنجاح`)
   }
 
   // Toggle group selection
@@ -657,13 +661,28 @@ export default function PaymentsPage() {
               كشف حساب - {getStudentName(selectedStudentId)}
             </DialogTitle>
           </DialogHeader>
-          <div className="py-4">
+          <div id="student-statement-content" className="py-4">
             {(() => {
               const statement = getStudentStatement(selectedStudentId)
               const balance = getStudentBalance(selectedStudentId)
+              const student = students.find(s => s.id === selectedStudentId)
               
               return (
                 <div className="space-y-4">
+                  {/* Student Info Header */}
+                  <div className="text-center border-b pb-4">
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white">كشف حساب طالب</h2>
+                    <p className="text-lg text-gray-700 dark:text-gray-300 mt-1">{student?.name}</p>
+                    <p className="text-sm text-gray-500">
+                      {grades.find(g => g.id === student?.gradeId)?.name} - {
+                        grades.flatMap(g => g.groups).find(gr => gr.id === student?.groupId)?.name
+                      }
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      التاريخ: {new Date().toLocaleDateString('ar-EG')}
+                    </p>
+                  </div>
+
                   {/* Summary */}
                   <div className="grid grid-cols-3 gap-3">
                     <div className="bg-yellow-50 dark:bg-yellow-950/30 rounded-lg p-3 text-center">
@@ -732,6 +751,24 @@ export default function PaymentsPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setStatementDialogOpen(false)}>
               إغلاق
+            </Button>
+            <Button 
+              onClick={async () => {
+                try {
+                  await exportToPDF(
+                    'student-statement-content', 
+                    `كشف-حساب-${getStudentName(selectedStudentId)}-${new Date().toLocaleDateString('ar-EG')}`,
+                    { orientation: 'portrait', scale: 2 }
+                  )
+                  toast.success('تم تحميل كشف الحساب بنجاح')
+                } catch (error) {
+                  toast.error('حدث خطأ أثناء التصدير')
+                }
+              }}
+              className="bg-gradient-to-r from-blue-500 to-indigo-600"
+            >
+              <Download className="w-4 h-4" />
+              <span>تحميل PDF</span>
             </Button>
           </DialogFooter>
         </DialogContent>
