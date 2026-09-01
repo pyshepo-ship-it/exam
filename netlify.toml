@@ -9,12 +9,6 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Redirects for Next.js
-[[redirects]]
-  from = "/*"
-  to = "/404.html"
-  status = 404
-
 # Headers for security
 [[headers]]
   for = "/*"
