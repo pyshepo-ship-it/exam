@@ -210,6 +210,35 @@ t("مدة الأيام تتحكم في الظهور (افتراضي 30 يوم م
   eq(mod.isHonoreeActive(legacy, new Date("2026-09-30")), true, "بدون days — نهاية الشهر:")
 })
 
+console.log("\n\x1b[1mسيناريو 7-ب: ترتيب الصفوف حسب المرحلة\x1b[0m")
+t("sortGradesByLevel يرتب بالاسم العربي: الرابع → السادس → الثانوي → الخامس في الآخر", () => {
+  const input = [
+    { name: "الصف السادس" },
+    { name: "الصف الرابع" },
+    { name: "الصف الثالث الثانوي" },
+    { name: "الصف الأول" },
+    { name: "مجموعة خاصة" },
+    { name: "الصف الخامس" },
+  ]
+  const out = mod.sortGradesByLevel(input)
+  const names = out.map(g => g.name)
+  const idx = (n) => names.indexOf(n)
+  eq(idx("الصف الأول") < idx("الصف الرابع"), true, "الأول قبل الرابع")
+  eq(idx("الصف الرابع") < idx("الصف السادس"), true, "الرابع قبل السادس")
+  eq(idx("الصف السادس") < idx("الصف الثالث الثانوي"), true, "السادس (6) قبل الثالث الثانوي (12)")
+  eq(idx("الصف الخامس") < idx("الصف الثالث الثانوي"), true, "الخامس (5) قبل الثانوي (12) — المرحلة تحدد")
+  eq(idx("الصف الثالث الثانوي") < idx("مجموعة خاصة"), true, "غير المسماي ترتيبياً في الآخر")
+})
+t("الترتيب ثابت للمتساويين (لا يخلط المجموعات الخاصة ببعضها)", () => {
+  const input = [
+    { name: "فريقA" },
+    { name: "فريقB" },
+    { name: "فريقC" },
+  ]
+  const out = mod.sortGradesByLevel(input).map(g => g.name)
+  eq(out.join("|"), "فريقA|فريقB|فريقC", "نفس الترتيب النسبي:")
+})
+
 console.log("\n\x1b[1mسيناريو 8: getAllGroups يربط الصف بالمجموعة\x1b[0m")
 t("كل مجموعة تحمل gradeId و gradeName الصحيحين", () => {
   const gs = mod.getAllGroups([

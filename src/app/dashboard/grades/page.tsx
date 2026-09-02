@@ -18,7 +18,10 @@ import {
   FileDown,
   Share2,
   AlertTriangle,
-  CalendarX2
+  CalendarX2,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,7 +46,7 @@ import {
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
-import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear } from "@/lib/data-storage"
+import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear, sortGradesByLevel } from "@/lib/data-storage"
 import {
   findScheduleConflicts,
   buildConflictMessage,
@@ -337,6 +340,26 @@ export default function GradesPage() {
 
   // Calculate stats
   const totalGrades = grades.length
+  // إعادة ترتيب الصفوف يدوياً (الترتيب محفوظ وينعكس على الجدول المنشور وكل الأقسام)
+  const moveGrade = (gradeId: string, dir: -1 | 1) => {
+    const idx = grades.findIndex(g => g.id === gradeId)
+    const target = idx + dir
+    if (idx < 0 || target < 0 || target >= grades.length) return
+    const updated = [...grades]
+    ;[updated[idx], updated[target]] = [updated[target], updated[idx]]
+    setGrades(updated)
+    saveGrades(updated)
+    toast.success(dir === -1 ? "تم تحريك الصف لأعلى" : "تم تحريك الصف لأسفل")
+  }
+
+  // ترتيب تلقائي حسب المرحلة (الأول → العاشر) من الاسم العربي
+  const autoSortGrades = () => {
+    const sorted = sortGradesByLevel(grades)
+    setGrades(sorted)
+    saveGrades(sorted)
+    toast.success("تم ترتيب الصفوف حسب المرحلة الدراسية — الترتيب سينعكس على الجدول المنشور وكل الأقسام")
+  }
+
   const totalGroups = grades.reduce((sum, g) => sum + g.groups.length, 0)
   const totalStudents = grades.reduce(
     (sum, g) => sum + g.groups.reduce((s, gr) => s + gr.studentsCount, 0),
@@ -359,43 +382,59 @@ export default function GradesPage() {
             إدارة الصفوف الدراسية والمجموعات والمواعيد
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button 
-            variant="outline"
-            onClick={() => setShowSchedule(!showSchedule)}
-            className="border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
-          >
-            <Calendar className="w-5 h-5" />
-            <span>{showSchedule ? 'عرض القوائم' : 'الجدول الأسبوعي'}</span>
-          </Button>
-          <Button 
-            onClick={() => openGradeDialog()}
-            className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg"
-          >
-            <Plus className="w-5 h-5" />
-            <span>إضافة صف جديد</span>
-          </Button>
-          <Button
-            onClick={() => setPublishDialogOpen(true)}
-            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg"
-          >
-            <Share2 className="w-5 h-5" />
-            <span>نشر الجدول للطلاب</span>
-          </Button>
-          <Button
-            onClick={() => openPrintDialog("student")}
-            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg"
-          >
-            <FileDown className="w-5 h-5" />
-            <span>طباعة الجدول للطلاب (PDF)</span>
-          </Button>
-          <Button
-            onClick={() => openPrintDialog("teacher")}
-            className="bg-gradient-to-r from-gray-700 to-gray-900 hover:from-gray-800 hover:to-black shadow-lg"
-          >
-            <Printer className="w-5 h-5" />
-            <span>طباعة الجدول التفصيلي الخاص بالمدرس</span>
-          </Button>
+        <div className="w-full md:w-auto rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-lg p-3 flex flex-col gap-3">
+          {/* مجموعة إدارة الصفوف */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <Button
+              onClick={() => openGradeDialog()}
+              className="bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 shadow-lg"
+            >
+              <Plus className="w-5 h-5" />
+              <span>إضافة صف جديد</span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={autoSortGrades}
+              title="يرتب الصفوف تلقائياً: الأول ثم الثاني... حسب الاسم"
+              className="border-indigo-400 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+            >
+              <ArrowUpDown className="w-5 h-5" />
+              <span>ترتيب تلقائي حسب الصف</span>
+            </Button>
+          </div>
+          <div className="h-px bg-gray-200 dark:bg-gray-800" />
+          {/* مجموعة الجدول والطباعة */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <Button
+              variant="outline"
+              onClick={() => setShowSchedule(!showSchedule)}
+              className="border-purple-500 text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950"
+            >
+              <Calendar className="w-5 h-5" />
+              <span>{showSchedule ? 'عرض القوائم' : 'الجدول الأسبوعي'}</span>
+            </Button>
+            <Button
+              onClick={() => setPublishDialogOpen(true)}
+              className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg"
+            >
+              <Share2 className="w-5 h-5" />
+              <span>نشر الجدول للطلاب</span>
+            </Button>
+            <Button
+              onClick={() => openPrintDialog("student")}
+              className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg"
+            >
+              <FileDown className="w-5 h-5" />
+              <span>طباعة الجدول للطلاب (PDF)</span>
+            </Button>
+            <Button
+              onClick={() => openPrintDialog("teacher")}
+              className="bg-gradient-to-r from-gray-700 to-gray-900 hover:from-gray-800 hover:to-black shadow-lg"
+            >
+              <Printer className="w-5 h-5" />
+              <span>طباعة الجدول التفصيلي الخاص بالمدرس</span>
+            </Button>
+          </div>
         </div>
       </motion.div>
 
@@ -536,6 +575,32 @@ export default function GradesPage() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={index === 0}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            moveGrade(grade.id, -1)
+                          }}
+                          title="تحريك لأعلى — يحدد ترتيب الظهور في الجدول وكل الأقسام"
+                          className="text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 disabled:opacity-30"
+                        >
+                          <ArrowUp className="w-5 h-5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled={index === filteredGrades.length - 1}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            moveGrade(grade.id, 1)
+                          }}
+                          title="تحريك لأسفل — يحدد ترتيب الظهور في الجدول وكل الأقسام"
+                          className="text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 disabled:opacity-30"
+                        >
+                          <ArrowDown className="w-5 h-5" />
+                        </Button>
                         <Button
                           variant="ghost"
                           size="icon"

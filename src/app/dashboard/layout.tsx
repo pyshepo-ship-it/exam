@@ -25,7 +25,6 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { pullAllData } from "@/lib/supabase/sync"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
-import { TeacherSignature } from "@/components/teacher-signature"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -346,7 +345,6 @@ export default function DashboardLayout({
         {/* Page Content */}
         <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           {children}
-          <TeacherSignature />
         </div>
       </main>
     </div>

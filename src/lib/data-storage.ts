@@ -387,6 +387,42 @@ import {
   pushInquiries,
 } from "./supabase/sync"
 
+/**
+ * ترتيب الصفوف حسب المرحلة الدراسية المستخرجة من الاسم العربي
+ * (الأول، الثاني... العاشر) — ما لا يحمل اسماً ترتيبياً يبقى في آخر القائمة
+ * بنفس ترتيبه النسبي. الترتيب ثابت (stable) ولا يعيد خلط المتساوين.
+ */
+export function sortGradesByLevel<T extends { name: string }>(grades: T[]): T[] {
+  // أولاً المركبة (الحادي عشر...) ثم المفردة — لأن «الثاني» جزء من «الثاني عشر»
+  const ORDINALS: [string, number][] = [
+    ["الحادي عشر", 11],
+    ["الثاني عشر", 12],
+    ["الاول", 1], ["الثاني", 2], ["الثالث", 3], ["الرابع", 4], ["الخامس", 5],
+    ["السادس", 6], ["السابع", 7], ["الثامن", 8], ["التاسع", 9], ["العاشر", 10],
+  ]
+  const levelOf = (name: string): number => {
+    // طبّع الاسم: إزالة التطويل وتوحيد الهمزات والألف
+    const n = (name || "").replace(/\u0640/g, "").replace(/[أإآ]/g, "ا")
+    let ordinal = 0
+    for (const [word, value] of ORDINALS) {
+      const w = word.replace(/[أإآ]/g, "ا")
+      if (n.includes(w)) {
+        ordinal = value
+        break
+      }
+    }
+    if (ordinal === 0) return 999
+    // المرحلة تحدد الإزاحة: الابتدائي 1-6، الإعدادي 7-9، الثانوي 10-12
+    if (n.includes("الثانوي")) return 9 + ordinal
+    if (n.includes("الاعدادي")) return 6 + ordinal
+    return ordinal
+  }
+  return grades
+    .map((g, i) => ({ g, i, level: levelOf(g.name) }))
+    .sort((a, b) => (a.level - b.level) || (a.i - b.i))
+    .map(x => x.g)
+}
+
 // Helper functions
 export const getFromStorage = <T>(key: string): T[] => {
   if (typeof window === 'undefined') return []

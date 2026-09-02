@@ -403,10 +403,7 @@ function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePr
       <div style="flex:0 0 auto;">${pi === 0 ? pageHeaderBlock(mode, opts).html : `<div style="height:8px;"></div>`}</div>
       <div style="flex:1 1 auto;">${content}</div>
       <div style="flex:0 0 auto;border-top:2px solid ${accent};margin-top:14px;padding-top:8px;display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#6b7280;">
-        <div>
-          ${esc(opts.signatureLine || getTeacherSignatureLine())}
-          <span style="color:${accent};font-weight:800;margin-right:6px;">${esc(opts.teacherName || getTeacherName())}</span>
-        </div>
+        <div>${esc(opts.academicYear || getStoredAcademicYear())}</div>
         <div>صفحة ${pi + 1} من ${total} — ${mode === "teacher" ? "نسخة المدرس التفصيلية" : "جدول الطلاب"}</div>
       </div>
     </div>
