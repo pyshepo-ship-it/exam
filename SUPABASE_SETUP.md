@@ -43,40 +43,44 @@
    - **Project URL**: `https://xxxxx.supabase.co`
    - **anon public key**: `eyJhbGc...` (مفتاح طويل)
 
-### 5️⃣ إعداد المتغيرات البيئية في Netlify
+### 5️⃣ إعداد المتغيرات البيئية في Vercel
 
-1. اذهب إلى [Netlify](https://netlify.com)
-2. سجل دخول أو أنشئ حساب
-3. اضغط **Add new site** → **Import an existing project**
-4. اختر **GitHub** واختر repository الخاص بك
-5. في صفحة الإعدادات:
-   - **Build command**: `npm run build`
-   - **Publish directory**: `.next`
-6. قبل الضغط على Deploy، اضغط **Advanced** → **Add variable**
-7. أضف المتغيرات التالية:
+1. اذهب إلى [vercel.com](https://vercel.com)
+2. سجل الدخول بحساب GitHub أو أنشئ حساب
+3. اضغط **Add New → Project**
+4. اختر repository الخاص بك من GitHub واضغط **Import**
+5. Vercel يتعرّف على الإطار تلقائياً:
+   - **Framework Preset**: Next.js
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `.next` (الافتراضي)
+6. قبل الضغط على Deploy، افتح قسم **Environment Variables**
+7. أضف المتغيرات التالية (للبيئات الثلاث: Production و Preview و Development):
 
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
 ```
 
-**مهم**: لا تفعّل خيار **Contains secret values** لهذين المتغيرين. هما عامّان (`NEXT_PUBLIC_`) ويجب أن يظهرا في كود المتصفح. تفعيل الخيار يجعل Netlify يفشل البناء عند فحص الأسرار.
+**ملاحظة**: هذان المتغيران عامّان عمداً (`NEXT_PUBLIC_`) — Next.js يضعهما في كود المتصفح، والحماية الحقيقية تأتي من Row Level Security في Supabase. لا داعي لإخفائهما، ولا يوجد فحص أسرار في Vercel يفشل البناء بسببهما.
 
-8. اضغط **Deploy site**
+8. اضغط **Deploy**
 
-### 6️⃣ إعداد Netlify في Supabase
+### 6️⃣ إعداد Vercel في Supabase
 
 1. ارجع إلى Supabase
 2. اذهب إلى **Authentication** → **URL Configuration**
 3. في **Redirect URLs**، أضف:
 ```
-https://your-site-name.netlify.app/**
+https://your-project-name.vercel.app/**
+https://your-project-name-git-main-username.vercel.app/**
 ```
 
 4. في **Site URL**، أضف:
 ```
-https://your-site-name.netlify.app
+https://your-project-name.vercel.app
 ```
+
+> الرابط الثاني يفيد روابط المعاينة (Preview Deployments) حتى يعمل تسجيل الدخول عليها أيضاً.
 
 ### 7️⃣ تفعيل إعادة تعيين كلمة المرور
 
@@ -91,7 +95,7 @@ https://your-site-name.netlify.app
 
 ### تسجيل الدخول
 
-1. افتح موقعك على Netlify
+1. افتح موقعك على Vercel
 2. استخدم البريد وكلمة المرور اللذين أنشأتهما في الخطوة 2
 3. يجب أن يتم تسجيل الدخول بنجاح
 
@@ -118,11 +122,11 @@ https://your-site-name.netlify.app
 - كل جدول محمي بـ RLS
 
 ✅ **متغيرات بيئية**
-- المفاتيح في Netlify Environment Variables
+- المفاتيح في Vercel Environment Variables
 - ليست في الكود أو Git
 
 ✅ **HTTPS**
-- Netlify يوفر HTTPS تلقائياً
+- Vercel يوفر HTTPS تلقائياً
 - جميع الاتصالات مشفرة
 
 ### نصائح إضافية:
@@ -162,33 +166,31 @@ https://your-site-name.netlify.app
 
 ### "CORS error"
 
-- أضف رابط Netlify في **Redirect URLs** في Supabase
+- أضف رابط Vercel في **Redirect URLs** في Supabase
 - تأكد من إضافة `/**` في نهاية الرابط
 
-### "Build failed on Netlify"
+### "Build failed on Vercel"
 
-- تأكد من إضافة المتغيرات البيئية
-- تحقق من **Deploy logs** في Netlify
+- تأكد من إضافة المتغيرات البيئية لبيئة Production
+- تحقق من **Deployments → Build Logs** في Vercel
 - تأكد من صحة المفاتيح
 
-### "Secrets scanning found secrets in build"
+### "Missing Supabase environment variables"
 
-Netlify يفحص مخرجات البناء عن قيم المتغيرات البيئية. مفاتيح `NEXT_PUBLIC_SUPABASE_URL` و `NEXT_PUBLIC_SUPABASE_ANON_KEY` عامة عمداً (Next.js يضعها في كود المتصفح، وSupabase يعتمد على RLS للحماية).
+هذه الرسالة تظهر في المتصفح عندما لا تكون المتغيرات موجودة وقت البناء:
 
-المشروع يعطّل فحص هذين المفتاحين عبر `SECRETS_SCAN_OMIT_KEYS` في `netlify.toml`. لا تعطّل فحص الأسرار بالكامل (`SECRETS_SCAN_ENABLED=false`).
+1. افتح مشروعك في Vercel ← **Settings → Environment Variables**
+2. تأكد من وجود `NEXT_PUBLIC_SUPABASE_URL` و `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+3. بعد تعديل المتغيرات، أعد النشر (**Deployments → ⋯ → Redeploy**) لأن المتغيرات `NEXT_PUBLIC_*` تُدمج داخل البناء
 
-إذا استمر الفشل، أضف نفس المتغير في Netlify Dashboard:
-
-```
-SECRETS_SCAN_OMIT_KEYS=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY
-```
+> ملاحظة: مفاتيح `NEXT_PUBLIC_*` عامة عمداً (Next.js يضعها في كود المتصفح)، والحماية الفعلية تأتي من Row Level Security في Supabase.
 
 ---
 
 ## 📞 الدعم
 
 - [Supabase Documentation](https://supabase.com/docs)
-- [Netlify Documentation](https://docs.netlify.com)
+- [Vercel Documentation](https://vercel.com/docs)
 - [Next.js Documentation](https://nextjs.org/docs)
 
 ---
@@ -199,7 +201,7 @@ SECRETS_SCAN_OMIT_KEYS=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY
 - [ ] إنشاء حساب المستخدم
 - [ ] تشغيل ملف schema.sql
 - [ ] نسخ API Keys
-- [ ] إضافة المتغيرات في Netlify
+- [ ] إضافة المتغيرات في Vercel
 - [ ] إعداد Redirect URLs
 - [ ] Deploy الموقع
 - [ ] اختبار تسجيل الدخول
