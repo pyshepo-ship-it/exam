@@ -1144,6 +1144,15 @@ export async function submitPublicHonoree(h: any): Promise<void> {
   }
 }
 
+/** جلب صف طالب واحد بالمعرف — مسار دخول الطالب من جهازه (لا يحمل قائمة الطلاب) */
+export async function fetchStudentById(studentId: string): Promise<any | null> {
+  const sb = getSupabase()
+  if (!sb || !studentId) return null
+  const { data, error } = await sb.from("students").select("*").eq("id", studentId).maybeSingle()
+  if (error || !data) return null
+  return fromStudentRow(data)
+}
+
 /** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
 export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
   const sb = getSupabase();

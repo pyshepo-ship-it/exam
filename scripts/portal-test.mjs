@@ -54,7 +54,8 @@ const submitGroupTransferRequest = async (request) => {
 }
 const exportToPDF = async () => true
 const printElement = () => {}
-const fetchRegistrationRequestByEmail = async () => null`
+const fetchRegistrationRequestByEmail = async () => null
+const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)
 const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")
@@ -705,6 +706,42 @@ const at5 = PC.attemptsStatus(limitExam, [...attemptsAll, { examId: "ex-limit", 
 eq("الزائر بعد محاولتين → ممنوع", at5.allowed === false && at5.used === 2)
 const at6 = PC.attemptsStatus(limitExam, attemptsAll, "طالب-آخر")
 eq("محاولات طالب آخر لا تُحسب عليّ", at6.allowed === true && at6.used === 0)
+
+// ============================================================
+section("سيناريو 17: دخول الطالب من جهازه بعد موافقة المدرس من جهاز آخر")
+
+SA.resetRateLimits()
+const crossReg = await SA.registerStudentAccount({ name: "طالب عبر الأجهزة", phone: "01200000111", guardianPhone: "01200000112", email: "cross-device@test.com", password: "cross123", confirmPassword: "cross123", gradeId: "g-1", groupId: "gr-1" })
+eq("التسجيل من جهاز الطالب ينجح", crossReg.ok === true, crossReg.error || "")
+const crossReq = DS.getRegistrationRequests().find(r => r.email === "cross-device@test.com")
+const crossOutcome = SA.approveRegistrationRequest(crossReq.id)
+eq("الموافقة من جهاز المدرس تنشئ الطالب", crossOutcome.ok === true && !!crossOutcome.studentId, crossOutcome.message || "")
+const crossStudent = DS.getStudents().find(s => s.id === crossOutcome.studentId)
+
+// محاكاة جهاز الطالب الآخر: بلا جدول طلاب وبلا حسابات — فقط طلبه المسجل
+const savedStudents = DS.getStudents()
+const savedAccounts = DS.getStudentAccounts()
+DS.saveStudents([])
+DS.saveStudentAccounts([])
+globalThis.__remoteStudents = { [crossStudent.id]: crossStudent }
+
+const crossLogin = await SA.portalLogin("cross-device@test.com", "cross123")
+eq("الدخول من الجهاز الخالي ينجح بجلب الطالب من السحابة", crossLogin.ok === true && crossLogin.session.studentId === crossStudent.id, crossLogin.error || "")
+SA.portalLogout()
+eq("صف الطالب أُحفظ محلياً بعد الدخول (البوابة تعمل كاملة)", DS.getStudents().some(s => s.id === crossStudent.id))
+
+// بلا سحابة (فشل الجلب) → رسالة تشجع إعادة المحاولة لا «راجع المعلم»
+globalThis.__remoteStudents = {}
+DS.saveStudents([])
+DS.saveStudentAccounts([])
+const offlineLogin = await SA.portalLogin("cross-device@test.com", "cross123")
+eq("تعذر الجلب → رسالة إعادة محاولة واضحة", offlineLogin.ok === false && /أعد المحاولة/.test(offlineLogin.error || ""), offlineLogin.error || "")
+SA.portalLogout()
+
+// استعادة
+DS.saveStudents(savedStudents)
+DS.saveStudentAccounts(savedAccounts)
+globalThis.__remoteStudents = undefined
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

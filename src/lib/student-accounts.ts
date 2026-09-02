@@ -27,7 +27,8 @@ import {
   getSetting,
   saveSetting,
 } from "./data-storage"
-import { submitRegistrationRequest, submitGroupTransferRequest, fetchRegistrationRequestByEmail } from "./supabase/sync"
+import {
+  fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest, fetchRegistrationRequestByEmail } from "./supabase/sync"
 
 // ------------------------------------------------------------
 // إعدادات المعلم (مفاتيح عامة تُزامن عبر Supabase)
@@ -426,8 +427,21 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     return { ok: false, error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
   }
 
-  const student = getStudents().find(s => s.id === studentId)
-  if (!student) return { ok: false, error: "بيانات الطالب غير موجودة — يرجى التواصل مع المعلم" }
+  // جهاز الطالب لا يحمل قائمة الطلاب — إن لم يوجد محلياً نجيبه من السحابة ونحفظه
+  let student = getStudents().find(s => s.id === studentId)
+  if (!student) {
+    const remote = await fetchStudentById(studentId).catch(() => null)
+    if (remote) {
+      try { saveStudents([...getStudents(), remote]) } catch { /* تجاهل */ }
+      student = remote
+    }
+  }
+  if (!student) {
+    return {
+      ok: false,
+      error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
+    }
+  }
   if (student.status === "inactive") {
     return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
   }

@@ -158,7 +158,15 @@ export default function RequestsPage() {
       toast.success(res.message, { duration: 6000 })
       // مزامنة فورية: الطالب ينتظر دخوله على جهاز آخر
       setSyncing(true)
-      try { await forcePushAll() } catch { /* تجاهل */ }
+      try {
+        const push = await forcePushAll()
+        if (push && !push.ok && !/غير مُعدّ/.test(push.error || "")) {
+          toast.error(
+            "⚠️ تم الاعتماد على هذا الجهاز فقط وتعذرت المزامنة مع السحابة — الطالب لن يستطيع الدخول! اضغط «تحديث الطلبات من الموقع» بعد قليل وأعد المحاولة",
+            { duration: 10000 }
+          )
+        }
+      } catch { /* تجاهل */ }
       setSyncing(false)
       refresh()
     } else {
