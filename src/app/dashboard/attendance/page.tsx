@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import toast from "react-hot-toast"
+import { formatTime12 } from "@/lib/utils"
 import {
   Grade,
   Student,
@@ -241,8 +242,8 @@ export default function AttendancePage() {
               ))
             )}
             {group.startTime && (
-              <span className="text-xs text-gray-400 mr-auto">
-                {group.startTime} — {group.endTime}
+              <span className="text-xs text-gray-500 dark:text-gray-400 font-medium mr-auto">
+                {formatTime12(group.startTime)} — {formatTime12(group.endTime)}
               </span>
             )}
           </div>

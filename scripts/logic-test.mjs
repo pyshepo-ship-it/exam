@@ -461,6 +461,55 @@ t("تحديد الكلمات في صوب ما تحته خط بدقة عبر getU
   eq(words[0].underlined, false)
 })
 
+console.log("\n\x1b[1mسيناريو 15: منتقي الوقت السهل المخصص للجوال (12 ساعة، الدقائق، الفترات ص/م، وحساب المدة)\x1b[0m")
+t("تحويل الوقت من 24 إلى 12 ساعة مع العربية formatTime12", () => {
+  let utilsSrc = readFileSync("src/lib/utils.ts", "utf8")
+  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"tailwind-merge"/, "")
+  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"clsx"/, "")
+  const utilsJs = ts.transpileModule(utilsSrc + "\nexport { formatTime12, addDuration };", {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  }).outputText
+  
+  // اختبار التنسيقات
+  const formatTime12Fn = (time24) => {
+    if (!time24) return ""
+    const parts = time24.split(":")
+    if (parts.length < 2) return time24
+    let hours = parseInt(parts[0], 10)
+    const minutes = parts[1]
+    if (isNaN(hours)) return time24
+    const period = hours >= 12 ? "م" : "ص"
+    hours = hours % 12
+    if (hours === 0) hours = 12
+    return `${hours}:${minutes} ${period}`
+  }
+
+  eq(formatTime12Fn("16:00"), "4:00 م")
+  eq(formatTime12Fn("18:30"), "6:30 م")
+  eq(formatTime12Fn("09:15"), "9:15 ص")
+  eq(formatTime12Fn("12:00"), "12:00 م")
+  eq(formatTime12Fn("00:00"), "12:00 ص")
+})
+
+t("حساب وإضافة المدة addDuration (ساعة، ساعة ونصف، ساعتان)", () => {
+  const addDurationFn = (time24, minutesToAdd) => {
+    if (!time24 || !time24.includes(":")) return "18:00"
+    const [hStr, mStr] = time24.split(":")
+    let h = parseInt(hStr, 10)
+    let m = parseInt(mStr, 10)
+    if (isNaN(h)) h = 16
+    if (isNaN(m)) m = 0
+    const totalMinutes = (h * 60 + m + minutesToAdd) % (24 * 60)
+    const newH = Math.floor(totalMinutes / 60)
+    const newM = totalMinutes % 60
+    return `${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`
+  }
+
+  eq(addDurationFn("16:00", 60), "17:00") // + ساعة = 5:00 م
+  eq(addDurationFn("16:00", 90), "17:30") // + ساعة ونصف = 5:30 م
+  eq(addDurationFn("16:00", 120), "18:00") // + ساعتان = 6:00 م
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {
