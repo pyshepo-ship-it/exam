@@ -40,7 +40,7 @@ function TypeSeal({ question }: { question: Question }) {
   const meta = getQuestionTypeMeta(question.questionType)
   return (
     <span
-      className="inline-flex items-center justify-center min-w-[2.2rem] h-5 px-1.5 rounded text-[10px] font-black text-white shadow-xs shrink-0"
+      className="inline-flex items-center justify-center min-w-[2.2rem] h-5 px-1.5 rounded text-[10px] font-black text-white shadow-xs shrink-0 whitespace-nowrap"
       style={{ background: meta.accent }}
     >
       {meta.paperMark}
@@ -91,7 +91,7 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
     <div className="exam-sub text-[13px] sm:text-[14px] leading-relaxed">
       {question.questionType === 1 && (
         <div>
-          <p>
+          <p className="font-medium text-right">
             <span className="font-bold">{index + 1} – </span>
             {sq.questionText}
           </p>
@@ -105,25 +105,25 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
         </div>
       )}
       {question.questionType === 2 && (
-        <p>
+        <p className="font-medium text-right">
           <span className="font-bold">{index + 1} – </span>
           <CompleteLine sq={sq} />
         </p>
       )}
       {question.questionType === 3 && (
-        <div className="flex items-center justify-between gap-2 w-full py-0.5">
+        <div className="flex items-center justify-between gap-3 w-full py-0.5 flex-nowrap">
           <p className="min-w-0 flex-1 text-right text-[13px] sm:text-[14px] leading-snug break-words">
             <span className="font-bold">{index + 1} – </span>
             {sq.questionText}
           </p>
-          <span className="shrink-0 inline-flex items-center justify-center min-w-[3.2rem] h-6 px-1 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
+          <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.4rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
             (&nbsp;&nbsp;&nbsp;&nbsp;)
           </span>
         </div>
       )}
       {question.questionType === 4 && (
         <div>
-          <p>
+          <p className="font-medium text-right">
             <span className="font-bold">{index + 1} – </span>
             {sq.questionText}
           </p>
@@ -136,7 +136,7 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
       )}
       {question.questionType === 5 && (
         <div>
-          <p>
+          <p className="font-medium text-right">
             <span className="font-bold">{index + 1} – </span>
             <CorrectionLine sq={sq} />
           </p>
@@ -168,7 +168,7 @@ function QuestionBlock({
 
   const headerEl = (
     <div
-      className="relative z-10 flex items-center justify-between gap-2 px-3 py-1.5"
+      className="relative z-10 flex items-center justify-between gap-2.5 px-3 py-1.5 w-full flex-nowrap"
       style={
         colorful
           ? {
@@ -185,13 +185,13 @@ function QuestionBlock({
           : undefined
       }
     >
-      <div className="flex items-center gap-2 flex-wrap min-w-0">
+      <div className="flex items-center gap-2 min-w-0 flex-1 flex-nowrap">
         <TypeSeal question={question} />
-        <h3 className="font-extrabold text-sm sm:text-[14px] m-0 leading-tight">
+        <h3 className="font-extrabold text-sm sm:text-[14px] m-0 leading-tight min-w-0 break-words">
           السؤال {ordinal}: {header}
         </h3>
       </div>
-      <span className="relative z-10 shrink-0 text-[11px] font-bold px-1.5 py-0.5 rounded bg-white/90 dark:bg-gray-900/90 shadow-2xs border border-current/25">
+      <span className="relative z-10 shrink-0 whitespace-nowrap text-xs font-bold px-2.5 py-0.5 rounded bg-white/95 dark:bg-gray-900/95 shadow-2xs border border-current/25 tracking-normal">
         ({marks} درجة)
       </span>
     </div>
@@ -199,7 +199,7 @@ function QuestionBlock({
 
   return (
     <section
-      className="exam-q relative mb-3 overflow-hidden"
+      className="exam-q relative mb-3 overflow-hidden w-full box-border"
       style={{
         border:
           template === "classic"
@@ -243,10 +243,10 @@ function StudentFields() {
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-2 pt-1.5 border-t border-dashed border-current/25">
       <p className="font-semibold text-right">
-        اسم الطالب: <span className="inline-block min-w-[10rem] border-b border-dotted border-current" />
+        اسم الطالب: <span className="inline-block min-w-[8rem] sm:min-w-[10rem] border-b border-dotted border-current" />
       </p>
       <p className="font-semibold text-right">
-        الفصل: <span className="inline-block min-w-[6rem] border-b border-dotted border-current" />
+        الفصل: <span className="inline-block min-w-[5rem] sm:min-w-[6rem] border-b border-dotted border-current" />
       </p>
     </div>
   )
@@ -280,7 +280,7 @@ function PaperHeader({
 
   if (template === "classic") {
     return (
-      <header className="text-center border-2 border-double border-[#1e3a5f] p-2.5 sm:p-3 mb-3 rounded-lg">
+      <header className="text-center border-2 border-double border-[#1e3a5f] p-2.5 sm:p-3 mb-3 rounded-lg w-full box-border">
         {schoolName && <p className="text-[11px] text-[#1e3a5f] font-bold mb-0.5">{schoolName}</p>}
         <h1 className="text-lg sm:text-xl font-black text-[#1e3a5f] my-0.5">{exam.title}</h1>
         <p className="text-xs sm:text-sm font-semibold text-gray-800">{subtitle}</p>
@@ -296,7 +296,7 @@ function PaperHeader({
 
   if (template === "lab") {
     return (
-      <header className="relative overflow-hidden rounded-xl border-2 border-teal-700 bg-gradient-to-l from-teal-50 to-cyan-50 p-2.5 sm:p-3 mb-3 text-center">
+      <header className="relative overflow-hidden rounded-xl border-2 border-teal-700 bg-gradient-to-l from-teal-50 to-cyan-50 p-2.5 sm:p-3 mb-3 text-center w-full box-border">
         {schoolName && <p className="text-[11px] text-teal-700 font-bold mb-0.5">{schoolName}</p>}
         <h1 className="text-lg sm:text-xl font-black text-teal-900 my-0.5">{exam.title}</h1>
         <p className="text-xs sm:text-sm font-semibold text-teal-800">{subtitle}</p>
@@ -312,7 +312,7 @@ function PaperHeader({
 
   if (template === "life") {
     return (
-      <header className="relative overflow-hidden rounded-xl border-2 border-green-700 bg-gradient-to-l from-green-50 to-emerald-50 p-2.5 sm:p-3 mb-3 text-center">
+      <header className="relative overflow-hidden rounded-xl border-2 border-green-700 bg-gradient-to-l from-green-50 to-emerald-50 p-2.5 sm:p-3 mb-3 text-center w-full box-border">
         {schoolName && <p className="text-[11px] text-green-700 font-bold mb-0.5">{schoolName}</p>}
         <h1 className="text-lg sm:text-xl font-black text-green-900 my-0.5">{exam.title}</h1>
         <p className="text-xs sm:text-sm font-semibold text-green-800">{subtitle}</p>
@@ -328,7 +328,7 @@ function PaperHeader({
 
   if (template === "cosmos") {
     return (
-      <header className="relative overflow-hidden rounded-xl border-2 border-[#c5a059] bg-[#1e1b4b] text-[#fde68a] p-2.5 sm:p-3 mb-3 text-center">
+      <header className="relative overflow-hidden rounded-xl border-2 border-[#c5a059] bg-[#1e1b4b] text-[#fde68a] p-2.5 sm:p-3 mb-3 text-center w-full box-border">
         {schoolName && <p className="text-[11px] opacity-90 font-bold mb-0.5">{schoolName}</p>}
         <h1 className="text-lg sm:text-xl font-black my-0.5 text-white">{exam.title}</h1>
         <p className="text-xs sm:text-sm font-semibold text-[#fde68a]">{subtitle}</p>
@@ -346,7 +346,7 @@ function PaperHeader({
 
   // explorer
   return (
-    <header className="relative overflow-hidden rounded-xl border-2 border-indigo-400 bg-gradient-to-l from-indigo-50 via-amber-50 to-emerald-50 p-2.5 sm:p-3 mb-3 text-center">
+    <header className="relative overflow-hidden rounded-xl border-2 border-indigo-400 bg-gradient-to-l from-indigo-50 via-amber-50 to-emerald-50 p-2.5 sm:p-3 mb-3 text-center w-full box-border">
       {schoolName && <p className="text-[11px] text-indigo-700 font-bold mb-0.5">{schoolName}</p>}
       <h1 className="text-lg sm:text-xl font-black text-indigo-950 my-0.5">{exam.title}</h1>
       <p className="text-xs sm:text-sm font-semibold text-indigo-800">{subtitle}</p>
@@ -371,7 +371,7 @@ function PageTwoMiniBanner({
 }) {
   return (
     <div
-      className="relative z-10 flex items-center justify-between px-3 py-1.5 mb-2.5 rounded-lg border border-current/20 text-xs font-bold"
+      className="relative z-10 flex items-center justify-between px-3 py-1.5 mb-2.5 rounded-lg border border-current/20 text-xs font-bold w-full box-border"
       style={{
         background:
           template === "classic"
@@ -385,9 +385,9 @@ function PageTwoMiniBanner({
             : "#4f46e510",
       }}
     >
-      <span>تابع: {exam.title}</span>
-      <span className="opacity-80">{gradeName}</span>
-      <span className="text-[11px] px-2 py-0.5 rounded bg-white/80 dark:bg-gray-900/80 border border-current/15">
+      <span className="truncate min-w-0">تابع: {exam.title}</span>
+      <span className="opacity-80 shrink-0 px-2">{gradeName}</span>
+      <span className="text-[11px] px-2 py-0.5 rounded bg-white/80 dark:bg-gray-900/80 border border-current/15 shrink-0 whitespace-nowrap">
         الصفحة ٢ من ٢
       </span>
     </div>
@@ -434,62 +434,64 @@ export function ExamPaper({
   // الامتحان في صفحة واحدة
   if (isSinglePage || page2Questions.length === 0) {
     return (
-      <article
-        className="exam-paper exam-page exam-page-single relative font-arabic print:shadow-none flex flex-col justify-between"
-        dir="rtl"
-        lang="ar"
-        style={shellBase}
-      >
-        {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-        <div className="relative z-10 flex-1">
-          <PaperHeader
-            exam={exam}
-            gradeName={gradeName}
-            template={template}
-            teacherName={teacher}
-            schoolName={school}
-            totalMarks={totalMarks}
-          />
+      <div className="w-full max-w-full mx-auto" dir="rtl" lang="ar">
+        <article
+          className="exam-paper exam-page exam-page-single relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto"
+          dir="rtl"
+          lang="ar"
+          style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
+        >
+          {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
+          <div className="relative z-10 flex-1 w-full">
+            <PaperHeader
+              exam={exam}
+              gradeName={gradeName}
+              template={template}
+              teacherName={teacher}
+              schoolName={school}
+              totalMarks={totalMarks}
+            />
 
-          <div className="space-y-1">
-            {page1Questions.map(({ question, globalIndex }) => (
-              <QuestionBlock
-                key={question.id}
-                question={question}
-                index={globalIndex}
-                template={template}
-                gradeName={gradeName}
-                showDecorations={decorations}
-              />
-            ))}
+            <div className="space-y-1 w-full">
+              {page1Questions.map(({ question, globalIndex }) => (
+                <QuestionBlock
+                  key={question.id}
+                  question={question}
+                  index={globalIndex}
+                  template={template}
+                  gradeName={gradeName}
+                  showDecorations={decorations}
+                />
+              ))}
+            </div>
+
+            {exam.questions.length === 0 && (
+              <p className="text-center text-sm opacity-60 py-8">لم تُضف أسئلة بعد</p>
+            )}
           </div>
 
-          {exam.questions.length === 0 && (
-            <p className="text-center text-sm opacity-60 py-8">لم تُضف أسئلة بعد</p>
-          )}
-        </div>
-
-        <footer className="relative z-10 mt-auto pt-3 text-center border-t border-dashed border-current/25">
-          <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
-          <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
-          <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>
-        </footer>
-      </article>
+          <footer className="relative z-10 mt-auto pt-3 text-center border-t border-dashed border-current/25 w-full">
+            <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
+            <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
+            <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>
+          </footer>
+        </article>
+      </div>
     )
   }
 
   // الامتحان مقسم على صفحتين A4 بالضبط
   return (
-    <div className="space-y-6 print:space-y-0">
+    <div className="w-full max-w-full mx-auto space-y-6 print:space-y-0" dir="rtl" lang="ar">
       {/* الصفحة الأولى */}
       <article
-        className="exam-paper exam-page exam-page-1 relative font-arabic print:shadow-none flex flex-col justify-between"
+        className="exam-paper exam-page exam-page-1 relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto"
         dir="rtl"
         lang="ar"
-        style={shellBase}
+        style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
       >
         {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-        <div className="relative z-10 flex-1">
+        <div className="relative z-10 flex-1 w-full">
           <PaperHeader
             exam={exam}
             gradeName={gradeName}
@@ -499,7 +501,7 @@ export function ExamPaper({
             totalMarks={totalMarks}
           />
 
-          <div className="space-y-1">
+          <div className="space-y-1 w-full">
             {page1Questions.map(({ question, globalIndex }) => (
               <QuestionBlock
                 key={question.id}
@@ -513,24 +515,24 @@ export function ExamPaper({
           </div>
         </div>
 
-        <div className="relative z-10 mt-auto pt-2 text-center text-xs font-bold opacity-75 border-t border-dashed border-current/20 flex items-center justify-between">
-          <span className="text-[11px]">الصفحة ١ من ٢</span>
-          <span className="text-[11px] font-semibold">بقية الأسئلة في الصفحة التالية ⟵</span>
+        <div className="relative z-10 mt-auto pt-2 text-center text-xs font-bold opacity-75 border-t border-dashed border-current/20 flex items-center justify-between w-full">
+          <span className="text-[11px] whitespace-nowrap">الصفحة ١ من ٢</span>
+          <span className="text-[11px] font-semibold whitespace-nowrap">بقية الأسئلة في الصفحة التالية ⟵</span>
         </div>
       </article>
 
       {/* الصفحة الثانية */}
       <article
-        className="exam-paper exam-page exam-page-2 relative font-arabic print:shadow-none flex flex-col justify-between"
+        className="exam-paper exam-page exam-page-2 relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto"
         dir="rtl"
         lang="ar"
-        style={shellBase}
+        style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
       >
         {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-        <div className="relative z-10 flex-1">
+        <div className="relative z-10 flex-1 w-full">
           <PageTwoMiniBanner exam={exam} gradeName={gradeName} template={template} />
 
-          <div className="space-y-1">
+          <div className="space-y-1 w-full">
             {page2Questions.map(({ question, globalIndex }) => (
               <QuestionBlock
                 key={question.id}
@@ -544,7 +546,7 @@ export function ExamPaper({
           </div>
         </div>
 
-        <footer className="relative z-10 mt-auto pt-2.5 text-center border-t border-dashed border-current/25">
+        <footer className="relative z-10 mt-auto pt-2.5 text-center border-t border-dashed border-current/25 w-full">
           <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
           <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
           <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>

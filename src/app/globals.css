@@ -155,6 +155,7 @@
 /* ورقة الامتحان — طباعة ومعاينة A4 */
 .exam-paper {
   font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+  width: 100%;
   max-width: 190mm;
   margin-inline: auto;
   direction: rtl;
@@ -167,7 +168,7 @@
 
 @page {
   size: A4 portrait;
-  margin: 8mm 8mm;
+  margin: 6mm 6mm;
 }
 
 @media print {
@@ -177,7 +178,7 @@
     box-shadow: none !important;
     border-width: 2px !important;
     max-width: 190mm !important;
-    width: 190mm !important;
+    width: 100% !important;
     min-height: 275mm !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
@@ -214,8 +215,8 @@
   body.printing-exam #exam-preview-content {
     position: absolute !important;
     inset: 0 auto auto 0;
-    width: 190mm;
-    max-width: 190mm;
+    width: 100% !important;
+    max-width: 190mm !important;
     margin: 0 auto;
     background: #fff !important;
     overflow: visible !important;

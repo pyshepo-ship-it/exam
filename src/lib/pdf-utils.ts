@@ -194,88 +194,114 @@ export const exportTableToPDF = async (
   pdf.save(`${filename}.pdf`)
 }
 
-/** طباعة A4 من الصفحة الحالية مع الإبقاء على خطوط العربية وتنسيقات Tailwind */
-export const printA4 = () => {
-  const cleanup = () => {
-    document.body.classList.remove("printing-exam")
-    window.removeEventListener("afterprint", cleanup)
-  }
-  document.body.classList.add("printing-exam")
-  window.addEventListener("afterprint", cleanup)
-  window.print()
-  window.setTimeout(cleanup, 1500)
-}
-
-// طباعة عنصر مباشرة
+// طباعة عنصر مباشرة بشكل نظيف ومستقل بدون تأثر بحجم النوافذ المنبثقة
 export const printElement = (elementId: string) => {
   const element = document.getElementById(elementId)
   if (!element) {
     throw new Error("Element not found")
   }
 
-  const printWindow = window.open("", "", "width=800,height=600")
-  if (!printWindow) return
+  // جمع كافة التنسيقات والخطوط من الصفحة الحالية
+  let stylesHtml = ""
+  document.querySelectorAll('style, link[rel="stylesheet"]').forEach(el => {
+    stylesHtml += el.outerHTML
+  })
 
-  printWindow.document.write(`
+  // إنشاء iframe مخفي للطباعة النظيفة
+  let printIframe = document.getElementById("exam-print-iframe") as HTMLIFrameElement | null
+  if (printIframe) {
+    printIframe.remove()
+  }
+
+  printIframe = document.createElement("iframe")
+  printIframe.id = "exam-print-iframe"
+  printIframe.style.position = "fixed"
+  printIframe.style.right = "0"
+  printIframe.style.bottom = "0"
+  printIframe.style.width = "0"
+  printIframe.style.height = "0"
+  printIframe.style.border = "0"
+  printIframe.style.visibility = "hidden"
+  document.body.appendChild(printIframe)
+
+  const doc = printIframe.contentWindow?.document
+  if (!doc) {
+    window.print()
+    return
+  }
+
+  doc.open()
+  doc.write(`
     <!DOCTYPE html>
     <html dir="rtl" lang="ar">
     <head>
       <meta charset="UTF-8">
-      <title>طباعة</title>
-      <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+      <title>طباعة ورقة الاختبار</title>
+      <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+      ${stylesHtml}
       <style>
+        @page {
+          size: A4 portrait;
+          margin: 6mm 6mm 6mm 6mm;
+        }
         * {
-          font-family: 'Cairo', sans-serif;
-          box-sizing: border-box;
+          box-sizing: border-box !important;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
         }
-        body {
-          margin: 0;
-          padding: 20px;
-          direction: rtl;
+        html, body {
+          margin: 0 !important;
+          padding: 0 !important;
+          background: #ffffff !important;
+          font-family: 'Cairo', 'Segoe UI', Tahoma, Arial, sans-serif !important;
+          direction: rtl !important;
+          text-align: right !important;
+          width: 100% !important;
         }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 20px 0;
+        .exam-page {
+          width: 100% !important;
+          max-width: 190mm !important;
+          margin: 0 auto !important;
+          min-height: 275mm !important;
+          box-sizing: border-box !important;
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
+          display: flex !important;
+          flex-direction: column !important;
+          justify-content: space-between !important;
         }
-        th, td {
-          border: 1px solid #e5e7eb;
-          padding: 8px 12px;
-          text-align: right;
+        .exam-page-1 {
+          page-break-after: always !important;
+          break-after: page !important;
         }
-        th {
-          background: #6366f1;
-          color: white;
+        .exam-page-2, .exam-page-single {
+          page-break-after: avoid !important;
+          break-after: avoid !important;
         }
-        .header {
-          text-align: center;
-          margin-bottom: 30px;
-        }
-        .header h1 {
-          color: #1f2937;
-          margin: 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 30px;
-          color: #6b7280;
-          font-size: 12px;
-        }
-        @media print {
-          body { padding: 0; }
-          .no-print { display: none; }
+        .exam-q {
+          page-break-inside: avoid !important;
+          break-inside: avoid !important;
         }
       </style>
     </head>
     <body>
-      ${element.innerHTML}
+      ${element.outerHTML}
     </body>
     </html>
   `)
+  doc.close()
 
-  printWindow.document.close()
   setTimeout(() => {
-    printWindow.print()
-    printWindow.close()
-  }, 500)
+    try {
+      printIframe?.contentWindow?.focus()
+      printIframe?.contentWindow?.print()
+    } catch {
+      window.print()
+    }
+  }, 350)
+}
+
+/** طباعة A4 من الصفحة الحالية */
+export const printA4 = () => {
+  printElement("exam-preview-content")
 }

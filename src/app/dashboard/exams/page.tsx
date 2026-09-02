@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import toast from "react-hot-toast"
-import { exportToPDF, printA4 } from "@/lib/pdf-utils"
+import { exportToPDF, printElement, printA4 } from "@/lib/pdf-utils"
 import {
   Select,
   SelectContent,
@@ -1276,12 +1276,12 @@ export default function ExamsPage() {
 
       {/* Preview */}
       <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
-        <DialogContent className="inset-0 left-0 top-0 h-[100dvh] w-[100dvw] max-w-none max-h-[100dvh] translate-x-0 translate-y-0 rounded-none p-3 overflow-y-auto sm:inset-auto sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-4xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6">
+        <DialogContent className="w-[96vw] max-w-4xl max-h-[92vh] overflow-y-auto p-3 sm:p-6 mx-auto">
           <DialogHeader className="no-print">
             <DialogTitle>معاينة الورقة — A4</DialogTitle>
           </DialogHeader>
           {previewExam && (
-            <div id="exam-preview-content" className="bg-white">
+            <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
               <ExamPaper
                 exam={previewExam}
                 gradeName={getGradeName(previewExam.gradeId)}
@@ -1289,17 +1289,18 @@ export default function ExamsPage() {
               />
             </div>
           )}
-          <DialogFooter className="no-print">
+          <DialogFooter className="no-print gap-2">
             <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>إغلاق</Button>
             <Button
               variant="outline"
               onClick={() => {
                 try {
-                  printA4()
+                  printElement("exam-preview-content")
                 } catch {
                   toast.error("تعذر فتح نافذة الطباعة")
                 }
               }}
+              className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950"
             >
               <Printer className="w-4 h-4" />
               <span>طباعة A4</span>
@@ -1310,11 +1311,11 @@ export default function ExamsPage() {
                   await exportToPDF(
                     "exam-preview-content",
                     `${previewExam?.title || "اختبار"}-${new Date().toLocaleDateString("ar-EG")}`,
-                    { orientation: "portrait", scale: 2 }
+                    { orientation: "portrait" }
                   )
                   toast.success("تم تحميل الاختبار بنجاح")
-                } catch {
-                  toast.error("حدث خطأ أثناء التصدير")
+                } catch (err: any) {
+                  toast.error(`حدث خطأ أثناء التصدير: ${err?.message || err}`)
                 }
               }}
               className="bg-gradient-to-r from-purple-500 to-pink-600"
