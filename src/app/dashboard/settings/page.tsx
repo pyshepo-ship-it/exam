@@ -19,6 +19,8 @@ import {
   FolderOpen,
   RotateCcw,
   MessageCircle,
+  Loader2,
+  XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -73,7 +75,7 @@ import {
   saveSetting,
   YearArchive,
 } from "@/lib/data-storage"
-import { clearAllRemote, syncAllFromLocal, pullAllData } from "@/lib/supabase/sync"
+import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, type ConnectionCheck } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -104,6 +106,21 @@ export default function SettingsPage() {
 
   const [supabaseConnected, setSupabaseConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [conn, setConn] = useState<ConnectionCheck | null>(null)
+
+  // فحص حقيقي: كتابة ثم قراءة من Supabase + عدّ السجلات الفعلية داخل قاعدة البيانات
+  const runConnectionCheck = async (silent = false) => {
+    setChecking(true)
+    const res = await checkSupabaseConnection()
+    setConn(res)
+    setChecking(false)
+    if (!silent) {
+      if (res.ok) toast.success(`الاتصال سليم — تم اختبار الكتابة والقراءة فعلياً (${res.latencyMs} ms)`)
+      else toast.error(res.error ? `فشل الفحص: ${res.error}` : "فشل الفحص — البيانات لا تُحفظ في قاعدة البيانات")
+    }
+    return res
+  }
 
   // بيانات التواصل (رقم واتساب في الصفحة الرئيسية)
   const [whatsappInput, setWhatsappInput] = useState("")
@@ -161,6 +178,7 @@ export default function SettingsPage() {
   useEffect(() => {
     refreshData()
     setSupabaseConnected(isSupabaseConfigured())
+    if (isSupabaseConfigured()) runConnectionCheck(true)
     setWhatsappInput(getSetting("whatsappNumber"))
 
     // Get user email from Supabase
@@ -654,6 +672,89 @@ export default function SettingsPage() {
                 ))}
               </div>
 
+              {/* التحقق من الحفظ في قاعدة البيانات */}
+              {supabaseConnected && (
+                <div className={`rounded-xl border p-4 space-y-3 ${
+                  conn && !conn.ok
+                    ? "border-red-300 bg-red-50 dark:bg-red-950/20"
+                    : "border-green-300 bg-green-50 dark:bg-green-950/20"
+                }`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {checking || !conn ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+                      ) : conn.ok ? (
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <XCircle className="w-5 h-5 text-red-600" />
+                      )}
+                      <div>
+                        <p className="font-semibold text-gray-900 dark:text-white">
+                          التحقق من الحفظ في قاعدة البيانات
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          {checking || !conn
+                            ? "جاري اختبار الكتابة والقراءة على Supabase..."
+                            : conn.ok
+                            ? `تم اختبار كتابة سجل حقيقي وقراءته من Supabase بنجاح (${conn.latencyMs} ms)`
+                            : conn.error || "تعذّر الكتابة أو القراءة — بياناتك الآن محفوظة في المتصفح فقط"}
+                        </p>
+                      </div>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => runConnectionCheck()} disabled={checking}>
+                      <RotateCcw className={`w-4 h-4 ${checking ? "animate-spin" : ""}`} />
+                      <span>إعادة الفحص</span>
+                    </Button>
+                  </div>
+
+                  {conn?.ok && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-500 text-xs">
+                            <th className="text-right py-1">الجدول</th>
+                            <th className="text-center py-1">في هذا الجهاز</th>
+                            <th className="text-center py-1">داخل قاعدة البيانات</th>
+                            <th className="text-center py-1">الحالة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {([
+                            ["الصفوف", "grades", dataStats.grades],
+                            ["الطلاب", "students", dataStats.students],
+                            ["الاستحقاقات", "dues", dataStats.dues],
+                            ["المدفوعات", "payments", dataStats.payments],
+                            ["الاختبارات", "exams", dataStats.exams],
+                            ["الحصص", "sessions", dataStats.sessions],
+                            ["الحضور", "attendance", dataStats.attendance],
+                          ] as [string, string, number][]).map(([label, table, localCount]) => {
+                            const remote = conn.counts[table] ?? 0
+                            const match = remote === localCount
+                            return (
+                              <tr key={table} className="border-t border-gray-200/60 dark:border-gray-800">
+                                <td className="py-1 font-medium text-gray-800 dark:text-gray-200">{label}</td>
+                                <td className="py-1 text-center">{localCount}</td>
+                                <td className="py-1 text-center font-semibold">{remote < 0 ? "—" : remote}</td>
+                                <td className="py-1 text-center">
+                                  {match ? (
+                                    <span className="text-green-600 text-xs">متطابق ✓</span>
+                                  ) : (
+                                    <span className="text-amber-600 text-xs">غير متطابق</span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                      <p className="text-xs text-gray-500 mt-2">
+                        إذا ظهر أي صف &quot;غير متطابق&quot; اضغط &quot;مزامنة الآن مع Supabase&quot; لجلب أحدث نسخة، أو أعد الحفظ من الصفحة المعنية.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 {supabaseConnected && (
@@ -753,15 +854,25 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">حالة Supabase</span>
-                    {supabaseConnected ? (
-                      <span className="font-semibold text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-4 h-4" />
-                        متصل — البيانات تُحفظ وتُجلب من Supabase
-                      </span>
-                    ) : (
+                    {!supabaseConnected ? (
                       <span className="font-semibold text-yellow-600 flex items-center gap-1">
                         <AlertCircle className="w-4 h-4" />
                         غير متصل (الوضع المحلي فقط)
+                      </span>
+                    ) : checking || !conn ? (
+                      <span className="font-semibold text-gray-500 flex items-center gap-1">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        جاري فحص الاتصال...
+                      </span>
+                    ) : conn.ok ? (
+                      <span className="font-semibold text-green-600 flex items-center gap-1">
+                        <CheckCircle className="w-4 h-4" />
+                        متصل ومُختبَر فعلياً (كتابة + قراءة)
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-red-600 flex items-center gap-1">
+                        <XCircle className="w-4 h-4" />
+                        فشل الحفظ في قاعدة البيانات
                       </span>
                     )}
                   </div>

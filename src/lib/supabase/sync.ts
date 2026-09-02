@@ -390,7 +390,7 @@ async function pushRows(dbTable: string, remoteRows: any[]): Promise<void> {
 /** جدولة مزامنة فورية (بدون انتظار — مع تنبيه عند الفشل) */
 export function queuePush(fn: () => Promise<void>) {
   if (!isSupabaseConfigured() || typeof window === "undefined") return;
-  fn().catch(warnSyncError);
+  trackPush(fn());
 }
 
 // ============================================================
@@ -678,4 +678,148 @@ export async function syncAllFromLocal(): Promise<void> {
   await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
   const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
   if (year) await pushSetting("currentAcademicYear", year);
+}
+
+// ============================================================
+// حالة المزامنة الحقيقية (للتأكد أن البيانات تُحفظ فعلاً في قاعدة البيانات)
+// ============================================================
+
+export type SyncState = "idle" | "saving" | "saved" | "error"
+
+export interface SyncStatus {
+  state: SyncState
+  /** آخر وقت نجح فيه الحفظ في Supabase */
+  lastSavedAt: string | null
+  /** آخر رسالة خطأ (إن وُجدت) */
+  lastError: string | null
+  /** عدد عمليات الحفظ الجارية الآن */
+  pending: number
+}
+
+const syncStatus: SyncStatus = {
+  state: "idle",
+  lastSavedAt: null,
+  lastError: null,
+  pending: 0,
+}
+
+type SyncListener = (s: SyncStatus) => void
+const syncListeners = new Set<SyncListener>()
+
+function emitSyncStatus() {
+  for (const l of syncListeners) {
+    try {
+      l({ ...syncStatus })
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function getSyncStatus(): SyncStatus {
+  return { ...syncStatus }
+}
+
+export function onSyncStatus(listener: SyncListener): () => void {
+  syncListeners.add(listener)
+  listener({ ...syncStatus })
+  return () => syncListeners.delete(listener)
+}
+
+/** يُستدعى داخلياً من queuePush لتتبع كل عملية حفظ */
+function trackPush(promise: Promise<void>) {
+  syncStatus.pending += 1
+  syncStatus.state = "saving"
+  emitSyncStatus()
+  promise
+    .then(() => {
+      syncStatus.pending = Math.max(0, syncStatus.pending - 1)
+      syncStatus.lastSavedAt = new Date().toISOString()
+      syncStatus.lastError = null
+      if (syncStatus.pending === 0) syncStatus.state = "saved"
+      emitSyncStatus()
+    })
+    .catch((err) => {
+      syncStatus.pending = Math.max(0, syncStatus.pending - 1)
+      syncStatus.lastError = err?.message || String(err)
+      syncStatus.state = "error"
+      emitSyncStatus()
+      warnSyncError(err)
+    })
+}
+
+export interface ConnectionCheck {
+  ok: boolean
+  /** هل نجحت القراءة من Supabase؟ */
+  canRead: boolean
+  /** هل نجحت الكتابة في Supabase؟ (اختبار فعلي) */
+  canWrite: boolean
+  /** زمن الاستجابة بالمللي ثانية */
+  latencyMs: number
+  /** عدد السجلات الفعلي داخل قاعدة البيانات لكل جدول */
+  counts: Record<string, number>
+  error?: string
+}
+
+/**
+ * فحص حقيقي للاتصال: قراءة + كتابة فعلية في Supabase،
+ * مع إحصاء عدد السجلات المخزنة فعلاً في كل جدول.
+ */
+export async function checkSupabaseConnection(): Promise<ConnectionCheck> {
+  const started = Date.now()
+  const result: ConnectionCheck = {
+    ok: false,
+    canRead: false,
+    canWrite: false,
+    latencyMs: 0,
+    counts: {},
+  }
+
+  const sb = getSupabase()
+  if (!sb) {
+    result.error = "متغيرات Supabase غير مُعدّة في هذا الموقع"
+    result.latencyMs = Date.now() - started
+    return result
+  }
+
+  try {
+    // 1) اختبار كتابة فعلي في جدول الإعدادات
+    const stamp = new Date().toISOString()
+    const { error: writeErr } = await sb
+      .from("app_settings")
+      .upsert({ key: "__connection_check__", value: stamp }, { onConflict: "key" })
+    if (writeErr) throw writeErr
+
+    // 2) اختبار قراءة للتأكد أن ما كُتب موجود فعلاً في قاعدة البيانات
+    const { data: readBack, error: readErr } = await sb
+      .from("app_settings")
+      .select("value")
+      .eq("key", "__connection_check__")
+      .maybeSingle()
+    if (readErr) throw readErr
+
+    result.canWrite = readBack?.value === stamp
+    result.canRead = true
+
+    // 3) عدّ السجلات الحقيقية داخل قاعدة البيانات
+    const counts = await Promise.all(
+      DB_TABLES.map(async (t) => {
+        const { count, error } = await sb.from(t).select("id", { count: "exact", head: true })
+        return [t, error ? -1 : count ?? 0] as const
+      })
+    )
+    for (const [t, c] of counts) result.counts[t] = c
+
+    result.ok = result.canRead && result.canWrite
+    if (result.ok) {
+      syncStatus.lastError = null
+      if (syncStatus.pending === 0 && syncStatus.state === "error") syncStatus.state = "idle"
+      emitSyncStatus()
+    }
+  } catch (err: any) {
+    result.error = err?.message || String(err)
+  }
+
+  result.latencyMs = Date.now() - started
+  return result
 }
