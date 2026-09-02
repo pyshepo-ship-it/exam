@@ -50,6 +50,7 @@ import {
   isExamForStudent,
   examAvailability,
   effectiveAttemptScore,
+  attemptsStatus,
   markAnnouncementsSeen,
   lastAnnouncementsSeenAt,
 } from "@/lib/portal-content"
@@ -63,7 +64,7 @@ import {
   StudentReportType,
 } from "@/lib/student-report"
 import { getGrades, getStudents, getAnnouncements, getExams, getInquiries } from "@/lib/data-storage"
-import { fetchPublicData, fetchStudentPortalData, fetchStudentInquiries } from "@/lib/supabase/sync"
+import { fetchAttemptCount, fetchPublicData, fetchStudentPortalData, fetchStudentInquiries } from "@/lib/supabase/sync"
 import { HtmlPrintDialog } from "@/components/html-print-dialog"
 import { formatTime12 } from "@/lib/utils"
 
@@ -86,6 +87,8 @@ export default function StudentPortalPage() {
   const [portalAnnouncements, setPortalAnnouncements] = useState<Announcement[]>([])
   const [portalExams, setPortalExams] = useState<Exam[]>([])
   const [inquiries, setInquiries] = useState<InquiryThread[]>([])
+  // عدّادات المحاولات السحابية (عبر الأجهزة) لاختبارات ذات حد
+  const [remoteAttempts, setRemoteAttempts] = useState<Record<string, number>>({})
   const [inquiryText, setInquiryText] = useState("")
   const [inquiryBusy, setInquiryBusy] = useState(false)
 
@@ -132,9 +135,15 @@ export default function StudentPortalPage() {
           }
           // إعلانات صفه فقط + اختبارات صفه/مجموعته فقط (عزل تام)
           setPortalAnnouncements(announcementsForGrade(publicData.announcements as any, portalData.student.gradeId))
-          setPortalExams(
-            (publicData.exams as any[]).filter(e => isExamForStudent(e, portalData.student.gradeId, portalData.student.groupId))
-          )
+          const myExams = (publicData.exams as any[]).filter(e => isExamForStudent(e, portalData.student.gradeId, portalData.student.groupId))
+          setPortalExams(myExams)
+          // محاولاتي المسجلة سحابياً للاختبارات محدودة المحاولات
+          const counts: Record<string, number> = {}
+          for (const e of myExams.filter(x => x.maxAttempts && x.maxAttempts > 0)) {
+            const c = await fetchAttemptCount(e.id, portalData.student.id).catch(() => null)
+            if (typeof c === "number") counts[e.id] = c
+          }
+          setRemoteAttempts(counts)
         } else {
           toast.error("تعذر تحميل بياناتك — حاول تحديث الصفحة")
         }
@@ -313,6 +322,7 @@ export default function StudentPortalPage() {
                 {portalExams.map(e => {
                   const av = examAvailability(e)
                   const myAttempts = (report?.examAttempts || []).filter(a => a.examId === e.id)
+                  const at = attemptsStatus(e, report?.examAttempts || [], session.studentId, undefined, undefined, remoteAttempts[e.id] || 0)
                   const best = myAttempts.length
                     ? Math.max(...myAttempts.map(a => effectiveAttemptScore(a)))
                     : null
@@ -324,23 +334,29 @@ export default function StudentPortalPage() {
                           <p className="text-xs text-gray-400">
                             {e.duration ? `${e.duration} دقيقة` : ""} {e.totalMarks ? ` • ${e.totalMarks} درجة` : ""}
                             {best !== null && ` • نتيجتك: ${best}${e.totalMarks ? ` / ${e.totalMarks}` : ""}`}
+                            {at.max > 0 && ` • المحاولات: ${at.used}/${at.max}`}
                           </p>
                           {myAttempts.some(a => a.manualOverride) && (
                             <p className="text-[11px] text-purple-600 mt-0.5">توجد درجة معدلة يدوياً من المعلم</p>
                           )}
                         </div>
-                        {av.open ? (
-                          <Link href={`/exam/${e.id}`}>
-                            <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white">
-                              <PlayCircle className="w-4 h-4" />
-                              <span>{myAttempts.length > 0 ? "إعادة الاختبار" : "ابدأ الاختبار"}</span>
-                            </Button>
-                          </Link>
-                        ) : (
-                          <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                        {!av.open ? (
+                          <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600 shrink-0">
                             <LockIcon className="w-4 h-4" />
                             مغلق الآن
                           </span>
+                        ) : !at.allowed ? (
+                          <span className="flex items-center gap-1.5 text-xs font-bold text-red-600 shrink-0">
+                            <LockIcon className="w-4 h-4" />
+                            استُنفدت محاولاتك ({at.used}/{at.max})
+                          </span>
+                        ) : (
+                          <Link href={`/exam/${e.id}`}>
+                            <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white shrink-0">
+                              <PlayCircle className="w-4 h-4" />
+                              <span>{myAttempts.length > 0 ? `إعادة (${at.remaining} متبقية)` : "ابدأ الاختبار"}</span>
+                            </Button>
+                          </Link>
                         )}
                       </div>
                       {!av.open && av.reason && <p className="text-xs text-gray-400 mt-1">{av.reason}</p>}

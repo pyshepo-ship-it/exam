@@ -213,6 +213,7 @@ export const toExamRow = (e: any) => ({
     availableUntil: e.availableUntil || null,
     targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
     answerVisibility: e.answerVisibility || "never",
+    maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
   },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
@@ -245,6 +246,7 @@ export const fromExamRow = (row: any) => {
     availableUntil: wrapped && q.availableUntil ? q.availableUntil : undefined,
     targetGroupIds: wrapped && Array.isArray(q.targetGroupIds) ? q.targetGroupIds : [],
     answerVisibility: wrapped ? (q.answerVisibility || "never") : "never",
+    maxAttempts: wrapped && q.maxAttempts && q.maxAttempts > 0 ? q.maxAttempts : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -1123,6 +1125,20 @@ export async function submitPublicHonoree(h: any): Promise<void> {
   if (error && error.code !== "23505") {
     console.warn("submitPublicHonoree:", error);
   }
+}
+
+/** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
+export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("exam_attempt_counts")
+    .select("attempts")
+    .eq("exam_id", examId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as any)?.attempts ?? 0;
 }
 
 export async function fetchPublicData(): Promise<PublicData | null> {

@@ -12,7 +12,7 @@
     "test:deep": "node scripts/system-deep-audit.mjs",
     "test:schedule": "node scripts/schedule-test.mjs",
     "test:schedule-print": "node scripts/schedule-print-test.mjs",
-    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/portal-test.mjs && node scripts/schedule-test.mjs && node scripts/schedule-print-test.mjs && node scripts/system-deep-audit.mjs",
+    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/portal-test.mjs && node scripts/schedule-test.mjs && node scripts/schedule-print-test.mjs && node scripts/system-deep-audit.mjs && node scripts/seal-review-test.mjs",
     "test:portal": "node scripts/portal-test.mjs"
   },
   "dependencies": {

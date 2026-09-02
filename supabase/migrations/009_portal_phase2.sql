@@ -28,6 +28,15 @@ ALTER TABLE student_accounts
 ALTER TABLE students
   ADD COLUMN IF NOT EXISTS inquiry_blocked BOOLEAN DEFAULT FALSE;
 
+-- عدّاد محاولات الاختبار للعموم: معرفات فقط بدون إجابات أو درجات
+-- (يُستخدم لفرض حد عدد مرات الاجتياز عبر الأجهزة)
+CREATE OR REPLACE VIEW public.exam_attempt_counts AS
+  SELECT exam_id, student_id, count(*)::int AS attempts
+  FROM exam_attempts
+  WHERE student_id IS NOT NULL
+  GROUP BY exam_id, student_id;
+GRANT SELECT ON public.exam_attempt_counts TO anon, authenticated;
+
 -- 3) التعديل اليدوي لدرجة الاختبار
 ALTER TABLE exam_attempts
   ADD COLUMN IF NOT EXISTS manual_override JSONB;

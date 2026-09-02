@@ -206,8 +206,7 @@ function headerBlock(report: StudentReport, type: StudentReportType, mode: "teac
             </div>
           </div>
           <div style="text-align:left;">
-            <div style="font-size:13px;font-weight:800;color:#111827;">${esc(getTeacherName())}</div>
-            <div style="font-size:11px;color:#9ca3af;">أ/ ضحى العربي</div>
+            <div style="font-size:15px;font-weight:800;color:#111827;">${esc(getTeacherName())}</div>
           </div>
         </div>
         <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -423,27 +422,19 @@ function historyBlocks(report: StudentReport): Block[] {
         <td style="${TD}">${esc(h.detail || "—")}</td>
       </tr>
     `)
+  // التكريم سطر واحد واضح: السبب + الشهر — بدون تفاصيل مدة الظهور
   const honorRows = report.honors
     .map(h => `
-      <tr>
-        <td style="${TD}">${h.month}/${h.year}</td>
-        <td style="${TD}text-align:right;font-weight:700;">🏆 ${esc(h.reason)}</td>
-        <td style="${TD}">${h.days ? `${h.days} يوم` : "الشهر كاملاً"}</td>
-      </tr>
+      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:8px 14px;font-size:13px;font-weight:800;color:#a16207;margin-bottom:6px;">
+        🏆 ${esc(h.reason)} — شهر ${esc(AR_MONTHS[(h.month || 1) - 1] || "")} ${h.year}
+      </div>
     `)
 
   return [
     {
       html: `
         ${sectionTitle("🧾 السجل والنشاط")}
-        ${honorRows.length ? `<table style="${TABLE}margin-bottom:12px;">
-          <tr style="background:#d97706;color:#ffffff;">
-            <th style="padding:8px;border:1px solid #fde68a;background:#d97706;">الفترة</th>
-            <th style="padding:8px;border:1px solid #fde68a;text-align:right;">التكريم</th>
-            <th style="padding:8px;border:1px solid #fde68a;">مدة الظهور</th>
-          </tr>
-          ${honorRows.join("")}
-        </table>` : ""}
+        ${honorRows.length ? `<div style="margin-bottom:12px;">${honorRows.join("")}</div>` : ""}
         ${rows.length ? `<table style="${TABLE}margin-bottom:14px;">
           <tr style="background:#6366f1;color:#ffffff;">
             <th style="${TH}">التاريخ</th>

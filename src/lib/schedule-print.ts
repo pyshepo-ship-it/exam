@@ -127,10 +127,7 @@ function pageHeaderBlock(mode: "teacher" | "student", opts: SchedulePrintOptions
             </div>
           </div>
           <div style="text-align:center;">
-            <div style="width:56px;height:56px;border-radius:16px;background:${accent};color:#ffffff;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;margin:0 auto;">
-              ${esc((opts.teacherName || getTeacherName()).replace(/^(أ\.|أ\/)\s*/, ""))}
-            </div>
-            <div style="font-size:13px;font-weight:800;color:#111827;margin-top:6px;">${esc(opts.teacherName || getTeacherName())}</div>
+            <div style="font-size:15px;font-weight:800;color:#111827;">${esc(opts.teacherName || getTeacherName())}</div>
           </div>
         </div>
         <div style="margin-top:10px;">${badge}</div>

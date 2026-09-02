@@ -169,6 +169,8 @@ export interface Exam {
   availableUntil?: string
   /** المجموعات المستهدفة من الاختبار — فارغ = كل مجموعات الصف */
   targetGroupIds?: string[]
+  /** أقصى عدد مرات اجتياز لكل طالب — 0 أو غير محدد = بلا حد */
+  maxAttempts?: number
   /** إظهار الإجابة الصحيحة للطالب: لا أبداً / بعد كل سؤال / في نهاية الاختبار */
   answerVisibility?: 'never' | 'afterEach' | 'atEnd'
   createdAt: string

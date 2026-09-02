@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { Clock, CheckCircle2, Trophy, BookOpen, AlertCircle } from "lucide-react"
@@ -20,6 +20,8 @@ import {
   ExamAttemptAnswer,
   Grade,
   Student,
+  Question,
+  SubQuestion,
   getExams,
   getGrades,
   getStudents,
@@ -30,11 +32,11 @@ import {
 } from "@/lib/data-storage"
 import { gradeExam } from "@/lib/exam-grade"
 import { gradeSealedExam, sealExamForStudent } from "@/lib/exam-public"
-import { fetchPublicData, submitPublicAttempt, submitPublicHonoree } from "@/lib/supabase/sync"
+import { fetchPublicData, fetchAttemptCount, submitPublicAttempt, submitPublicHonoree } from "@/lib/supabase/sync"
 import { TeacherSignature } from "@/components/teacher-signature"
 import { TEACHER_NAME } from "@/lib/branding"
 import { getPortalSession } from "@/lib/student-accounts"
-import { examAvailability } from "@/lib/portal-content"
+import { examAvailability, attemptsStatus } from "@/lib/portal-content"
 import { decodeSealForReview } from "@/lib/exam-public"
 import {
   ARABIC_ORDINALS,
@@ -68,6 +70,8 @@ export default function TakeExamPage() {
   const [gradeId, setGradeId] = useState("")
   const [groupId, setGroupId] = useState("")
   const [answers, setAnswers] = useState<Record<string, ExamAttemptAnswer>>({})
+  // عرض سؤال واحد في كل مرة — مؤشر السؤال الفرعي الحالي
+  const [cursor, setCursor] = useState(0)
   const [startedAt, setStartedAt] = useState("")
   const [remaining, setRemaining] = useState(0)
   const [result, setResult] = useState<ReturnType<typeof gradeExam> | null>(null)
@@ -149,6 +153,18 @@ export default function TakeExamPage() {
           setStudents(nextStudents)
           return
         }
+        // حد عدد مرات الاجتياز — محلياً + العدّاد السحابي (عبر الأجهزة)
+        if (portal) {
+          const remote = await fetchAttemptCount(found.id, portal.studentId).catch(() => null)
+          const at = attemptsStatus(found, getExamAttempts(), portal.studentId, undefined, undefined, remote ?? 0)
+          if (!at.allowed) {
+            setClosedReason(at.reason || "استُنفدت محاولاتك لهذا الاختبار")
+            setStep("closed")
+            setGrades(nextGrades)
+            setStudents(nextStudents)
+            return
+          }
+        }
         const sealed = sealExamForStudent(found)
         sealRef.current = sealed.token
         setAnswerVisibility(found.answerVisibility || "never")
@@ -208,9 +224,18 @@ export default function TakeExamPage() {
       alert("يرجى اختيار الصف والمجموعة")
       return
     }
+    // حد المحاولات للزائر (بلا حساب): نقارن بالاسم والمجموعة
+    if (!getPortalSession() && exam.maxAttempts && exam.maxAttempts > 0) {
+      const at = attemptsStatus(exam, getExamAttempts(), undefined, studentName, groupId)
+      if (!at.allowed) {
+        alert(at.reason || "استُنفدت محاولاتك لهذا الاختبار")
+        return
+      }
+    }
     const minutes = exam.duration && exam.duration > 0 ? exam.duration : 60
     setStartedAt(new Date().toISOString())
     setRemaining(minutes * 60)
+    setCursor(0)
     setStep("exam")
   }
 
@@ -279,20 +304,133 @@ export default function TakeExamPage() {
     return spec.text || ""
   }
 
-  const unanswered = useMemo(() => {
-    if (!exam) return 0
-    let n = 0
-    for (const q of exam.questions || []) {
-      for (const sq of q.subQuestions || []) {
-        const a = answers[sq.id]
-        if (q.questionType === 1 && !a?.choiceId) n++
-        else if (q.questionType === 2 && !(a?.text || "").trim()) n++
-        else if (q.questionType === 3 && typeof a?.isTrue !== "boolean") n++
-        else if ((q.questionType === 4 || q.questionType === 5 || q.questionType === 6 || q.questionType === 7 || q.questionType === 8) && !(a?.text || "").trim()) n++
+  /** هل السؤال الفرعي مُجاب عليه؟ */
+  const isSubAnswered = (q: Question, sq: SubQuestion): boolean => {
+    const a = answers[sq.id]
+    if (!a) return false
+    if (q.questionType === 1) return !!a.choiceId
+    if (q.questionType === 3) return typeof a.isTrue === "boolean"
+    return !!(a.text || "").trim()
+  }
+
+  /** رسم سؤال فرعي واحد بكل أنواعه + تغذية راجعة «بعد الإجابة» */
+  const renderSubQuestion = (question: Question, sq: SubQuestion) => {
+    const answeredNow = isSubAnswered(question, sq)
+    const feedback = answerVisibility === "afterEach" && answeredNow ? (() => {
+      const gradedDetail = specRef.current[sq.id]
+      if (!gradedDetail) return null
+      let correct = false
+      if (question.questionType === 1) correct = answers[sq.id].choiceId === gradedDetail.choiceId
+      else if (question.questionType === 3) correct = answers[sq.id].isTrue === gradedDetail.isTrue
+      else {
+        const norm = (s?: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase()
+        correct = norm(answers[sq.id].text) === norm(gradedDetail.text) && !!norm(gradedDetail.text)
       }
-    }
-    return n
-  }, [exam, answers])
+      const label = correctAnswerLabel(sq.id, question.questionType, sq)
+      return { correct, label }
+    })() : null
+
+    return (
+      <div className="border-t border-dashed pt-3 space-y-2">
+        <p className="font-semibold">{sq.questionText}</p>
+
+        {question.questionType === 1 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {sq.choices?.map(c => {
+              const selected = answers[sq.id]?.choiceId === c.id
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setAnswer(sq.id, { choiceId: c.id })}
+                  className={`text-right rounded-xl border px-3 py-2 ${
+                    selected ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950" : "border-gray-200 dark:border-gray-700"
+                  }`}
+                >
+                  {c.choiceKey}) {c.choiceText}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {question.questionType === 2 && (
+          <div>
+            <p className="text-sm text-gray-600 mb-2">
+              {(() => {
+                const { before, after, atEnd } = renderCompleteParts(sq)
+                return atEnd ? `${before} ${after} ........` : `${before} ........ ${after}`
+              })()}
+            </p>
+            <Input
+              placeholder="أكمل الفراغ"
+              value={answers[sq.id]?.text || ""}
+              onChange={e => setAnswer(sq.id, { text: e.target.value })}
+            />
+          </div>
+        )}
+
+        {question.questionType === 3 && (
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant={answers[sq.id]?.isTrue === true ? "default" : "outline"}
+              onClick={() => setAnswer(sq.id, { isTrue: true })}
+            >
+              صح
+            </Button>
+            <Button
+              type="button"
+              variant={answers[sq.id]?.isTrue === false ? "default" : "outline"}
+              onClick={() => setAnswer(sq.id, { isTrue: false })}
+            >
+              خطأ
+            </Button>
+          </div>
+        )}
+
+        {(question.questionType === 4 || question.questionType === 5 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
+          <div>
+            {question.questionType === 5 && (
+              <p className="text-sm mb-2">
+                {getUnderlinedWords(sq).map((w, i) => (
+                  <span key={i}>
+                    <span className={w.underlined ? "underline font-bold text-rose-600 dark:text-rose-400" : undefined}>{w.word}</span>
+                    {i < getUnderlinedWords(sq).length - 1 ? " " : ""}
+                  </span>
+                ))}
+              </p>
+            )}
+            <textarea
+              rows={question.questionType === 5 ? 2 : (sq.answerLines || 1)}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              placeholder={
+                question.questionType === 5
+                  ? "التصحيح"
+                  : question.questionType === 6
+                  ? "اكتب المصطلح العلمي هنا"
+                  : question.questionType === 7
+                  ? "اكتب التعريف هنا"
+                  : "إجابتك"
+              }
+              value={answers[sq.id]?.text || ""}
+              onChange={e => setAnswer(sq.id, { text: e.target.value })}
+            />
+          </div>
+        )}
+
+        {feedback && (
+          <div className={`rounded-xl border px-3 py-2 text-sm font-bold ${
+            feedback.correct
+              ? "bg-green-50 dark:bg-green-950/30 border-green-300 dark:border-green-800 text-green-700 dark:text-green-300"
+              : "bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300"
+          }`}>
+            {feedback.correct ? "✅ إجابة صحيحة" : `❌ إجابة خاطئة — الإجابة الصحيحة: ${feedback.label}`}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   if (step === "load") {
     return (
@@ -434,149 +572,74 @@ export default function TakeExamPage() {
           </div>
         )}
 
-        {step === "exam" && (
-          <div className="space-y-5">
-            {exam.questions.map((question, qi) => {
-              const meta = getQuestionTypeMeta(question.questionType)
-              return (
-                <section key={question.id} className="bg-white dark:bg-gray-900 rounded-2xl border p-5 space-y-4">
-                  <h3 className="font-extrabold flex items-center gap-2">
-                    <span className="text-white text-xs px-2 py-1 rounded" style={{ background: meta.accent }}>
-                      {meta.paperMark}
-                    </span>
-                    السؤال {ARABIC_ORDINALS[qi] || qi + 1}: {getQuestionHeader(question)}
-                  </h3>
-                  {question.subQuestions.map((sq, si) => {
-                    // تغذية راجعة فورية عند اختيار المعلم «بعد الإجابة على السؤال»
-                    const answered = answers[sq.id] && (answers[sq.id].choiceId || answers[sq.id].text?.trim() || typeof answers[sq.id].isTrue === "boolean")
-                    const feedback = answerVisibility === "afterEach" && answered ? (() => {
-                      const gradedDetail = specRef.current[sq.id]
-                      if (!gradedDetail) return null
-                      let correct = false
-                      if (question.questionType === 1) correct = answers[sq.id].choiceId === gradedDetail.choiceId
-                      else if (question.questionType === 3) correct = answers[sq.id].isTrue === gradedDetail.isTrue
-                      else {
-                        const norm = (s?: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase()
-                        correct = norm(answers[sq.id].text) === norm(gradedDetail.text) && !!norm(gradedDetail.text)
-                      }
-                      const label = correctAnswerLabel(sq.id, question.questionType, sq)
-                      return { correct, label }
-                    })() : null
-                    return (
-                    <div key={sq.id} className="border-t border-dashed pt-3 space-y-2">
-                      <p className="font-semibold">{si + 1} – {sq.questionText}</p>
+        {step === "exam" && (() => {
+          // تسلسل كل الأسئلة الفرعية — يُعرض واحد فقط في كل لحظة
+          const items = exam.questions.flatMap((q, qi) => q.subQuestions.map(sq => ({ q, sq, qi })))
+          if (items.length === 0) {
+            return (
+              <div className="bg-white dark:bg-gray-900 rounded-2xl border p-8 text-center space-y-3">
+                <AlertCircle className="w-12 h-12 mx-auto text-amber-500" />
+                <p className="font-bold">لا توجد أسئلة في هذا الاختبار بعد</p>
+                <Button onClick={finishExam} variant="outline">متابعة</Button>
+              </div>
+            )
+          }
+          const safeCursor = Math.min(cursor, items.length - 1)
+          const cur = items[safeCursor]
+          const meta = getQuestionTypeMeta(cur.q.questionType)
+          const isLast = safeCursor >= items.length - 1
+          const answered = isSubAnswered(cur.q, cur.sq)
+          const pct = Math.round(((safeCursor + (answered ? 1 : 0)) / items.length) * 100)
+          return (
+            <div className="space-y-4">
+              {/* شريط التقدم */}
+              <div className="bg-white dark:bg-gray-900 rounded-2xl border p-4">
+                <div className="flex items-center justify-between text-sm font-bold mb-2">
+                  <span className="text-gray-900 dark:text-white">السؤال {safeCursor + 1} من {items.length}</span>
+                  <span className="text-gray-400">{pct}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
+                  <div className="h-full bg-gradient-to-l from-indigo-500 to-purple-600 transition-all duration-300" style={{ width: `${pct}%` }} />
+                </div>
+              </div>
 
-                      {question.questionType === 1 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {sq.choices?.map(c => {
-                            const selected = answers[sq.id]?.choiceId === c.id
-                            return (
-                              <button
-                                key={c.id}
-                                type="button"
-                                onClick={() => setAnswer(sq.id, { choiceId: c.id })}
-                                className={`text-right rounded-xl border px-3 py-2 ${
-                                  selected ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950" : "border-gray-200 dark:border-gray-700"
-                                }`}
-                              >
-                                {c.choiceKey}) {c.choiceText}
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )}
+              {/* السؤال الحالي فقط */}
+              <section className="bg-white dark:bg-gray-900 rounded-2xl border p-5 space-y-4">
+                <h3 className="font-extrabold flex items-center gap-2">
+                  <span className="text-white text-xs px-2 py-1 rounded" style={{ background: meta.accent }}>
+                    {meta.paperMark}
+                  </span>
+                  السؤال {ARABIC_ORDINALS[cur.qi] || cur.qi + 1}: {getQuestionHeader(cur.q)}
+                </h3>
+                {renderSubQuestion(cur.q, cur.sq)}
+              </section>
 
-                      {question.questionType === 2 && (
-                        <div>
-                          <p className="text-sm text-gray-600 mb-2">
-                            {(() => {
-                              const { before, after, atEnd } = renderCompleteParts(sq)
-                              return atEnd ? `${before} ${after} ........` : `${before} ........ ${after}`
-                            })()}
-                          </p>
-                          <Input
-                            placeholder="أكمل الفراغ"
-                            value={answers[sq.id]?.text || ""}
-                            onChange={e => setAnswer(sq.id, { text: e.target.value })}
-                          />
-                        </div>
-                      )}
-
-                      {question.questionType === 3 && (
-                        <div className="flex gap-2">
-                          <Button
-                            type="button"
-                            variant={answers[sq.id]?.isTrue === true ? "default" : "outline"}
-                            onClick={() => setAnswer(sq.id, { isTrue: true })}
-                          >
-                            صح
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={answers[sq.id]?.isTrue === false ? "default" : "outline"}
-                            onClick={() => setAnswer(sq.id, { isTrue: false })}
-                          >
-                            خطأ
-                          </Button>
-                        </div>
-                      )}
-
-                      {(question.questionType === 4 || question.questionType === 5 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
-                        <div>
-                          {question.questionType === 5 && (
-                            <p className="text-sm mb-2">
-                              {getUnderlinedWords(sq).map((w, i) => (
-                                <span key={i}>
-                                  <span className={w.underlined ? "underline font-bold text-rose-600 dark:text-rose-400" : undefined}>{w.word}</span>
-                                  {i < getUnderlinedWords(sq).length - 1 ? " " : ""}
-                                </span>
-                              ))}
-                            </p>
-                          )}
-                          <textarea
-                            rows={question.questionType === 5 ? 2 : (sq.answerLines || 1)}
-                            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder={
-                              question.questionType === 5
-                                ? "التصحيح"
-                                : question.questionType === 6
-                                ? "اكتب المصطلح العلمي هنا"
-                                : question.questionType === 7
-                                ? "اكتب التعريف هنا"
-                                : "إجابتك"
-                            }
-                            value={answers[sq.id]?.text || ""}
-                            onChange={e => setAnswer(sq.id, { text: e.target.value })}
-                          />
-                        </div>
-                      )}
-
-                      {feedback && (
-                        <div className={`rounded-xl border px-3 py-2 text-sm font-bold ${
-                          feedback.correct
-                            ? "bg-green-50 dark:bg-green-950/30 border-green-300 dark:border-green-800 text-green-700 dark:text-green-300"
-                            : "bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300"
-                        }`}>
-                          {feedback.correct ? "✅ إجابة صحيحة" : `❌ إجابة خاطئة — الإجابة الصحيحة: ${feedback.label}`}
-                        </div>
-                      )}
-                    </div>
-                    )
-                  })}
-                </section>
-              )
-            })}
-
-            <div className="sticky bottom-4 bg-white/90 dark:bg-gray-900/90 backdrop-blur rounded-2xl border p-4 flex items-center justify-between gap-3">
-              <p className="text-sm text-gray-500">
-                {unanswered > 0 ? `تبقّى ${unanswered} سؤال بدون إجابة` : "تمت الإجابة على كل الأسئلة"}
-              </p>
-              <Button onClick={finishExam} className="bg-gradient-to-r from-emerald-500 to-teal-600">
-                إنهاء الاختبار وإظهار النتيجة
-              </Button>
+              {/* التنقل: السابق / التالي (يُفتح بعد الإجابة) / إنهاء عند الأخير */}
+              <div className="sticky bottom-4 bg-white/95 dark:bg-gray-900/95 backdrop-blur rounded-2xl border p-4 flex items-center justify-between gap-3">
+                <Button variant="outline" onClick={() => setCursor(safeCursor - 1)} disabled={safeCursor === 0}>
+                  السابق
+                </Button>
+                <p className="text-xs text-gray-500 hidden sm:block text-center">
+                  {isLast ? "آخر سؤال — راجع إجابتك ثم أنهِ الاختبار" : "أجب على السؤال ليظهر التالي"}
+                </p>
+                {isLast ? (
+                  <Button onClick={finishExam} className="bg-gradient-to-r from-emerald-500 to-teal-600">
+                    إنهاء الاختبار وإظهار النتيجة
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => setCursor(safeCursor + 1)}
+                    disabled={!answered}
+                    title={!answered ? "أجب على السؤال أولاً" : "السؤال التالي"}
+                    className="bg-gradient-to-r from-indigo-500 to-purple-600"
+                  >
+                    التالي
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          )
+        })()}
 
         {step === "result" && result && (
           <div className="bg-white dark:bg-gray-900 rounded-2xl border p-8 text-center space-y-4">

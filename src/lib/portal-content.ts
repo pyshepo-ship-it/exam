@@ -57,6 +57,42 @@ export function isExamForStudent(exam: Exam, gradeId: string, groupId: string): 
   return true
 }
 
+/** حالة محاولات الطالب في اختبار: متاح / استُنفدت */
+export interface AttemptsStatus {
+  allowed: boolean
+  reason?: string
+  used: number
+  max: number
+  remaining: number
+}
+
+/**
+ * عدد مرات الاجتياز المتبقية للطالب — يُحسب من محاولاته المسجلة
+ * (بالربط بالحساب أولاً، وبالاسم+المجموعة للزوار قبل الحفظ)
+ */
+export function attemptsStatus(
+  exam: Exam,
+  attempts: { examId: string; studentId?: string; studentName?: string; groupId?: string }[],
+  studentId?: string,
+  studentName?: string,
+  groupId?: string,
+  /** المحاولات المسجلة سحابياً (عبر الأجهزة) — تُحتسب مع المحلية بأخذ الأكبر */
+  remoteUsed: number = 0
+): AttemptsStatus {
+  const max = exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0
+  const mine = (attempts || []).filter(a => {
+    if (a.examId !== exam.id) return false
+    if (studentId) return a.studentId === studentId
+    // زائر بلا حساب: نقارن بالاسم والمجموعة
+    return !!studentName && (a.studentName || "").trim() === studentName.trim() && (!groupId || a.groupId === groupId)
+  })
+  const used = Math.max(mine.length, remoteUsed || 0)
+  if (max > 0 && used >= max) {
+    return { allowed: false, reason: `استُنفدت محاولاتك (${used} من ${max}) — راجع المعلم إن كنت تحتاج محاولة أخرى`, used, max, remaining: 0 }
+  }
+  return { allowed: true, used, max, remaining: max > 0 ? max - used : -1 }
+}
+
 /** الدرجة الفعلية للمحاولة (تُراعي التعديل اليدوي من المعلم) */
 export function effectiveAttemptScore(attempt: { score: number; manualOverride?: { score: number } }): number {
   return attempt.manualOverride && typeof attempt.manualOverride.score === "number"

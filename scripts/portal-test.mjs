@@ -672,6 +672,27 @@ const recReopened = IQ.canStudentSendInquiry(recStudentId)
 eq("إعادة الفتح تسمح بالإرسال من جديد", reopenRes.ok === true && recReopened.allowed === true && recReopened.channelClosed !== true)
 
 // ============================================================
+section("سيناريو 16: حد عدد مرات اجتياز الاختبار")
+
+const limitExam = { id: "ex-limit", allowOnline: true, maxAttempts: 2, questions: [] }
+const attemptsAll = [
+  { examId: "ex-limit", studentId: "st-old", studentName: "أحمد", groupId: "gr-1", score: 5 },
+  { examId: "ex-other", studentId: "st-old", studentName: "أحمد", groupId: "gr-1", score: 9 },
+]
+const at1 = PC.attemptsStatus(limitExam, attemptsAll, "st-old")
+eq("محاولة واحدة من اثنتين → متاح ومتبقي 1", at1.allowed === true && at1.used === 1 && at1.remaining === 1, JSON.stringify(at1))
+const at2 = PC.attemptsStatus(limitExam, [...attemptsAll, { examId: "ex-limit", studentId: "st-old", studentName: "أحمد", groupId: "gr-1", score: 7 }], "st-old")
+eq("استنفاد المحاولتين → ممنوع مع رسالة", at2.allowed === false && at2.used === 2 && /استُنفدت/.test(at2.reason || ""))
+const at3 = PC.attemptsStatus({ ...limitExam, maxAttempts: 0 }, [...attemptsAll, { examId: "ex-limit", studentId: "st-old" }], "st-old")
+eq("بلا حد (0) → متاح دائماً", at3.allowed === true && at3.max === 0 && at3.remaining === -1)
+const at4 = PC.attemptsStatus(limitExam, attemptsAll, undefined, "طالب زائر", "gr-1")
+eq("الزائر يُحسب بالاسم والمجموعة", at4.allowed === true && at4.used === 0)
+const at5 = PC.attemptsStatus(limitExam, [...attemptsAll, { examId: "ex-limit", studentName: "طالب زائر", groupId: "gr-1" }, { examId: "ex-limit", studentName: "طالب زائر", groupId: "gr-1" }], undefined, "طالب زائر", "gr-1")
+eq("الزائر بعد محاولتين → ممنوع", at5.allowed === false && at5.used === 2)
+const at6 = PC.attemptsStatus(limitExam, attemptsAll, "طالب-آخر")
+eq("محاولات طالب آخر لا تُحسب عليّ", at6.allowed === true && at6.used === 0)
+
+// ============================================================
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {
