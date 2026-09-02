@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select"
 import { Grade, getGrades } from "@/lib/data-storage"
 import { fetchPublicData } from "@/lib/supabase/sync"
+import toast from "react-hot-toast"
 import { registerStudentAccount, isRegistrationOpen } from "@/lib/student-accounts"
 
 export default function StudentRegisterPage() {
@@ -42,36 +43,39 @@ export default function StudentRegisterPage() {
     setRegistrationOpen(isRegistrationOpen())
 
     const load = async () => {
-      // الصفوف من المرآة المحلية أولاً
-      let list = getGrades()
-      if (list.length === 0) {
-        // جهاز الزائر فاضي (زي موقع Vercel المنشور) — نجيب الصفوف من Supabase
-        const pub = await fetchPublicData()
-        if (pub && pub.grades.length > 0) {
-          list = pub.grades.map(g => ({
-            id: g.id,
-            name: g.name,
-            academicYear: "",
-            createdAt: "",
-            groups: pub.groups
-              .filter(gr => gr.gradeId === g.id)
-              .map(gr => ({
-                id: gr.id,
-                name: gr.name,
-                days: gr.days || [],
-                startTime: gr.startTime || "",
-                endTime: gr.endTime || "",
-                monthlyFee: 0,
-                studentsCount: 0,
-              })),
-          }))
-          // نزرعها محلياً (بدون مزامنة) كي ينجح التحقق عند إرسال الطلب
-          try {
-            localStorage.setItem("grades", JSON.stringify(list))
-          } catch { /* تجاهل */ }
+      // الصفوف من Supabase مباشرة — المصدر الوحيد (المرآة المحلية احتياط للمهلة فقط)
+      const pub = await fetchPublicData()
+      if (pub && pub.grades.length > 0) {
+        const list = pub.grades.map(g => ({
+          id: g.id,
+          name: g.name,
+          academicYear: "",
+          createdAt: "",
+          groups: pub.groups
+            .filter(gr => gr.gradeId === g.id)
+            .map(gr => ({
+              id: gr.id,
+              name: gr.name,
+              days: gr.days || [],
+              startTime: gr.startTime || "",
+              endTime: gr.endTime || "",
+              monthlyFee: 0,
+              studentsCount: 0,
+            })),
+        }))
+        setGrades(list)
+        // نسخة عرض سريعة فقط (كاش) — لا تُعد مصدراً للحقيقة
+        try { localStorage.setItem("grades", JSON.stringify(list)) } catch { /* تجاهل */ }
+      } else {
+        // تعذر السحاب (انقطاع/صلاحيات) — نستخدم الكاش إن وجد ونخبر الزائر
+        const cached = getGrades()
+        if (cached.length > 0) {
+          setGrades(cached)
+          toast("تعذر تحديث قائمة الصفوف مباشرة — تُعرض نسخة محفوظة مؤقتاً", { icon: "⚠️" })
+        } else {
+          toast.error("تعذر تحميل قائمة الصفوف — تحقق من اتصال الإنترنت وأعد المحاولة", { duration: 6000 })
         }
       }
-      setGrades(list)
       setMounted(true)
     }
     load()

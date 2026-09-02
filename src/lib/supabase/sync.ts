@@ -1218,17 +1218,17 @@ export async function fetchPublicData(): Promise<PublicData | null> {
 
 /** إرسال طلب تسجيل جديد من بوابة الطالب (يعمل مع وبدون Supabase) */
 export async function submitRegistrationRequest(request: any): Promise<{ ok: boolean; error?: string }> {
-  const local = localRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS)
-  const next = [...local, request]
-  localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify(next))
-
   const sb = getSupabase()
-  if (!sb) return { ok: true }
+  if (!sb) {
+    // وضع محلي خالص (بدون Supabase) — للتطوير فقط؛ الموقع المنشور لا يمر من هنا
+    const local = localRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS)
+    localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify([...local, request]))
+    return { ok: true }
+  }
+  // الموقع المنشور: الطلب يذهب إلى Supabase مباشرة — لا تخزين محلي للبيانات على جهاز الطالب
   const { error } = await sb.from("registration_requests").insert(toRegistrationRequestRow(request))
   if (error) {
     console.warn("submitRegistrationRequest:", error)
-    // تراجع عن الحفظ المحلي — حتى لا يُعتبر البريد «مستخدماً» ويستطيع الطالب إعادة المحاولة فوراً
-    try { localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify(local)) } catch { /* تجاهل */ }
     return { ok: false, error: explainSupabaseError(error) }
   }
   return { ok: true }
@@ -1267,8 +1267,16 @@ export interface StudentPortalData {
   payments: any[]
   attendance: any[]
   honorees: any[]
+  /** كل متفوقي صفه — للوحة الشرف داخل البوابة */
+  gradeHonorees: any[]
   history: any[]
   transferRequests: any[]
+  /** إعلانات صفه فقط */
+  announcements: any[]
+  /** اختبارات صفه/مجموعته فقط */
+  exams: any[]
+  /** مجموعات صفه (لطلب النقل) */
+  gradeGroups: { id: string; name: string; days: string[]; startTime: string; endTime: string }[]
 }
 
 /**
@@ -1280,7 +1288,7 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
   if (!sb) return null
 
   try {
-    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes] =
+    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
       await Promise.all([
         sb.from("students").select("*"),
         sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
@@ -1293,6 +1301,8 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
         sb.from("honorees").select("*"),
         sb.from("student_history").select("*"),
         sb.from("group_transfer_requests").select("*"),
+        sb.from("announcements").select("*"),
+        sb.from("exams").select("*"),
       ])
 
     if (studentsRes.error) return null
@@ -1310,6 +1320,12 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
     const hon = honRes.error ? [] : (honRes.data as any[] || [])
     const hist = histRes.error ? [] : (histRes.data as any[] || [])
     const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
+    const anns = annRes.error ? [] : (annRes.data as any[] || [])
+    const examRows = examsRes.error ? [] : (examsRes.data as any[] || [])
+
+    // مجموعات صفه (لطلب النقل + جدول مواعيده)
+    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.grade_id)
+    const gradeGroupIds = new Set(gradeGroupsAll.map((g) => g.id))
 
     return {
       student: fromStudentRow(student),
@@ -1324,8 +1340,32 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
       payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
       attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),
       honorees: hon.filter((h) => h.student_id === studentId).map(fromHonoreeRow),
+      // لوحة شرف صفه: متفوقو مجموعات صفه فقط
+      gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
       history: hist.filter((h) => h.student_id === studentId).map(fromStudentHistoryRow),
       transferRequests: transfers.filter((t) => t.student_id === studentId).map(fromGroupTransferRequestRow),
+      // إعلانات صفه فقط (المستهدف فارغ = عام)
+      announcements: anns
+        .map(fromAnnouncementRow)
+        .filter((a: any) => {
+          const targets = a.targetGradeIds || []
+          return targets.length === 0 || targets.includes(student.grade_id)
+        }),
+      // اختبارات صفه/مجموعته فقط
+      exams: examRows
+        .map(fromExamRow)
+        .filter((e: any) => !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
+        .filter((e: any) => {
+          const targets = e.targetGroupIds || []
+          return targets.length === 0 || targets.includes(student.group_id)
+        }),
+      gradeGroups: gradeGroupsAll.map((g) => ({
+        id: g.id,
+        name: g.name,
+        days: Array.isArray(g.days) ? g.days : [],
+        startTime: g.start_time || "",
+        endTime: g.end_time || "",
+      })),
     }
   } catch (e) {
     console.warn("fetchStudentPortalData:", e)
