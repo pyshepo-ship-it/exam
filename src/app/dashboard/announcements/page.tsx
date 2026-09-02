@@ -18,6 +18,7 @@ import {
   Home,
   UserPlus,
   X,
+  CalendarClock,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
 import {
   Dialog,
   DialogContent,
@@ -117,6 +119,14 @@ export default function AnnouncementsPage() {
 
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkForm, setLinkForm] = useState({ title: "", url: "" })
+
+  // نشر جدول المجموعات للطلاب (الصفحة الرئيسية + إعلان)
+  const [schedulePublishOpen, setSchedulePublishOpen] = useState(false)
+
+  const refreshScheduleData = () => {
+    setGrades(getGrades())
+    setAnnouncements(getAnnouncements())
+  }
 
   // Load data
   useEffect(() => {
@@ -405,12 +415,21 @@ export default function AnnouncementsPage() {
             يظهر كل ما تضيفه هنا مباشرة على الصفحة الرئيسية للموقع
           </p>
         </div>
-        <Link href="/">
-          <Button variant="outline" className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950">
-            <Home className="w-4 h-4" />
-            <span>عرض الصفحة الرئيسية</span>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() => setSchedulePublishOpen(true)}
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg"
+          >
+            <CalendarClock className="w-4 h-4" />
+            <span>نشر جدول المجموعات للطلاب</span>
           </Button>
-        </Link>
+          <Link href="/">
+            <Button variant="outline" className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950">
+              <Home className="w-4 h-4" />
+              <span>عرض الصفحة الرئيسية</span>
+            </Button>
+          </Link>
+        </div>
       </motion.div>
 
       {/* Tabs */}
@@ -1071,6 +1090,14 @@ export default function AnnouncementsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* حوار نشر جدول المجموعات للطلاب (الصفحة الرئيسية + الإعلانات) */}
+      <SchedulePublishDialog
+        open={schedulePublishOpen}
+        onOpenChange={setSchedulePublishOpen}
+        grades={grades}
+        onChanged={refreshScheduleData}
+      />
     </div>
   )
 }

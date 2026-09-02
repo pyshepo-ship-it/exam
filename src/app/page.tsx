@@ -12,6 +12,7 @@ import {
   Download,
   ExternalLink,
   CalendarDays,
+  Clock,
   Sparkles,
   Star,
   GraduationCap,
@@ -34,10 +35,16 @@ import {
   getImportantLinks,
   getSetting,
   isHonoreeActive,
+  getStoredAcademicYear,
 } from "@/lib/data-storage"
+import { buildPublicSchedule, isSchedulePublished } from "@/lib/schedule"
+import { downloadSchedulePDF } from "@/lib/schedule-print"
+import { getTeacherName, getTeacherSignatureLine } from "@/lib/branding"
+import { formatTime12 } from "@/lib/utils"
 import { fetchPublicData } from "@/lib/supabase/sync"
 import { toPublicExamCard } from "@/lib/exam-public"
 import { TeacherSignature } from "@/components/teacher-signature"
+import toast from "react-hot-toast"
 
 // أيقونة واتساب (SVG)
 function WhatsAppIcon({ className }: { className?: string }) {
@@ -75,6 +82,9 @@ export default function HomePage() {
   const [links, setLinks] = useState<ImportantLink[]>([])
   const [whatsappNumber, setWhatsappNumber] = useState("")
   const [onlineExams, setOnlineExams] = useState<Exam[]>([])
+  const [schedulePublished, setSchedulePublished] = useState(false)
+  const [exportingSchedule, setExportingSchedule] = useState(false)
+  const [publicTeacher, setPublicTeacher] = useState<{ name?: string; signature?: string; year?: string }>({})
 
   useEffect(() => {
     const load = async () => {
@@ -97,9 +107,9 @@ export default function HomePage() {
               .map(gr => ({
                 id: gr.id,
                 name: gr.name,
-                days: [] as string[],
-                startTime: "",
-                endTime: "",
+                days: gr.days || [],
+                startTime: gr.startTime || "",
+                endTime: gr.endTime || "",
                 monthlyFee: 0,
                 studentsCount: 0,
               })),
@@ -107,6 +117,12 @@ export default function HomePage() {
         )
         setWhatsappNumber(publicData.settings?.whatsappNumber || "")
         setOnlineExams((publicData.exams || []).filter(e => e.allowOnline).map(toPublicExamCard))
+        // حالة نشر الجدول + اسم المعلم لتوقيع الجدول المطبوع
+        setSchedulePublished(publicData.settings?.schedulePublished === "1")
+        setPublicTeacher({
+          name: publicData.settings?.teacherName || undefined,
+          signature: publicData.settings?.teacherSignatureLine || undefined,
+        })
       } else {
         // 2) وضع محلي (عند عدم تهيئة Supabase): من متصفح الجهاز
         setGrades(getGrades())
@@ -116,6 +132,12 @@ export default function HomePage() {
         setLinks(getImportantLinks())
         setWhatsappNumber(getSetting("whatsappNumber"))
         setOnlineExams(getExams().filter(e => e.allowOnline))
+        setSchedulePublished(isSchedulePublished())
+        setPublicTeacher({
+          name: getTeacherName(),
+          signature: getTeacherSignatureLine(),
+          year: getStoredAcademicYear(),
+        })
       }
       setMounted(true)
     }
@@ -124,6 +146,27 @@ export default function HomePage() {
 
   const allGroups = getAllGroups(grades)
   const now = new Date()
+
+  // تحميل نسخة الطلاب من الجدول (PDF — المواعيد فقط بدون بيانات حساسة)
+  const handleDownloadSchedule = async () => {
+    setExportingSchedule(true)
+    try {
+      await downloadSchedulePDF({
+        mode: "student",
+        grades,
+        teacherName: publicTeacher.name || getTeacherName(),
+        signatureLine: publicTeacher.signature || getTeacherSignatureLine(),
+        academicYear: publicTeacher.year || getStoredAcademicYear(),
+      })
+      toast.success("تم تحميل جدول المواعيد — بالتوفيق والنجاح 🌟")
+    } catch {
+      toast.error("تعذر تحميل الجدول — حاول مرة أخرى")
+    }
+    setExportingSchedule(false)
+  }
+
+  // الجدول المنشور للطلاب (مواعيد فقط)
+  const publicSchedule = schedulePublished ? buildPublicSchedule(grades) : []
 
   // الإعلانات: المثبتة أولاً ثم الأحدث
   const sortedAnnouncements = [...announcements].sort((a, b) => {
@@ -335,6 +378,72 @@ export default function HomePage() {
                 </div>
               )}
             </motion.section>
+
+            {/* ============ جدول المواعيد الأسبوعي (منشور للطلاب — مواعيد فقط) ============ */}
+            {publicSchedule.length > 0 && (
+              <motion.section
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-4"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shadow-lg">
+                      <CalendarDays className="w-5 h-5 text-white" />
+                    </div>
+                    جدول المواعيد الأسبوعي
+                  </h2>
+                  <Button
+                    size="sm"
+                    onClick={handleDownloadSchedule}
+                    disabled={exportingSchedule}
+                    className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white"
+                  >
+                    <Download className={`w-4 h-4 ${exportingSchedule ? "animate-pulse" : ""}`} />
+                    <span>{exportingSchedule ? "جاري التحضير..." : "تحميل الجدول PDF"}</span>
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {publicSchedule.map(({ gradeId, gradeName, groups }, gi) => (
+                    <motion.div
+                      key={gradeId}
+                      initial={{ opacity: 0, scale: 0.97 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ delay: gi * 0.06 }}
+                      className="bg-white dark:bg-gray-900 rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 shadow-lg overflow-hidden"
+                    >
+                      <div className="bg-gradient-to-l from-emerald-500 to-teal-600 px-5 py-3.5 flex items-center gap-2.5">
+                        <BookOpen className="w-5 h-5 text-white shrink-0" />
+                        <h3 className="font-extrabold text-white truncate">{gradeName}</h3>
+                      </div>
+                      <ul className="p-4 space-y-2.5">
+                        {groups.map(gr => (
+                          <li
+                            key={gr.id}
+                            className="flex flex-wrap items-center justify-between gap-2 bg-emerald-50/70 dark:bg-emerald-950/20 rounded-xl px-4 py-3 border border-emerald-100 dark:border-emerald-900"
+                          >
+                            <div className="min-w-0">
+                              <p className="font-bold text-gray-900 dark:text-white text-sm">{gr.name}</p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{gr.days.join("، ")}</p>
+                            </div>
+                            <span className="inline-flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-bold px-3 py-1.5 rounded-full shrink-0">
+                              <Clock className="w-3.5 h-3.5" />
+                              {gr.startTime && gr.endTime
+                                ? `${formatTime12(gr.startTime)} - ${formatTime12(gr.endTime)}`
+                                : "—"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </motion.div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-400 dark:text-gray-500 text-center">
+                  يرجى الالتزام بالمواعيد والحضور قبل بداية الحصة — لأي استفسار تواصلوا مع المعلم
+                </p>
+              </motion.section>
+            )}
 
             {/* ============ اختبارات مفتوحة للطلاب ============ */}
             {onlineExams.length > 0 && (

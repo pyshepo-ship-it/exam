@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
   Calendar, 
@@ -13,7 +13,12 @@ import {
   BookOpen,
   ChevronDown,
   ChevronUp,
-  DollarSign
+  DollarSign,
+  Printer,
+  FileDown,
+  Share2,
+  AlertTriangle,
+  CalendarX2
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -39,6 +44,14 @@ import {
 import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
 import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear } from "@/lib/data-storage"
+import {
+  findScheduleConflicts,
+  buildConflictMessage,
+  type ScheduleConflict,
+} from "@/lib/schedule"
+import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
+import { SchedulePrintDialog } from "@/components/schedule-print-dialog"
+import type { SchedulePrintOptions } from "@/lib/schedule-print"
 import SampleDataBanner from "@/components/sample-data-banner"
 import { TimePicker } from "@/components/time-picker"
 import { formatTime12, addDuration } from "@/lib/utils"
@@ -75,6 +88,24 @@ export default function GradesPage() {
   const [editingGroup, setEditingGroup] = useState<Group | null>(null)
   const [selectedGradeId, setSelectedGradeId] = useState<string>("")
   const [showSchedule, setShowSchedule] = useState(false)
+
+  // نشر الجدول للطلاب + حوارات الطباعة
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
+  const [printDialogOpen, setPrintDialogOpen] = useState(false)
+  const [printOptions, setPrintOptions] = useState<SchedulePrintOptions | null>(null)
+  const [printMode, setPrintMode] = useState<"teacher" | "student">("teacher")
+
+  const openPrintDialog = (mode: "teacher" | "student") => {
+    setPrintMode(mode)
+    setPrintOptions({
+      mode,
+      grades,
+      students: getStudents(),
+      academicYear: getStoredAcademicYear(),
+    })
+    setPrintDialogOpen(true)
+  }
+
   
   const [gradeForm, setGradeForm] = useState({
     name: "",
@@ -93,6 +124,18 @@ export default function GradesPage() {
   useEffect(() => {
     setGrades(getGrades())
   }, [])
+
+  // ---- منع تسجيل مجموعتين في نفس الموعد ----
+  // فحص فوري أثناء إدخال البيانات: يكفي أن يتطابق يوم واحد مع تقاطع
+  // في الوقت مع أي مجموعة أخرى (في أي صف) ليُعتبر الموعد محجوزاً.
+  const liveConflicts: ScheduleConflict[] = useMemo(() => {
+    if (!groupDialogOpen) return []
+    return findScheduleConflicts(
+      grades,
+      { days: groupForm.days, startTime: groupForm.startTime, endTime: groupForm.endTime },
+      { groupId: editingGroup?.id }
+    )
+  }, [groupDialogOpen, grades, groupForm.days, groupForm.startTime, groupForm.endTime, editingGroup])
 
   // Filter grades
   const filteredGrades = grades.filter(grade =>
@@ -217,6 +260,18 @@ export default function GradesPage() {
       return
     }
 
+    // ---- حماية نهائية: لا يمكن تسجيل مجموعتين في نفس الموعد ----
+    // يفحص كل المجموعات في جميع الصفوف — يكفي يوم واحد متعارض لمنع الحفظ
+    const conflicts = findScheduleConflicts(
+      grades,
+      { days: groupForm.days, startTime: groupForm.startTime, endTime: groupForm.endTime },
+      { groupId: editingGroup?.id }
+    )
+    if (conflicts.length > 0) {
+      toast.error(buildConflictMessage(conflicts), { duration: 8000 })
+      return
+    }
+
     const groupData: Group = {
       id: editingGroup?.id || Date.now().toString(),
       name: groupForm.name,
@@ -297,7 +352,7 @@ export default function GradesPage() {
             إدارة الصفوف الدراسية والمجموعات والمواعيد
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button 
             variant="outline"
             onClick={() => setShowSchedule(!showSchedule)}
@@ -312,6 +367,27 @@ export default function GradesPage() {
           >
             <Plus className="w-5 h-5" />
             <span>إضافة صف جديد</span>
+          </Button>
+          <Button
+            onClick={() => setPublishDialogOpen(true)}
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg"
+          >
+            <Share2 className="w-5 h-5" />
+            <span>نشر الجدول للطلاب</span>
+          </Button>
+          <Button
+            onClick={() => openPrintDialog("student")}
+            className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 shadow-lg"
+          >
+            <FileDown className="w-5 h-5" />
+            <span>طباعة الجدول للطلاب (PDF)</span>
+          </Button>
+          <Button
+            onClick={() => openPrintDialog("teacher")}
+            className="bg-gradient-to-r from-gray-700 to-gray-900 hover:from-gray-800 hover:to-black shadow-lg"
+          >
+            <Printer className="w-5 h-5" />
+            <span>طباعة الجدول التفصيلي الخاص بالمدرس</span>
           </Button>
         </div>
       </motion.div>
@@ -770,6 +846,41 @@ export default function GradesPage() {
               </div>
             </div>
 
+            {/* تنبيه فوري: منع تسجيل مجموعتين في نفس الموعد */}
+            {liveConflicts.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-xl border-2 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-4 space-y-2"
+              >
+                <p className="font-bold text-red-700 dark:text-red-300 flex items-center gap-2 text-sm">
+                  <AlertTriangle className="w-5 h-5 shrink-0" />
+                  لا يمكن حفظ المجموعة — الموعد محجوز لمجموعة أخرى
+                </p>
+                <ul className="space-y-1.5 pr-2">
+                  {liveConflicts.slice(0, 6).map((c, i) => (
+                    <li key={`${c.group.id}-${c.day}-${i}`} className="text-xs text-red-700 dark:text-red-300 leading-relaxed">
+                      • يوم «{c.day}» من{" "}
+                      {formatTime12(c.group.startTime)} إلى {formatTime12(c.group.endTime)} مسجَّل
+                      بالفعل لمجموعة «{c.group.name}» في {c.gradeName} (مواعيدها:{" "}
+                      {c.group.days.join(" و")} — {formatTime12(c.group.startTime)} إلى{" "}
+                      {formatTime12(c.group.endTime)})
+                    </li>
+                  ))}
+                  {liveConflicts.length > 6 && (
+                    <li className="text-xs text-red-600 font-semibold">
+                      و {liveConflicts.length - 6} تعارضات أخرى...
+                    </li>
+                  )}
+                </ul>
+                <p className="text-[11px] text-red-600/80 dark:text-red-400/80 flex items-center gap-1.5">
+                  <CalendarX2 className="w-3.5 h-3.5 shrink-0" />
+                  كل موعد (نفس اليوم ونفس الوقت) مخصص لمجموعة واحدة فقط — حتى لو تطابق يوم واحد
+                  فقط من أيام المجموعة.
+                </p>
+              </motion.div>
+            )}
+
             <div>
               <Label htmlFor="monthlyFee">السعر الشهري (ج.م) *</Label>
               <Input
@@ -788,13 +899,46 @@ export default function GradesPage() {
             </Button>
             <Button 
               onClick={saveGroup}
-              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700"
+              disabled={liveConflicts.length > 0}
+              title={liveConflicts.length > 0 ? "الموعد محجوز لمجموعة أخرى — غيّر اليوم أو الوقت" : undefined}
+              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {editingGroup ? "حفظ التعديلات" : "إضافة المجموعة"}
+              {liveConflicts.length > 0 ? (
+                <>
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>الموعد محجوز لمجموعة أخرى</span>
+                </>
+              ) : (
+                <span>{editingGroup ? "حفظ التعديلات" : "إضافة المجموعة"}</span>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* حوار نشر الجدول للطلاب */}
+      <SchedulePublishDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        grades={grades}
+      />
+
+      {/* حوار معاينة وطباعة الجدول (نسخة المدرس التفصيلية / نسخة الطلاب) */}
+      <SchedulePrintDialog
+        open={printDialogOpen}
+        onOpenChange={setPrintDialogOpen}
+        options={printOptions}
+        title={
+          printMode === "teacher"
+            ? "طباعة الجدول التفصيلي الخاص بالمدرس"
+            : "طباعة الجدول للطلاب"
+        }
+        description={
+          printMode === "teacher"
+            ? "نسخة كاملة تتضمن كل مجموعة بالأيام والوقت والسعر الشهري وأسماء الطلاب وأرقامهم وأرصدتهم المالية — خاصة بك ولا تُنشر للطلاب."
+            : "نسخة آمنة للتوزيع تعرض المواعيد فقط (الصف، المجموعة، الأيام، الوقت) — بدون أسعار أو أسماء طلاب أو أرقام هواتف."
+        }
+      />
     </div>
   )
 }

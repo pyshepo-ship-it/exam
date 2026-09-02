@@ -800,7 +800,8 @@ export interface PublicData {
   files: ReturnType<typeof fromSharedFileRow>[];
   links: ReturnType<typeof fromLinkRow>[];
   grades: { id: string; name: string }[];
-  groups: { id: string; gradeId: string; name: string }[];
+  /** حقول الجدول الآمنة فقط: بدون أسعار أو أعداد طلاب */
+  groups: { id: string; gradeId: string; name: string; days: string[]; startTime: string; endTime: string }[];
   settings: Record<string, string>;
   exams: ReturnType<typeof fromExamRow>[];
 }
@@ -834,7 +835,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     sb.from("shared_files").select("*"),
     sb.from("important_links").select("*"),
     sb.from("grades").select("id,name"),
-    sb.from("groups").select("id,grade_id,name"),
+    // حقول الجدول الآمنة فقط (أيام + أوقات) — لا أسعار ولا أعداد طلاب
+    sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
     sb.from("app_settings").select("key,value"),
     sb.from("exams").select("*"),
   ]);
@@ -855,7 +857,14 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     files: (files.data as any[]).map(fromSharedFileRow),
     links: (links.data as any[]).map(fromLinkRow),
     grades: (grades.data as any[]).map((g) => ({ id: g.id, name: g.name })),
-    groups: (groups.data as any[]).map((g) => ({ id: g.id, gradeId: g.grade_id, name: g.name })),
+    groups: (groups.data as any[]).map((g) => ({
+      id: g.id,
+      gradeId: g.grade_id,
+      name: g.name,
+      days: Array.isArray(g.days) ? g.days : [],
+      startTime: g.start_time || "",
+      endTime: g.end_time || "",
+    })),
     settings: settingsMap,
     exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
   };
