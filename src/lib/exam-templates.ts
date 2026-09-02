@@ -259,8 +259,9 @@ export function getUnderlinedWords(sq: SubQuestion): { word: string; underlined:
 }
 
 /**
- * تقسيم أسئلة الامتحان على صفحتين A4 كحد أقصى
- * يضمن عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً
+ * تقسيم أسئلة الامتحان على صفحتين A4 كحد أقصى بذكاء
+ * يضمن ملء الصفحة الأولى بأقصى عدد من الأسئلة الكاملة
+ * مع عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً
  */
 export interface ExamPartition {
   page1Questions: { question: Question; globalIndex: number }[]
@@ -274,22 +275,26 @@ export function partitionExamQuestions(questions: Question[]): ExamPartition {
     return { page1Questions: [], page2Questions: [], isSinglePage: true }
   }
 
-  // حساب وزن تقريبي لارتفاع السؤال
+  // تقدير ارتفاع السؤال بوحدات بكسل واقعية
   const getQWeight = (q: Question): number => {
-    const base = 40
+    const base = 44
     const subCount = q.subQuestions.length || 1
-    let subWeight = 24
-    if (q.questionType === 1) subWeight = 32
-    if (q.questionType === 4) subWeight = 22 + (q.subQuestions[0]?.answerLines || 2) * 10
-    if (q.questionType === 5) subWeight = 28
+    let subWeight = 26
+    if (q.questionType === 1) subWeight = 34 // MCQ
+    if (q.questionType === 4) subWeight = 24 + (q.subQuestions[0]?.answerLines || 2) * 12 // علل
+    if (q.questionType === 5) subWeight = 30 // تصحيح
     return base + subCount * subWeight
   }
 
   const weights = questions.map(getQWeight)
-  const totalWeight = weights.reduce((a, b) => a + b, 0)
+  const totalQuestionsWeight = weights.reduce((a, b) => a + b, 0)
 
-  // إذا كان الامتحان قصيراً جداً (سؤال أو سؤالين بمجموع أسئلة فرعية قليل) يكفي صفحة واحدة
-  if (n <= 2 && totalWeight <= 280) {
+  // الصفحة الأولى تستوعب حتى 520 وحدة للأسئلة
+  const PAGE1_MAX_Q_WEIGHT = 520
+  // صفحة واحدة فقط إذا كان الامتحان قصيراً (سؤالان صغيران بمجموع وزن <= 400)
+  const SINGLE_PAGE_MAX_WEIGHT = 400
+
+  if (n <= 2 && totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
     return {
       page1Questions: questions.map((q, i) => ({ question: q, globalIndex: i })),
       page2Questions: [],
@@ -297,39 +302,26 @@ export function partitionExamQuestions(questions: Question[]): ExamPartition {
     }
   }
 
-  // الامتحان مقسم على صفحتين بالضبط
-  const HEADER_WEIGHT = 110
-  const FOOTER_WEIGHT = 80
+  // توزيع ذكي لملء الصفحة الأولى بأكبر عدد ممكن من الأسئلة الكاملة
+  let split = 1
+  let accumulated = weights[0]
 
-  let bestSplit = 1
-  let minDiff = Infinity
-
-  for (let k = 1; k < n; k++) {
-    const p1Weight = HEADER_WEIGHT + weights.slice(0, k).reduce((a, b) => a + b, 0)
-    const p2Weight = FOOTER_WEIGHT + weights.slice(k).reduce((a, b) => a + b, 0)
-    const diff = Math.abs(p1Weight - p2Weight)
-    if (diff < minDiff) {
-      minDiff = diff
-      bestSplit = k
+  for (let i = 1; i < n; i++) {
+    if (accumulated + weights[i] <= PAGE1_MAX_Q_WEIGHT) {
+      accumulated += weights[i]
+      split = i + 1
+    } else {
+      break
     }
   }
 
-  // تطبيق قاعدة التوزيع التلقائي المتوازن
-  // إذا 3 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والسؤال 3 في الصفحة الثانية
-  if (n === 3 && bestSplit === 1 && weights[0] + weights[1] <= 440) {
-    bestSplit = 2
-  }
-  // إذا 4 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والسؤال 3 و 4 في الصفحة الثانية
-  if (n === 4 && bestSplit !== 2) {
-    bestSplit = 2
-  }
-  // إذا 5 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والأسئلة 3 و 4 و 5 في الصفحة الثانية
-  if (n === 5 && bestSplit !== 2) {
-    bestSplit = 2
+  // ضمان وجود سؤال واحد على الأقل في الصفحة الثانية
+  if (split >= n) {
+    split = n - 1
   }
 
-  const p1 = questions.slice(0, bestSplit).map((q, i) => ({ question: q, globalIndex: i }))
-  const p2 = questions.slice(bestSplit).map((q, i) => ({ question: q, globalIndex: bestSplit + i }))
+  const p1 = questions.slice(0, split).map((q, i) => ({ question: q, globalIndex: i }))
+  const p2 = questions.slice(split).map((q, i) => ({ question: q, globalIndex: split + i }))
 
   return {
     page1Questions: p1,

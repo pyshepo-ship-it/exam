@@ -406,7 +406,7 @@ const tplMod = await import(
 )
 
 console.log("\n\x1b[1mسيناريو 13: تقسيم أسئلة الامتحان على صفحتين بالضبط وعدم شطر أي سؤال\x1b[0m")
-t("امتحان 5 أسئلة يتوزع [2 أسئلة في الصفحة 1] و [3 أسئلة في الصفحة 2]", () => {
+t("امتحان 5 أسئلة يملأ الصفحة الأولى [3 أسئلة كاملة] و [سؤالين كاملين في الصفحة 2]", () => {
   const makeQ = (id, type) => ({
     id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
     subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1 })),
@@ -414,8 +414,8 @@ t("امتحان 5 أسئلة يتوزع [2 أسئلة في الصفحة 1] و [3
   const qs = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3), makeQ("q4", 4), makeQ("q5", 5)]
   const partition = tplMod.partitionExamQuestions(qs)
   eq(partition.isSinglePage, false)
-  eq(partition.page1Questions.map(p => p.question.id), ["q1", "q2"])
-  eq(partition.page2Questions.map(p => p.question.id), ["q3", "q4", "q5"])
+  eq(partition.page1Questions.map(p => p.question.id), ["q1", "q2", "q3"])
+  eq(partition.page2Questions.map(p => p.question.id), ["q4", "q5"])
 })
 
 console.log(`\n${"=".repeat(56)}`)
