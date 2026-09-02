@@ -790,11 +790,15 @@ export default function AnnouncementsPage() {
                   <SelectValue placeholder="اختر المجموعة" />
                 </SelectTrigger>
                 <SelectContent>
-                  {allGroups.map(group => (
-                    <SelectItem key={group.id} value={group.id}>
-                      {group.gradeName} - {group.name}
-                    </SelectItem>
-                  ))}
+                  {allGroups.length === 0 ? (
+                    <SelectItem value="__none" disabled>لا توجد مجموعات — أضف صفاً ومجموعة أولاً</SelectItem>
+                  ) : (
+                    allGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.gradeName} - {group.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

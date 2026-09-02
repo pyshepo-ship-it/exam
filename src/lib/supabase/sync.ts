@@ -72,16 +72,17 @@ function nil<T>(v: T | null | undefined): T | undefined {
 
 export const toGradeRow = (g: GradeShape) => ({
   id: g.id,
-  name: g.name,
-  academic_year: g.academicYear,
-  created_at: g.createdAt,
+  // أعمدة NOT NULL — قيم بديلة تمنع رفض السجل بالكامل
+  name: g.name || "صف بدون اسم",
+  academic_year: g.academicYear || "",
+  created_at: g.createdAt || new Date().toISOString(),
 });
 
 export const toGroupRows = (g: GradeShape) =>
   g.groups.map((gr: GroupShape) => ({
     id: gr.id,
     grade_id: g.id,
-    name: gr.name,
+    name: gr.name || "مجموعة",
     days: gr.days || [],
     start_time: gr.startTime || "",
     end_time: gr.endTime || "",
@@ -109,7 +110,7 @@ export const fromGradeRow = (row: any, groups: any[]): GradeShape => ({
 
 export const toStudentRow = (s: any) => ({
   id: s.id,
-  name: s.name,
+  name: s.name || "طالب بدون اسم",
   phone: s.phone || null,
   grade_id: s.gradeId || null,
   group_id: s.groupId || null,
@@ -135,9 +136,9 @@ const toDueRow = (d: any) => ({
   id: d.id,
   student_id: d.studentId,
   group_id: d.groupId || null,
-  month: d.month,
-  year: d.year,
-  amount: d.amount,
+  month: d.month ?? new Date().getMonth() + 1,
+  year: d.year ?? new Date().getFullYear(),
+  amount: d.amount ?? 0,
   status: d.status || "pending",
   created_at: d.createdAt || new Date().toISOString(),
 });
@@ -157,10 +158,10 @@ const toPaymentRow = (p: any) => ({
   id: p.id,
   student_id: p.studentId,
   due_id: p.dueId || null,
-  amount: p.amount,
-  payment_date: p.paymentDate,
-  month: p.month,
-  year: p.year,
+  amount: p.amount ?? 0,
+  payment_date: p.paymentDate || new Date().toISOString().slice(0, 10),
+  month: p.month ?? new Date().getMonth() + 1,
+  year: p.year ?? new Date().getFullYear(),
   notes: p.notes || null,
   created_at: p.createdAt || new Date().toISOString(),
 });
@@ -212,7 +213,7 @@ export const fromExamRow = (row: any) => ({
 const toSessionRow = (s: any) => ({
   id: s.id,
   group_id: s.groupId,
-  session_date: s.sessionDate,
+  session_date: s.sessionDate || new Date().toISOString().slice(0, 10),
   start_time: s.startTime || "",
   end_time: s.endTime || "",
   notes: s.notes || null,
@@ -233,7 +234,7 @@ const toAttendanceRow = (a: any) => ({
   id: a.id,
   session_id: a.sessionId,
   student_id: a.studentId,
-  status: a.status,
+  status: a.status || "absent",
   late_minutes: a.lateMinutes ?? null,
   notes: a.notes || null,
   created_at: a.createdAt || new Date().toISOString(),

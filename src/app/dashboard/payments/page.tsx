@@ -509,9 +509,13 @@ export default function PaymentsPage() {
                     <SelectValue placeholder="اختر الصف" />
                   </SelectTrigger>
                   <SelectContent>
-                    {paymentGrades.map(grade => (
-                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                    ))}
+                    {paymentGrades.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد صفوف</SelectItem>
+                    ) : (
+                      paymentGrades.map(grade => (
+                        <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -529,9 +533,13 @@ export default function PaymentsPage() {
                     <SelectValue placeholder="اختر المجموعة" />
                   </SelectTrigger>
                   <SelectContent>
-                    {paymentGroups.map(group => (
-                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
-                    ))}
+                    {paymentGroups.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
+                    ) : (
+                      paymentGroups.map(group => (
+                        <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>

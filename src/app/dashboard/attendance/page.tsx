@@ -243,9 +243,13 @@ export default function AttendancePage() {
                 <SelectValue placeholder="اختر الصف" />
               </SelectTrigger>
               <SelectContent>
-                {grades.map(grade => (
-                  <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                ))}
+                {grades.length === 0 ? (
+                  <SelectItem value="__none" disabled>لا توجد صفوف</SelectItem>
+                ) : (
+                  grades.map(grade => (
+                    <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -264,11 +268,19 @@ export default function AttendancePage() {
                 <SelectValue placeholder="اختر المجموعة" />
               </SelectTrigger>
               <SelectContent>
-                {allGroups.map(group => (
-                  <SelectItem key={group.id} value={group.id}>
-                    {group.gradeName} - {group.name}
-                  </SelectItem>
-                ))}
+                {(() => {
+                  // مجموعات الصف المختار فقط (أو الكل إن لم يُختر صف)
+                  const list = allGroups.filter(g => !selectedGrade || g.gradeId === selectedGrade)
+                  return list.length === 0 ? (
+                    <SelectItem value="__none" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
+                  ) : (
+                    list.map(group => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.gradeName} - {group.name}
+                      </SelectItem>
+                    ))
+                  )
+                })()}
               </SelectContent>
             </Select>
           </div>
@@ -283,12 +295,16 @@ export default function AttendancePage() {
                 <SelectValue placeholder="اختر الحصة" />
               </SelectTrigger>
               <SelectContent>
-                {groupSessions.map(session => (
-                  <SelectItem key={session.id} value={session.id}>
-                    {new Date(session.sessionDate).toLocaleDateString('ar-EG')} 
-                    {session.notes && ` - ${session.notes}`}
-                  </SelectItem>
-                ))}
+                {groupSessions.length === 0 ? (
+                  <SelectItem value="__none" disabled>لا توجد حصص لهذه المجموعة</SelectItem>
+                ) : (
+                  groupSessions.map(session => (
+                    <SelectItem key={session.id} value={session.id}>
+                      {new Date(session.sessionDate).toLocaleDateString('ar-EG')}
+                      {session.notes && ` - ${session.notes}`}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>
@@ -445,11 +461,6 @@ export default function AttendancePage() {
         </motion.div>
       )}
 
-      {/* New Session Dialog */}
-      <Select open={newSessionDialog} onOpenChange={setNewSessionDialog}>
-        {/* Using Dialog instead */}
-      </Select>
-
       {/* Simple new session form inline */}
       {newSessionDialog && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setNewSessionDialog(false)}>
@@ -473,11 +484,15 @@ export default function AttendancePage() {
                     <SelectValue placeholder="اختر المجموعة" />
                   </SelectTrigger>
                   <SelectContent>
-                    {grades.flatMap(g => g.groups.map(gr => ({ ...gr, gradeName: g.name }))).map(group => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.gradeName} - {group.name}
-                      </SelectItem>
-                    ))}
+                    {allGroups.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد مجموعات — أضف صفاً ومجموعة أولاً</SelectItem>
+                    ) : (
+                      allGroups.map(group => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.gradeName} - {group.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
