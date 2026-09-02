@@ -16,7 +16,9 @@ import {
 
 export { saveInquiries }
 export const getInquiries = getInquiriesFromStorage
-import { submitInquiryThread } from "./supabase/sync"
+import { submitInquiryThread, pushInquiries, fetchStudentInquiries, fetchStudentById } from "./supabase/sync"
+import { saveToStorage } from "./data-storage"
+import { STORAGE_KEYS } from "./storage-keys"
 
 export interface InquiryResult {
   ok: boolean
@@ -74,36 +76,60 @@ export function canStudentSendInquiry(studentId: string): { allowed: boolean; re
   return { allowed: true }
 }
 
-/** الطالب يرسل استفساراً جديداً أو يرد على استفساره المفتوح */
+/** الطالب يرسل استفساراً جديداً أو يرد — القرار كله من السحابة (المصدر الوحيد) */
 export async function sendStudentInquiry(studentId: string, text: string): Promise<InquiryResult> {
   const body = (text || "").trim()
   if (body.length < 5) return { ok: false, error: "اكتب استفسارك بوضوح (5 أحرف على الأقل)" }
   if (body.length > 1000) return { ok: false, error: "الاستفسار طويل جداً — اختصر في 1000 حرف" }
 
-  const student = getStudents().find(s => s.id === studentId)
-  if (!student) return { ok: false, error: "بيانات الطالب غير موجودة" }
-  if (isInquiryChannelClosed(studentId)) {
+  // بيانات الطالب وحالة قناته: من السحابة أولاً (والاحتياط المحلي)
+  let student = getStudents().find(s => s.id === studentId)
+  try {
+    const cloudStudent = await fetchStudentById(studentId)
+    if (cloudStudent) student = cloudStudent
+  } catch { /* الاحتياط المحلي */ }
+  if (!student) return { ok: false, error: "تعذر التحقق من بياناتك — أعد المحاولة" }
+  if (student.inquiryBlocked === true) {
     return { ok: false, error: "أغلق المعلم قناة الاستفسار الخاصة بك — راجع المعلم مباشرة" }
   }
 
-  const state = canStudentSendInquiry(studentId)
-  if (!state.allowed) return { ok: false, error: state.reason }
+  // خيوط الاستفسار: من السحابة — الكاش المحلي للعرض فقط
+  let threads: InquiryThread[] = getInquiries()
+  try {
+    const cloud = (await fetchStudentInquiries(studentId)) as InquiryThread[]
+    if (Array.isArray(cloud)) {
+      threads = cloud
+      saveToStorage(STORAGE_KEYS.INQUIRIES, cloud) // كاش قراءة — بلا دفع عكسي
+    }
+  } catch { /* الاحتياط المحلي */ }
 
   const now = new Date().toISOString()
   const msg: InquiryMessage = { from: "student", text: body, at: now }
+  const mine = threads.filter(t => t.studentId === studentId)
+  const open = mine.find(t => t.status === "open")
 
-  if (state.thread) {
-    // رد على استفسار مفتوح
-    const updated = getInquiries().map(t =>
-      t.id === state.thread!.id
+  if (open) {
+    const last = open.messages[open.messages.length - 1]
+    if (last && last.from === "student") {
+      return { ok: false, error: "لديك استفسار بانتظار رد المعلم — ستتمكن من الرد بعد إجابته" }
+    }
+    // رد على الموضوع المفتوح — رفع سحابي أولاً، الكاش بعد النجاح فقط
+    const updated = threads.map(t =>
+      t.id === open.id
         ? { ...t, messages: [...t.messages, msg], updatedAt: now }
         : t
     )
-    saveInquiries(updated)
+    try {
+      await pushInquiries(updated)
+    } catch (e: unknown) {
+      const m = (e as { message?: string })?.message || "خطأ اتصال — أعد المحاولة"
+      return { ok: false, error: `تعذر إرسال الرد: ${m}` }
+    }
+    saveToStorage(STORAGE_KEYS.INQUIRIES, updated)
     return { ok: true, message: "تم إرسال ردك — سيرد المعلم عليه قريباً" }
   }
 
-  // استفسار جديد
+  // استفسار جديد — إدراج سحابي مباشر (submitInquiryThread سحابية أولاً)
   const thread: InquiryThread = {
     id: newId("inq"),
     studentId,

@@ -49,7 +49,7 @@ import {
   requestGroupTransfer,
   areStudentReportsEnabled,
 } from "@/lib/student-accounts"
-import { sendStudentInquiry, canStudentSendInquiry } from "@/lib/inquiries"
+import { sendStudentInquiry } from "@/lib/inquiries"
 import {
   examAvailability,
   isExamForStudent,
@@ -841,8 +841,17 @@ export default function StudentPortalPage() {
                   </p>
 
                   {(() => {
-                    const thread = inquiries.find(t => t.status === "open") || inquiries[inquiries.length - 1]
-                    const state = canStudentSendInquiry(session.studentId)
+                    const mine = inquiries.filter(t => t.studentId === session.studentId)
+                    const thread = mine.find(t => t.status === "open") || mine[mine.length - 1]
+                    // الحالة من السحابة: حجب القناة من بيانات الطالب، والانتظار من آخر رسالة في الموضوع
+                    const lastMsg = thread && thread.status === "open" ? thread.messages[thread.messages.length - 1] : null
+                    const waitingTeacher = Boolean(lastMsg && lastMsg.from === "student")
+                    const channelBlocked = report?.student.inquiryBlocked === true
+                    const state = channelBlocked
+                      ? { allowed: false as const, reason: "أغلق المعلم قناة الاستفسار الخاصة بك — راجع المعلم مباشرة" }
+                      : waitingTeacher
+                        ? { allowed: false as const, reason: "لديك استفسار بانتظار رد المعلم — ستتمكن من الرد بعد إجابته" }
+                        : { allowed: true as const, reason: "" }
                     return (
                       <>
                         {thread && (
