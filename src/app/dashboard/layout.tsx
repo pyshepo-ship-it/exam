@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { SyncIndicator } from "@/components/sync-indicator"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { pullAllData } from "@/lib/supabase/sync"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
@@ -296,6 +297,7 @@ export default function DashboardLayout({
           </Button>
 
           <div className="flex items-center gap-4">
+            <SyncIndicator />
             <div className="text-right hidden sm:block">
               <p className="font-semibold text-gray-900 dark:text-white">مرحباً بك</p>
               <p className="text-xs text-gray-500 dark:text-gray-400">{userEmail || 'مدير النظام'}</p>

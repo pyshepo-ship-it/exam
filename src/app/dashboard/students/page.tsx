@@ -248,6 +248,9 @@ export default function StudentsPage() {
   }
 
   // Get grade and group names
+  // مجموعات الصف المختار في نموذج الإضافة/التعديل
+  const formGroups = grades.find(g => g.id === form.gradeId)?.groups || []
+
   const getGradeName = (gradeId: string) => grades.find(g => g.id === gradeId)?.name || 'غير محدد'
   const getGroupName = (groupId: string) => {
     for (const grade of grades) {
@@ -403,11 +406,14 @@ export default function StudentsPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">كل المجموعات</SelectItem>
-              {allGroups.map(group => (
-                <SelectItem key={group.id} value={group.id}>
-                  {group.gradeName} - {group.name}
-                </SelectItem>
-              ))}
+              {/* تُعرض مجموعات الصف المختار فقط، أو كل المجموعات عند اختيار "كل الصفوف" */}
+              {allGroups
+                .filter(g => filterGrade === "all" || g.gradeId === filterGrade)
+                .map(group => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.gradeName} - {group.name}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
 
@@ -591,9 +597,13 @@ export default function StudentsPage() {
                     <SelectValue placeholder="اختر الصف" />
                   </SelectTrigger>
                   <SelectContent>
-                    {grades.map(grade => (
-                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                    ))}
+                    {grades.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
+                    ) : (
+                      grades.map(grade => (
+                        <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -614,11 +624,17 @@ export default function StudentsPage() {
                     <SelectValue placeholder="اختر المجموعة" />
                   </SelectTrigger>
                   <SelectContent>
-                    {allGroups.map(group => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.gradeName} - {group.name}
-                      </SelectItem>
-                    ))}
+                    {!form.gradeId ? (
+                      <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
+                    ) : formGroups.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
+                    ) : (
+                      formGroups.map(group => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>

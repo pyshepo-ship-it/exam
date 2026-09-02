@@ -19,6 +19,8 @@ import {
   FolderOpen,
   RotateCcw,
   MessageCircle,
+  Loader2,
+  XCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -72,8 +74,10 @@ import {
   getSetting,
   saveSetting,
   YearArchive,
+  hasSampleBackup,
+  restoreSampleGrades,
 } from "@/lib/data-storage"
-import { clearAllRemote, syncAllFromLocal, pullAllData } from "@/lib/supabase/sync"
+import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, diagnoseSync, type ConnectionCheck, type SyncReport } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -104,6 +108,21 @@ export default function SettingsPage() {
 
   const [supabaseConnected, setSupabaseConnected] = useState(false)
   const [syncing, setSyncing] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [conn, setConn] = useState<ConnectionCheck | null>(null)
+
+  // فحص حقيقي: كتابة ثم قراءة من Supabase + عدّ السجلات الفعلية داخل قاعدة البيانات
+  const runConnectionCheck = async (silent = false) => {
+    setChecking(true)
+    const res = await checkSupabaseConnection()
+    setConn(res)
+    setChecking(false)
+    if (!silent) {
+      if (res.ok) toast.success(`الاتصال سليم — تم اختبار الكتابة والقراءة فعلياً (${res.latencyMs} ms)`)
+      else toast.error(res.error ? `فشل الفحص: ${res.error}` : "فشل الفحص — البيانات لا تُحفظ في قاعدة البيانات")
+    }
+    return res
+  }
 
   // بيانات التواصل (رقم واتساب في الصفحة الرئيسية)
   const [whatsappInput, setWhatsappInput] = useState("")
@@ -134,6 +153,54 @@ export default function SettingsPage() {
     }
   }
 
+  // استعادة الصفوف التي أُزيلت كـ"بيانات تجريبية" عن طريق الخطأ
+  const [canRestoreSamples, setCanRestoreSamples] = useState(false)
+
+  const handleRestoreSamples = () => {
+    const n = restoreSampleGrades()
+    if (n > 0) {
+      toast.success(`تمت استعادة ${n} صف مع مجموعاته`)
+      setCanRestoreSamples(false)
+      refreshData()
+    } else {
+      toast.error("لا توجد نسخة يمكن استعادتها")
+    }
+  }
+
+  // تشخيص دقيق: يحدد أي سجل يفشل ولماذا
+  const [report, setReport] = useState<SyncReport | null>(null)
+  const [diagnosing, setDiagnosing] = useState(false)
+
+  const handleDiagnose = async () => {
+    setDiagnosing(true)
+    setReport(null)
+    try {
+      const res = await diagnoseSync()
+      setReport(res)
+      const failed = res.tables.reduce((n, t) => n + t.failures.length, 0)
+      if (failed === 0) toast.success("التشخيص: لا توجد أخطاء — كل البيانات محفوظة")
+      else toast.error(`التشخيص: ${failed} سجل فشل — التفاصيل بالأسفل`)
+      await runConnectionCheck(true)
+      refreshData()
+    } catch (e: any) {
+      toast.error(`تعذر إجراء التشخيص: ${e?.message || e}`)
+    }
+    setDiagnosing(false)
+  }
+
+  // رفع بيانات الجهاز إلى Supabase بالترتيب الصحيح (حل أخطاء 409)
+  const handleForcePush = async () => {
+    setSyncing(true)
+    const res = await forcePushAll()
+    if (res.ok) {
+      toast.success("تم رفع كل بياناتك إلى قاعدة البيانات بنجاح")
+      await runConnectionCheck(true)
+    } else {
+      toast.error(res.error || "تعذر رفع البيانات")
+    }
+    setSyncing(false)
+  }
+
   // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
   // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
@@ -160,7 +227,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     refreshData()
+    setCanRestoreSamples(hasSampleBackup())
     setSupabaseConnected(isSupabaseConfigured())
+    if (isSupabaseConfigured()) runConnectionCheck(true)
     setWhatsappInput(getSetting("whatsappNumber"))
 
     // Get user email from Supabase
@@ -654,6 +723,228 @@ export default function SettingsPage() {
                 ))}
               </div>
 
+              {canRestoreSamples && (
+                <div className="rounded-xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex-1">
+                    <p className="font-bold text-amber-900 dark:text-amber-100">
+                      يمكن استعادة صفوف أُزيلت كبيانات تجريبية
+                    </p>
+                    <p className="text-sm text-amber-800 dark:text-amber-200 mt-0.5">
+                      إذا فُقد صف أو مجموعة بعد الضغط على «إزالة البيانات التجريبية»، استعدها من هنا.
+                    </p>
+                  </div>
+                  <Button
+                    onClick={handleRestoreSamples}
+                    className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span>استعادة الصفوف المحذوفة</span>
+                  </Button>
+                </div>
+              )}
+
+              {/* التحقق من الحفظ في قاعدة البيانات */}
+              {supabaseConnected && (
+                <div className={`rounded-xl border p-4 space-y-3 ${
+                  conn && !conn.ok
+                    ? "border-red-300 bg-red-50 dark:bg-red-950/20"
+                    : "border-green-300 bg-green-50 dark:bg-green-950/20"
+                }`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      {checking || !conn ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-gray-500" />
+                      ) : conn.ok ? (
+                        <CheckCircle className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <XCircle className="w-5 h-5 text-red-600" />
+                      )}
+                      <div>
+                        <p className="font-semibold text-gray-900 dark:text-white">
+                          التحقق من الحفظ في قاعدة البيانات
+                        </p>
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          {checking || !conn
+                            ? "جاري اختبار الكتابة والقراءة على Supabase..."
+                            : conn.ok
+                            ? `تم اختبار كتابة سجل حقيقي وقراءته من Supabase بنجاح (${conn.latencyMs} ms)`
+                            : conn.error || "تعذّر الكتابة أو القراءة — بياناتك الآن محفوظة في المتصفح فقط"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={handleForcePush} disabled={syncing || checking}>
+                        <Upload className={`w-4 h-4 ${syncing ? "animate-pulse" : ""}`} />
+                        <span>رفع بياناتي الآن</span>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => runConnectionCheck()} disabled={checking}>
+                        <RotateCcw className={`w-4 h-4 ${checking ? "animate-spin" : ""}`} />
+                        <span>إعادة الفحص</span>
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleDiagnose}
+                        disabled={diagnosing}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                      >
+                        <Shield className={`w-4 h-4 ${diagnosing ? "animate-pulse" : ""}`} />
+                        <span>{diagnosing ? "جاري التشخيص..." : "تشخيص دقيق"}</span>
+                      </Button>
+                    </div>
+                  </div>
+
+                  {conn && !conn.ok && /permission denied|صلاحيات|مخطط|uuid|عمود/i.test(conn.error || "") && (
+                    <div className="rounded-lg bg-white dark:bg-gray-900 border border-red-300 dark:border-red-800 p-4 text-sm space-y-2">
+                      <p className="font-bold text-red-700 dark:text-red-400">
+                        كيف تُصلح هذا الخطأ (دقيقة واحدة):
+                      </p>
+                      <ol className="list-decimal pr-5 space-y-1 text-gray-700 dark:text-gray-300">
+                        <li>افتح لوحة تحكم Supabase الخاصة بمشروعك.</li>
+                        <li>من القائمة الجانبية اختر <span className="font-semibold">SQL Editor</span> ثم <span className="font-semibold">New query</span>.</li>
+                        <li>
+                          الصق محتوى الملف{" "}
+                          <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs">
+                            {/uuid|مخطط|عمود/i.test(conn.error || "")
+                              ? "supabase/migrations/005_fix_id_types.sql"
+                              : "supabase/migrations/004_fix_permissions.sql"}
+                          </code>{" "}
+                          الموجود في المشروع.
+                        </li>
+                        <li>اضغط <span className="font-semibold">Run</span>.</li>
+                        <li>ارجع هنا واضغط <span className="font-semibold">إعادة الفحص</span>.</li>
+                      </ol>
+                      <p className="text-xs text-gray-500">
+                        هذا الملف يمنح صلاحيات الجداول لأدوار Supabase فقط — لا يمسح ولا يعدّل أي بيانات.
+                      </p>
+                    </div>
+                  )}
+
+                  {report && (
+                    <div className="rounded-lg bg-white dark:bg-gray-900 border border-indigo-300 dark:border-indigo-800 p-4 space-y-3 text-sm">
+                      <p className="font-bold text-indigo-700 dark:text-indigo-400">نتيجة التشخيص الدقيق</p>
+
+                      <div className="text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+                        <p>
+                          الجلسة:{" "}
+                          {report.authenticated ? (
+                            <span className="text-green-600 font-semibold">
+                              مسجّل الدخول ({report.userEmail}) — الدور: {report.role}
+                            </span>
+                          ) : (
+                            <span className="text-red-600 font-semibold">
+                              غير مسجّل — الكتابة سترفض
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <ul className="space-y-1">
+                        {report.summary.map((line, i) => (
+                          <li key={i} className="text-gray-800 dark:text-gray-200 break-words">
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-gray-500">
+                              <th className="text-right py-1">الجدول</th>
+                              <th className="text-center py-1">محلي</th>
+                              <th className="text-center py-1">نجح رفعه</th>
+                              <th className="text-center py-1">في القاعدة</th>
+                              <th className="text-center py-1">فشل</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.tables.map((t) => (
+                              <tr key={t.table} className="border-t border-gray-200/60 dark:border-gray-800">
+                                <td className="py-1 font-medium">{t.table}</td>
+                                <td className="py-1 text-center">{t.localCount}</td>
+                                <td className="py-1 text-center text-green-600">{t.pushed}</td>
+                                <td className="py-1 text-center font-semibold">{t.remoteCount}</td>
+                                <td className={`py-1 text-center ${t.failures.length ? "text-red-600 font-bold" : "text-gray-400"}`}>
+                                  {t.failures.length}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {report.tables.some((t) => t.failures.length > 0) && (
+                        <div className="space-y-2">
+                          <p className="font-semibold text-red-700 dark:text-red-400">السجلات الفاشلة:</p>
+                          {report.tables.flatMap((t) =>
+                            t.failures.map((f, i) => (
+                              <div
+                                key={`${t.table}-${f.id}-${i}`}
+                                className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded p-2 text-xs"
+                              >
+                                <p className="font-bold text-red-800 dark:text-red-300">
+                                  [{t.table}] {f.label}
+                                </p>
+                                <p className="text-gray-700 dark:text-gray-300 break-words mt-0.5">
+                                  {f.code ? `(${f.code}) ` : ""}
+                                  {f.message}
+                                </p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {conn?.ok && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-500 text-xs">
+                            <th className="text-right py-1">الجدول</th>
+                            <th className="text-center py-1">في هذا الجهاز</th>
+                            <th className="text-center py-1">داخل قاعدة البيانات</th>
+                            <th className="text-center py-1">الحالة</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {([
+                            ["الصفوف", "grades", dataStats.grades],
+                            ["الطلاب", "students", dataStats.students],
+                            ["الاستحقاقات", "dues", dataStats.dues],
+                            ["المدفوعات", "payments", dataStats.payments],
+                            ["الاختبارات", "exams", dataStats.exams],
+                            ["الحصص", "sessions", dataStats.sessions],
+                            ["الحضور", "attendance", dataStats.attendance],
+                          ] as [string, string, number][]).map(([label, table, localCount]) => {
+                            const remote = conn.counts[table] ?? 0
+                            const match = remote === localCount
+                            return (
+                              <tr key={table} className="border-t border-gray-200/60 dark:border-gray-800">
+                                <td className="py-1 font-medium text-gray-800 dark:text-gray-200">{label}</td>
+                                <td className="py-1 text-center">{localCount}</td>
+                                <td className="py-1 text-center font-semibold">{remote < 0 ? "—" : remote}</td>
+                                <td className="py-1 text-center">
+                                  {match ? (
+                                    <span className="text-green-600 text-xs">متطابق ✓</span>
+                                  ) : (
+                                    <span className="text-amber-600 text-xs">غير متطابق</span>
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                      <p className="text-xs text-gray-500 mt-2">
+                        إذا ظهر أي صف &quot;غير متطابق&quot; اضغط &quot;مزامنة الآن مع Supabase&quot; لجلب أحدث نسخة، أو أعد الحفظ من الصفحة المعنية.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Actions */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 {supabaseConnected && (
@@ -753,15 +1044,25 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">حالة Supabase</span>
-                    {supabaseConnected ? (
-                      <span className="font-semibold text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-4 h-4" />
-                        متصل — البيانات تُحفظ وتُجلب من Supabase
-                      </span>
-                    ) : (
+                    {!supabaseConnected ? (
                       <span className="font-semibold text-yellow-600 flex items-center gap-1">
                         <AlertCircle className="w-4 h-4" />
                         غير متصل (الوضع المحلي فقط)
+                      </span>
+                    ) : checking || !conn ? (
+                      <span className="font-semibold text-gray-500 flex items-center gap-1">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        جاري فحص الاتصال...
+                      </span>
+                    ) : conn.ok ? (
+                      <span className="font-semibold text-green-600 flex items-center gap-1">
+                        <CheckCircle className="w-4 h-4" />
+                        متصل ومُختبَر فعلياً (كتابة + قراءة)
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-red-600 flex items-center gap-1">
+                        <XCircle className="w-4 h-4" />
+                        فشل الحفظ في قاعدة البيانات
                       </span>
                     )}
                   </div>

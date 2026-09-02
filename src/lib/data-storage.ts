@@ -478,17 +478,52 @@ export const getStudentWithDetails = (student: Student): Student & { gradeName: 
 const SAMPLE_GRADE_NAMES = ['الصف الرابع الابتدائي', 'الصف الخامس الابتدائي']
 
 /**
- * اكتشاف الصفوف التجريبية المتبقية من النسخ القديمة:
- * صف اسمه من الأسماء التجريبية ولا يوجد عليه أي طلاب
+ * معرفات الصفوف التجريبية القديمة.
+ *
+ * ⚠️ مهم: البذرة القديمة كانت تستخدم معرفات ثابتة ('1' و '2').
+ * الصفوف التي ينشئها المستخدم تستخدم Date.now() (13 رقماً)،
+ * لذلك لا يمكن أبداً أن تتطابق مع هذه المعرفات.
+ *
+ * الاعتماد على الاسم وحده كان خطأً جسيماً: أي صف حقيقي يسميه
+ * المستخدم "الصف الرابع الابتدائي" (وهو اسم شائع جداً!) كان
+ * يُصنَّف تجريبياً ويُحذف. لذلك صار المعرّف شرطاً إلزامياً.
+ */
+const SAMPLE_GRADE_IDS = ['1', '2']
+
+/**
+ * اكتشاف الصفوف التجريبية المتبقية من النسخ القديمة.
+ *
+ * الشروط (يجب أن تتحقق كلها معاً حتى لا يُحذف أي صف حقيقي):
+ *  1. معرّف الصف من معرفات البذرة القديمة الثابتة ('1' أو '2')
+ *  2. اسم الصف من الأسماء التجريبية
+ *  3. لا يوجد أي طالب في أي مجموعة من مجموعاته
+ *  4. لا توجد أي بيانات أخرى مرتبطة به (اختبارات/حصص/استحقاقات)
  */
 export const getSampleGrades = (): Grade[] => {
   const grades = getGrades()
   const students = getStudents()
+  const exams = getExams()
+  const sessions = getSessions()
+  const dues = getDues()
+
   return grades.filter(grade => {
+    // 1) المعرّف الثابت للبذرة القديمة — شرط إلزامي
+    if (!SAMPLE_GRADE_IDS.includes(String(grade.id))) return false
+
+    // 2) الاسم التجريبي
     if (!SAMPLE_GRADE_NAMES.includes(grade.name)) return false
+
     const groupIds = grade.groups.map(g => g.id)
-    const hasStudents = students.some(s => groupIds.includes(s.groupId))
-    return !hasStudents
+
+    // 3) لا طلاب
+    if (students.some(s => groupIds.includes(s.groupId) || s.gradeId === grade.id)) return false
+
+    // 4) لا اختبارات / حصص / استحقاقات مرتبطة
+    if (exams.some(e => e.gradeId === grade.id || (e.groupId && groupIds.includes(e.groupId)))) return false
+    if (sessions.some(se => groupIds.includes(se.groupId))) return false
+    if (dues.some(d => d.groupId && groupIds.includes(d.groupId))) return false
+
+    return true
   })
 }
 
@@ -496,24 +531,65 @@ export const getSampleGrades = (): Grade[] => {
  * إزالة البيانات التجريبية (الصفوف والمجموعات الافتراضية)
  * لا تلمس أي صف عليه طلاب
  */
+/** مفتاح النسخة الاحتياطية قبل إزالة البيانات التجريبية (للتراجع) */
+const SAMPLE_BACKUP_KEY = 'sampleGradesBackup'
+
+/** هل توجد نسخة يمكن التراجع إليها؟ */
+export const hasSampleBackup = (): boolean => {
+  if (typeof window === 'undefined') return false
+  const raw = localStorage.getItem(SAMPLE_BACKUP_KEY)
+  if (!raw) return false
+  try {
+    return (JSON.parse(raw) as Grade[]).length > 0
+  } catch {
+    return false
+  }
+}
+
+/** التراجع عن إزالة البيانات التجريبية (استعادة الصفوف المحذوفة) */
+export const restoreSampleGrades = (): number => {
+  if (typeof window === 'undefined') return 0
+  const raw = localStorage.getItem(SAMPLE_BACKUP_KEY)
+  if (!raw) return 0
+  let backup: Grade[] = []
+  try {
+    backup = JSON.parse(raw) as Grade[]
+  } catch {
+    return 0
+  }
+  if (backup.length === 0) return 0
+
+  const current = getGrades()
+  const currentIds = new Set(current.map(g => g.id))
+  const restored = backup.filter(g => !currentIds.has(g.id))
+  saveGrades([...current, ...restored])
+  localStorage.removeItem(SAMPLE_BACKUP_KEY)
+  return restored.length
+}
+
 export const removeSampleGrades = (): { removedGrades: number; removedStudents: number } => {
   const grades = getGrades()
   const sampleGrades = getSampleGrades()
   const sampleGradeIds = new Set(sampleGrades.map(g => g.id))
-  const sampleGroupIds = new Set(sampleGrades.flatMap(g => g.groups.map(gr => gr.id)))
 
-  const students = getStudents()
-  const remainingStudents = students.filter(s => !sampleGroupIds.has(s.groupId))
+  // لا شيء لإزالته — لا نلمس أي بيانات
+  if (sampleGradeIds.size === 0) {
+    return { removedGrades: 0, removedStudents: 0 }
+  }
 
+  // نحفظ نسخة احتياطية تسمح بالتراجع الفوري
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(SAMPLE_BACKUP_KEY, JSON.stringify(sampleGrades))
+  }
+
+  // getSampleGrades يضمن بالفعل عدم وجود أي طالب مرتبط،
+  // لذلك لا نحذف أي طالب إطلاقاً هنا (حماية من فقدان البيانات).
   saveGrades(grades.filter(g => !sampleGradeIds.has(g.id)))
-  saveStudents(remainingStudents)
+
   if (typeof window !== 'undefined') {
     localStorage.removeItem('initialized')
     localStorage.removeItem('sampleBannerDismissed')
   }
 
-  return {
-    removedGrades: sampleGradeIds.size,
-    removedStudents: students.length - remainingStudents.length,
-  }
+  return { removedGrades: sampleGradeIds.size, removedStudents: 0 }
 }

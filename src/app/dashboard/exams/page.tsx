@@ -706,9 +706,13 @@ export default function ExamsPage() {
                     <SelectValue placeholder="اختر الصف" />
                   </SelectTrigger>
                   <SelectContent>
-                    {grades.map(grade => (
-                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                    ))}
+                    {grades.length === 0 ? (
+                      <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
+                    ) : (
+                      grades.map(grade => (
+                        <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -734,11 +738,14 @@ export default function ExamsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">كل المجموعات (للصف كله)</SelectItem>
-                    {allGroups.map(group => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.gradeName} - {group.name}
-                      </SelectItem>
-                    ))}
+                    {/* مجموعات الصف المختار فقط */}
+                    {allGroups
+                      .filter(g => !examForm.gradeId || g.gradeId === examForm.gradeId)
+                      .map(group => (
+                        <SelectItem key={group.id} value={group.id}>
+                          {group.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
