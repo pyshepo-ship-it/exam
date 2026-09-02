@@ -446,7 +446,7 @@ const savedAttempts = ds.getExamAttempts()
 assertEqual(savedAttempts[0].studentName, maliciousStudentName, "حفظ النص كسلسلة نقية بدون تنفيذ XSS")
 
 // 5. فحص حماية ملف Middleware
-const middlewareFile = readFileSync("src/middleware.ts", "utf8")
+const middlewareFile = readFileSync("src/proxy.ts", "utf8")
 assert(middlewareFile.includes("supabase.auth.getUser()"), "استخدام getUser() الصارم للتحقق من المصادقة بدلاً من getSession غير الموثوق")
 assert(middlewareFile.includes("req.nextUrl.pathname.startsWith('/dashboard')"), "حماية مسارات /dashboard وإعادة التوجيه لـ /login")
 assert(middlewareFile.includes("matcher: ['/dashboard/:path*', '/login']"), "تطبيق المطابق على جميع مسارات لوحة التحكم وصفحة الدخول")
