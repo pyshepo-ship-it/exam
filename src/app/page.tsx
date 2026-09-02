@@ -1,7 +1,6 @@
 "use client"
 
 import React, { useEffect, useState } from "react"
-import Link from "next/link"
 import { motion } from "framer-motion"
 import {
   BookOpen,
@@ -12,8 +11,10 @@ import {
   Pin,
   Download,
   ExternalLink,
-  LogIn,
   CalendarDays,
+  Sparkles,
+  Star,
+  GraduationCap,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -123,13 +124,35 @@ export default function HomePage() {
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   })
 
-  // المتواجدون حالياً في لوحة الشرف (المطابقون للشهر والعام الحاليين) مجمعين حسب المجموعة
-  const activeHonoreesByGroup = allGroups
-    .map(group => ({
-      group,
-      items: honorees.filter(h => h.groupId === group.id && isHonoreeActive(h, now)),
-    }))
+  // لوحة الشرف: المكرّمون في الشهر والعام الحاليين، مقسّمون حسب الصف الدراسي
+  const activeHonorees = honorees.filter(h => isHonoreeActive(h, now))
+
+  const honoreesByGrade = grades
+    .map(grade => {
+      const gradeGroupIds = new Set(grade.groups.map(g => g.id))
+      const items = activeHonorees
+        .filter(h => gradeGroupIds.has(h.groupId))
+        .map(h => ({
+          ...h,
+          groupName: grade.groups.find(g => g.id === h.groupId)?.name || "",
+        }))
+        .sort((a, b) => a.studentName.localeCompare(b.studentName, "ar"))
+      return { grade, items }
+    })
     .filter(entry => entry.items.length > 0)
+
+  // مكرّمون لا ينتمون لأي صف معروف (احتياطي حتى لا يختفي أحد)
+  const knownGroupIds = new Set(allGroups.map(g => g.id))
+  const otherHonorees = activeHonorees.filter(h => !knownGroupIds.has(h.groupId))
+
+  // ألوان مبهجة تتناوب على بطاقات الصفوف
+  const GRADE_THEMES = [
+    { header: "from-amber-400 via-yellow-400 to-orange-500", ring: "border-amber-300 dark:border-amber-700/60", bg: "from-amber-50 to-yellow-50 dark:from-amber-950/30 dark:to-yellow-950/20", avatar: "from-amber-400 to-orange-500", chip: "bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200" },
+    { header: "from-sky-400 via-blue-500 to-indigo-500", ring: "border-sky-300 dark:border-sky-800/60", bg: "from-sky-50 to-blue-50 dark:from-sky-950/30 dark:to-blue-950/20", avatar: "from-sky-400 to-indigo-500", chip: "bg-sky-100 text-sky-800 dark:bg-sky-900/60 dark:text-sky-200" },
+    { header: "from-emerald-400 via-green-500 to-teal-500", ring: "border-emerald-300 dark:border-emerald-800/60", bg: "from-emerald-50 to-teal-50 dark:from-emerald-950/30 dark:to-teal-950/20", avatar: "from-emerald-400 to-teal-500", chip: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-200" },
+    { header: "from-fuchsia-400 via-purple-500 to-violet-500", ring: "border-purple-300 dark:border-purple-800/60", bg: "from-fuchsia-50 to-purple-50 dark:from-fuchsia-950/30 dark:to-purple-950/20", avatar: "from-fuchsia-400 to-purple-500", chip: "bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-200" },
+    { header: "from-rose-400 via-pink-500 to-red-500", ring: "border-rose-300 dark:border-rose-800/60", bg: "from-rose-50 to-pink-50 dark:from-rose-950/30 dark:to-pink-950/20", avatar: "from-rose-400 to-pink-500", chip: "bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200" },
+  ]
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-arabic">
@@ -147,12 +170,6 @@ export default function HomePage() {
               </p>
             </div>
           </div>
-          <Link href="/login" className="shrink-0">
-            <Button className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700">
-              <LogIn className="w-4 h-4" />
-              <span>تسجيل الدخول</span>
-            </Button>
-          </Link>
         </div>
       </header>
 
@@ -173,6 +190,144 @@ export default function HomePage() {
                 day: "numeric",
               })}
             </div>
+
+            {/* ============ لوحة الشرف (ثابتة) ============ */}
+            <motion.section
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-5"
+            >
+              {/* رأس اللوحة */}
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-l from-amber-500 via-yellow-500 to-orange-500 px-6 py-7 shadow-xl shadow-amber-500/20">
+                <Sparkles className="absolute -top-3 -left-3 w-24 h-24 text-white/15" />
+                <Star className="absolute bottom-2 right-6 w-16 h-16 text-white/10" />
+                <div className="relative flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center ring-2 ring-white/40 shrink-0">
+                    <Trophy className="w-9 h-9 text-white" />
+                  </div>
+                  <div className="min-w-0">
+                    <h2 className="text-3xl font-extrabold text-white drop-shadow-sm">لوحة الشرف</h2>
+                    <p className="text-white/90 text-sm mt-1">
+                      نفتخر بطلابنا المتميزين لشهر {MONTHS[now.getMonth()]} {now.getFullYear()}
+                    </p>
+                  </div>
+                  <div className="mr-auto hidden sm:flex flex-col items-center bg-white/20 backdrop-blur rounded-2xl px-5 py-3 ring-1 ring-white/30">
+                    <span className="text-3xl font-extrabold text-white leading-none">
+                      {activeHonorees.length}
+                    </span>
+                    <span className="text-xs text-white/90 mt-1">طالب متميز</span>
+                  </div>
+                </div>
+              </div>
+
+              {activeHonorees.length === 0 ? (
+                <div className="bg-gradient-to-br from-amber-50 to-yellow-50 dark:from-amber-950/20 dark:to-yellow-950/10 rounded-3xl border-2 border-dashed border-amber-300 dark:border-amber-800 p-12 text-center">
+                  <Trophy className="w-16 h-16 mx-auto mb-4 text-amber-300 dark:text-amber-700" />
+                  <p className="text-lg font-bold text-amber-800 dark:text-amber-300">
+                    لوحة الشرف في انتظار نجوم هذا الشهر
+                  </p>
+                  <p className="text-sm text-amber-600/80 dark:text-amber-400/70 mt-2">
+                    اجتهد وكن أول من يظهر اسمه هنا
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                  {honoreesByGrade.map(({ grade, items }, gi) => {
+                    const theme = GRADE_THEMES[gi % GRADE_THEMES.length]
+                    return (
+                      <motion.div
+                        key={grade.id}
+                        initial={{ opacity: 0, scale: 0.96 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ delay: gi * 0.08 }}
+                        className={`bg-gradient-to-br ${theme.bg} rounded-3xl border-2 ${theme.ring} shadow-lg overflow-hidden`}
+                      >
+                        <div className={`bg-gradient-to-l ${theme.header} px-5 py-4 flex items-center gap-3`}>
+                          <div className="w-10 h-10 rounded-xl bg-white/25 backdrop-blur flex items-center justify-center shrink-0">
+                            <GraduationCap className="w-6 h-6 text-white" />
+                          </div>
+                          <h3 className="font-extrabold text-white text-lg truncate">{grade.name}</h3>
+                          <span className="mr-auto shrink-0 bg-white/25 text-white text-xs font-bold px-3 py-1 rounded-full">
+                            {items.length} متميز
+                          </span>
+                        </div>
+
+                        <ul className="p-4 space-y-3">
+                          {items.map((h, i) => (
+                            <motion.li
+                              key={h.id}
+                              initial={{ opacity: 0, x: 15 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: gi * 0.08 + i * 0.04 }}
+                              className="flex items-center gap-3 bg-white/85 dark:bg-gray-900/70 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow"
+                            >
+                              <div className="relative shrink-0">
+                                <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${theme.avatar} flex items-center justify-center text-white text-2xl font-extrabold shadow-lg`}>
+                                  {h.studentName.trim().charAt(0)}
+                                </div>
+                                <span className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
+                                  <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
+                                </span>
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <p className="font-extrabold text-lg text-gray-900 dark:text-white leading-tight break-words">
+                                  {h.studentName}
+                                </p>
+                                {h.reason && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-300 mt-0.5 break-words">
+                                    {h.reason}
+                                  </p>
+                                )}
+                                {h.groupName && (
+                                  <span className={`inline-block mt-2 text-[11px] font-semibold px-2.5 py-0.5 rounded-full ${theme.chip}`}>
+                                    {h.groupName}
+                                  </span>
+                                )}
+                              </div>
+                            </motion.li>
+                          ))}
+                        </ul>
+                      </motion.div>
+                    )
+                  })}
+
+                  {otherHonorees.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="bg-gradient-to-br from-gray-50 to-slate-50 dark:from-gray-900 dark:to-slate-900 rounded-3xl border-2 border-gray-300 dark:border-gray-700 shadow-lg overflow-hidden"
+                    >
+                      <div className="bg-gradient-to-l from-gray-500 to-slate-600 px-5 py-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-white/25 flex items-center justify-center shrink-0">
+                          <GraduationCap className="w-6 h-6 text-white" />
+                        </div>
+                        <h3 className="font-extrabold text-white text-lg">متميزون آخرون</h3>
+                      </div>
+                      <ul className="p-4 space-y-3">
+                        {otherHonorees.map(h => (
+                          <li
+                            key={h.id}
+                            className="flex items-center gap-3 bg-white/85 dark:bg-gray-900/70 rounded-2xl p-4 shadow-sm"
+                          >
+                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-gray-400 to-slate-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg shrink-0">
+                              {h.studentName.trim().charAt(0)}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-extrabold text-lg text-gray-900 dark:text-white break-words">
+                                {h.studentName}
+                              </p>
+                              {h.reason && (
+                                <p className="text-sm text-gray-600 dark:text-gray-300 break-words">{h.reason}</p>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+            </motion.section>
 
             {/* ============ الإعلانات ============ */}
             <motion.section
@@ -238,67 +393,6 @@ export default function HomePage() {
                 ))
               )}
             </motion.section>
-
-            {/* ============ لوحة الشرف ============ */}
-            {activeHonoreesByGroup.length > 0 && (
-              <motion.section
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-4"
-              >
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-yellow-400 to-amber-600 flex items-center justify-center shadow-lg">
-                    <Trophy className="w-5 h-5 text-white" />
-                  </div>
-                  لوحة الشرف — {MONTHS[now.getMonth()]} {now.getFullYear()}
-                </h2>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {activeHonoreesByGroup.map(({ group, items }, index) => (
-                    <motion.div
-                      key={group.id}
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: index * 0.08 }}
-                      className="bg-gradient-to-br from-amber-50 to-yellow-50 dark:from-amber-950/40 dark:to-yellow-950/30 rounded-2xl border-2 border-amber-300 dark:border-amber-800 shadow-lg overflow-hidden"
-                    >
-                      <div className="bg-gradient-to-r from-amber-500 to-yellow-500 px-5 py-3">
-                        <h3 className="font-bold text-white flex items-center gap-2">
-                          <Trophy className="w-5 h-5" />
-                          {group.gradeName} - {group.name}
-                        </h3>
-                      </div>
-                      <div className="p-5 space-y-3">
-                        {items.map(h => (
-                          <div
-                            key={h.id}
-                            className="flex items-center gap-3 bg-white/80 dark:bg-gray-900/60 rounded-xl p-4 border border-amber-200 dark:border-amber-900"
-                          >
-                            <div className="w-12 h-12 rounded-full bg-gradient-to-br from-yellow-400 to-amber-600 flex items-center justify-center text-white text-xl font-bold shadow-lg shrink-0">
-                              {h.studentName.charAt(0)}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="font-bold text-gray-900 dark:text-white truncate">
-                                {h.studentName}
-                              </p>
-                              <p className="text-sm text-gray-600 dark:text-gray-300">
-                                {h.reason}
-                              </p>
-                            </div>
-                            <Badge
-                              variant="warning"
-                              className="bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300 mr-auto shrink-0"
-                            >
-                              نجم الشهر
-                            </Badge>
-                          </div>
-                        ))}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              </motion.section>
-            )}
 
             {/* ============ ملفات للتحميل ============ */}
             {files.length > 0 && (

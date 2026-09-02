@@ -9,7 +9,6 @@ import {
   Lock, 
   User, 
   Loader2, 
-  AlertCircle,
   Mail
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -239,17 +238,6 @@ export default function LoginPage() {
               </form>
             )}
 
-            <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                <div className="text-sm text-blue-900 dark:text-blue-100">
-                  <p className="font-semibold mb-1">ملاحظة مهمة:</p>
-                  <p>
-                    يجب إنشاء حساب في Supabase أولاً. راجع ملف SUPABASE_SETUP.md للتعليمات.
-                  </p>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </motion.div>
