@@ -52,6 +52,8 @@ export interface Payment {
   createdAt: string
 }
 
+export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
+
 export interface Exam {
   id: string
   gradeId: string
@@ -63,6 +65,18 @@ export interface Exam {
   duration?: number
   totalMarks?: number
   questions: Question[]
+  /** قالب ورقة الامتحان (5 قوالب احترافية) */
+  templateId?: ExamTemplateId
+  /** إظهار زخارف علمية حول الأسئلة حسب الصف */
+  showDecorations?: boolean
+  teacherName?: string
+  schoolName?: string
+  /** نشر الاختبار للطلاب على الموقع ليؤدوه خلال المدة المحددة */
+  allowOnline?: boolean
+  /** إضافة المتفوقين تلقائياً إلى لوحة الشرف */
+  autoHonorBoard?: boolean
+  /** الحد الأدنى للنسبة المئوية للترشيح (100 = الدرجة الكاملة) */
+  honorMinPercent?: number
   createdAt: string
   updatedAt: string
 }
@@ -86,6 +100,10 @@ export interface SubQuestion {
   parts?: QuestionPart[]
   corrections?: Correction[]
   answerLines?: number // عدد أسطر الإجابة (النوع 4)
+  /** الإجابة النموذجية لسؤال أكمل (النوع 2) */
+  correctAnswer?: string
+  /** العبارة صحيحة؟ (النوع 3 — صح وخطأ) */
+  isTrue?: boolean
 }
 
 export interface Choice {
@@ -124,10 +142,35 @@ export interface Attendance {
   id: string
   sessionId: string
   studentId: string
+  /** مجموعة الطالب — للعرض اليومي بدون حصص */
+  groupId?: string
+  /** تاريخ الحضور YYYY-MM-DD */
+  date?: string
   status: 'present' | 'absent' | 'late' | 'excused'
   lateMinutes?: number
   notes?: string
   createdAt: string
+}
+
+export interface ExamAttemptAnswer {
+  choiceId?: string
+  text?: string
+  isTrue?: boolean
+}
+
+export interface ExamAttempt {
+  id: string
+  examId: string
+  studentId?: string
+  studentName: string
+  groupId: string
+  gradeId: string
+  answers: Record<string, ExamAttemptAnswer>
+  score: number
+  totalMarks: number
+  startedAt: string
+  submittedAt: string
+  durationSeconds: number
 }
 
 // ---- الإعلانات ولوحة الشرف والملفات والروابط ----
@@ -148,6 +191,9 @@ export interface Honoree {
   reason: string
   month: number // 1-12
   year: number
+  examId?: string
+  score?: number
+  autoPromoted?: boolean
   createdAt: string
 }
 
@@ -196,6 +242,7 @@ export interface YearArchive {
 
 // Storage Keys (مفتاح المرآة المحلية — المصدر الحقيقي هو Supabase)
 import { STORAGE_KEYS } from "./storage-keys"
+import { attendanceDayId } from "./weekdays"
 import {
   queuePush,
   pushGrades,
@@ -211,6 +258,7 @@ import {
   pushImportantLinks,
   pushYearArchives,
   pushSetting,
+  pushExamAttempts,
 } from "./supabase/sync"
 
 // Helper functions
@@ -272,6 +320,13 @@ export const getAttendance = (): Attendance[] => getFromStorage<Attendance>(STOR
 export const saveAttendance = (attendance: Attendance[]): void => {
   saveToStorage(STORAGE_KEYS.ATTENDANCE, attendance)
   queuePush(() => pushAttendance(attendance))
+}
+
+export const getExamAttempts = (): ExamAttempt[] => getFromStorage<ExamAttempt>(STORAGE_KEYS.EXAM_ATTEMPTS)
+export const saveExamAttempts = (attempts: ExamAttempt[], opts?: { sync?: boolean }): void => {
+  saveToStorage(STORAGE_KEYS.EXAM_ATTEMPTS, attempts)
+  if (opts?.sync === false) return
+  queuePush(() => pushExamAttempts(attempts))
 }
 
 // Announcements
@@ -443,6 +498,176 @@ export const isHonoreeActive = (honoree: Honoree, now: Date = new Date()): boole
 /** كل المجموعات في جميع الصفوف مع اسم الصف */
 export const getAllGroups = (grades: Grade[]) =>
   grades.flatMap(g => g.groups.map(gr => ({ ...gr, gradeName: g.name, gradeId: g.id })))
+
+/** مجموعات صف واحد فقط — للقوائم المنسدلة المتسلسلة (صف → مجموعة) */
+export const getGroupsOfGrade = (grades: Grade[], gradeId?: string): Group[] => {
+  if (!gradeId) return []
+  return grades.find(g => g.id === gradeId)?.groups || []
+}
+
+/** معرّفات السجلات اليومية لمجموعة في تاريخ معيّن (الجديد + أي سجل قديم لنفس اليوم) */
+export const getSessionIdsForGroupDay = (groupId: string, isoDate: string): Set<string> => {
+  const ids = new Set<string>([attendanceDayId(groupId, isoDate)])
+  getSessions()
+    .filter(s => s.groupId === groupId && s.sessionDate === isoDate)
+    .forEach(s => ids.add(s.id))
+  return ids
+}
+
+function attendanceDayKey(row: Attendance): string {
+  if (row.date) return row.date
+  const dayMatch = /^att-.+-(\d{4}-\d{2}-\d{2})$/.exec(row.sessionId)
+  if (dayMatch) return dayMatch[1]
+  const session = getSessions().find(s => s.id === row.sessionId)
+  return session?.sessionDate || row.sessionId
+}
+
+/**
+ * حفظ حضور يوم كامل لمجموعة دون تسجيل حصة يدوياً.
+ * يُنشأ سجل يومي داخلي ثابت (group+date) لربط الصفوف مع قاعدة البيانات.
+ */
+export const saveGroupDayAttendance = (
+  groupId: string,
+  isoDate: string,
+  marks: { studentId: string; present: boolean }[],
+  groupTimes?: { startTime: string; endTime: string }
+): Attendance[] => {
+  const sessionId = attendanceDayId(groupId, isoDate)
+  const sessions = getSessions()
+  if (!sessions.some(s => s.id === sessionId)) {
+    saveSessions([
+      ...sessions,
+      {
+        id: sessionId,
+        groupId,
+        sessionDate: isoDate,
+        startTime: groupTimes?.startTime || "",
+        endTime: groupTimes?.endTime || "",
+        notes: "حضور يومي",
+        createdAt: new Date().toISOString(),
+      },
+    ])
+  }
+
+  const sameDayIds = getSessionIdsForGroupDay(groupId, isoDate)
+  const others = getAttendance().filter(
+    a => !sameDayIds.has(a.sessionId) && !(a.groupId === groupId && a.date === isoDate)
+  )
+  const now = new Date().toISOString()
+  const records: Attendance[] = marks.map(m => ({
+    id: `${sessionId}-${m.studentId}`,
+    sessionId,
+    studentId: m.studentId,
+    groupId,
+    date: isoDate,
+    status: m.present ? "present" : "absent",
+    createdAt: now,
+  }))
+  saveAttendance([...others, ...records])
+  return records
+}
+
+export const getGroupDayAttendance = (groupId: string, isoDate: string): Attendance[] => {
+  const sessionIds = getSessionIdsForGroupDay(groupId, isoDate)
+  const rows = getAttendance().filter(
+    a => sessionIds.has(a.sessionId) || (a.groupId === groupId && a.date === isoDate)
+  )
+  // إن وُجد أكثر من سجل لنفس الطالب في نفس اليوم نأخذ الأحدث
+  const byStudent = new Map<string, Attendance>()
+  for (const row of rows) {
+    const prev = byStudent.get(row.studentId)
+    if (!prev || (row.createdAt || "") >= (prev.createdAt || "")) {
+      byStudent.set(row.studentId, row)
+    }
+  }
+  return [...byStudent.values()]
+}
+
+/** تواريخ الحضور المسجَّلة لمجموعة (الأحدث أولاً) */
+export const getGroupAttendanceDates = (groupId: string): string[] => {
+  const sessionDates = getSessions()
+    .filter(s => s.groupId === groupId)
+    .map(s => s.sessionDate)
+  const attDates = getAttendance()
+    .filter(a => a.groupId === groupId && a.date)
+    .map(a => a.date as string)
+  return [...new Set([...sessionDates, ...attDates].filter(Boolean))].sort((a, b) => (a < b ? 1 : -1))
+}
+
+export const getAttendanceForGroup = (groupId: string): Attendance[] => {
+  const sessionIds = new Set(getSessions().filter(s => s.groupId === groupId).map(s => s.id))
+  const rows = getAttendance().filter(
+    a => a.groupId === groupId || sessionIds.has(a.sessionId) || a.sessionId.startsWith(`att-${groupId}-`)
+  )
+  const byStudentDay = new Map<string, Attendance>()
+  for (const row of rows) {
+    const key = `${row.studentId}|${attendanceDayKey(row)}`
+    const prev = byStudentDay.get(key)
+    if (!prev || (row.createdAt || "") >= (prev.createdAt || "")) {
+      byStudentDay.set(key, row)
+    }
+  }
+  return [...byStudentDay.values()]
+}
+
+/**
+ * إضافة طالب متفوق تلقائياً إلى لوحة الشرف إن حقق نسبة الاختبار المطلوبة.
+ * لا يكرر نفس الطالب لنفس الاختبار في نفس الشهر.
+ */
+export const maybeAutoHonor = (opts: {
+  exam: Exam
+  studentName: string
+  groupId: string
+  studentId?: string
+  score: number
+  totalMarks: number
+  /** false = حفظ محلي فقط (صفحة الطالب العامة) */
+  sync?: boolean
+}): Honoree | null => {
+  const { exam, studentName, groupId, studentId, score, totalMarks } = opts
+  if (!exam.autoHonorBoard) return null
+  if (totalMarks <= 0) return null
+  const min = exam.honorMinPercent ?? 100
+  const percent = (score / totalMarks) * 100
+  if (percent + 1e-9 < min) return null
+
+  const now = new Date()
+  const month = now.getMonth() + 1
+  const year = now.getFullYear()
+  const honorees = getHonorees()
+  const honorId = `auto-${exam.id}-${studentId || studentName}-${month}-${year}`
+  const already = honorees.some(h => {
+    if (h.id === honorId) return true
+    if (h.month !== month || h.year !== year) return false
+    if (h.examId && h.examId === exam.id) {
+      if (studentId && h.studentId === studentId) return true
+      return h.studentName === studentName && h.groupId === groupId
+    }
+    return false
+  })
+  if (already) return null
+
+  const honoree: Honoree = {
+    id: honorId,
+    studentId,
+    studentName,
+    groupId,
+    reason: `متفوق هذا الشهر — ${score}/${totalMarks} في ${exam.title}`,
+    month,
+    year,
+    examId: exam.id,
+    score,
+    autoPromoted: true,
+    createdAt: now.toISOString(),
+  }
+  const next = [...honorees, honoree]
+  if (opts.sync === false) {
+    saveToStorage(STORAGE_KEYS.HONOREES, next)
+  } else {
+    saveHonorees(next)
+  }
+  return honoree
+}
 
 /** Helper: Calculate student balance */
 export const getStudentBalance = (studentId: string): { totalDues: number; totalPayments: number; balance: number } => {

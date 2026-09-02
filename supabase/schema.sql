@@ -15,10 +15,10 @@
 --   • لا يوجد DROP TABLE ولا DROP COLUMN ولا TRuncate →
 --     بياناتك الحالية (طلاب، مدفوعات، امتحانات...) لن تتأثر أبدًا
 --
--- 📦 ما ينشئه (14 جدولًا + الفهارس + كل سياسات RLS):
+-- 📦 ما ينشئه (15 جدولًا + الفهارس + كل سياسات RLS):
 --   grades, groups, students, dues, payments, exams, sessions,
 --   attendance, announcements, honorees, shared_files,
---   important_links, year_archives, app_settings
+--   important_links, year_archives, app_settings, exam_attempts
 -- ============================================================
 
 BEGIN;
@@ -193,6 +193,23 @@ CREATE TABLE IF NOT EXISTS app_settings (
   value TEXT NOT NULL
 );
 
+-- محاولات الطلاب في الاختبارات الإلكترونية
+CREATE TABLE IF NOT EXISTS exam_attempts (
+  id TEXT PRIMARY KEY,
+  exam_id TEXT NOT NULL,
+  student_id TEXT,
+  student_name TEXT NOT NULL,
+  group_id TEXT NOT NULL DEFAULT '',
+  grade_id TEXT NOT NULL DEFAULT '',
+  answers JSONB NOT NULL DEFAULT '{}',
+  score NUMERIC(10,2) NOT NULL DEFAULT 0,
+  total_marks NUMERIC(10,2) NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  submitted_at TEXT NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam ON exam_attempts(exam_id);
+
 -- ============================================================
 -- 2) تفعيل Row Level Security على كل الجداول
 --    (تفعيل مكرر = آمن، لا يغيّر شيئًا إن كان مفعّلًا)
@@ -211,6 +228,7 @@ ALTER TABLE shared_files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE important_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE year_archives ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE exam_attempts ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
 -- 3) سياسات الأمان
@@ -247,6 +265,8 @@ DROP POLICY IF EXISTS "authenticated full access" ON year_archives;
 CREATE POLICY "authenticated full access" ON year_archives FOR ALL TO authenticated USING (true) WITH CHECK (true);
 DROP POLICY IF EXISTS "authenticated full access" ON app_settings;
 CREATE POLICY "authenticated full access" ON app_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "authenticated full access" ON exam_attempts;
+CREATE POLICY "authenticated full access" ON exam_attempts FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- 3.2) قراءة عامة (بدون تسجيل دخول) لجداول الصفحة الرئيسية —
 --      حتى يراها الطلاب في أي جهاز
@@ -267,6 +287,18 @@ CREATE POLICY "public read groups" ON groups FOR SELECT TO anon, authenticated U
 --      لعرضها في فوتر الصفحة العامة
 DROP POLICY IF EXISTS "public read app_settings" ON app_settings;
 CREATE POLICY "public read app_settings" ON app_settings FOR SELECT TO anon, authenticated USING (true);
+DROP POLICY IF EXISTS "public read exams" ON exams;
+CREATE POLICY "public read exams" ON exams FOR SELECT TO anon USING (
+  jsonb_typeof(questions) = 'object'
+  AND COALESCE(questions->>'allowOnline', 'false') = 'true'
+);
+DROP POLICY IF EXISTS "anon insert exam_attempts" ON exam_attempts;
+CREATE POLICY "anon insert exam_attempts" ON exam_attempts FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon insert honorees" ON honorees;
+CREATE POLICY "anon insert honorees" ON honorees FOR INSERT TO anon WITH CHECK (true);
+
+GRANT INSERT ON exam_attempts TO anon;
+GRANT INSERT ON honorees TO anon;
 
 -- ============================================================
 -- 3.4) صلاحيات الجداول (GRANT) — مهم جداً

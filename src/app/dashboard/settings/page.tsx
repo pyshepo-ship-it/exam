@@ -46,6 +46,7 @@ import {
   getExams,
   getSessions,
   getAttendance,
+  getExamAttempts,
   saveGrades,
   saveStudents,
   saveDues,
@@ -53,6 +54,7 @@ import {
   saveExams,
   saveSessions,
   saveAttendance,
+  saveExamAttempts,
   getAnnouncements,
   saveAnnouncements,
   getHonorees,
@@ -358,6 +360,7 @@ export default function SettingsPage() {
       exams: getExams(),
       sessions: getSessions(),
       attendance: getAttendance(),
+      examAttempts: getExamAttempts(),
       announcements: getAnnouncements(),
       honorees: getHonorees(),
       sharedFiles: getSharedFiles(),
@@ -395,6 +398,7 @@ export default function SettingsPage() {
         if (data.exams) saveExams(data.exams)
         if (data.sessions) saveSessions(data.sessions)
         if (data.attendance) saveAttendance(data.attendance)
+        if (data.examAttempts) saveExamAttempts(data.examAttempts)
         if (data.announcements) saveAnnouncements(data.announcements)
         if (data.honorees) saveHonorees(data.honorees)
         if (data.sharedFiles) saveSharedFiles(data.sharedFiles)
@@ -712,7 +716,7 @@ export default function SettingsPage() {
                   { label: "الاستحقاقات", value: dataStats.dues, color: "bg-yellow-50 dark:bg-yellow-950/30 text-yellow-700 dark:text-yellow-300" },
                   { label: "المدفوعات", value: dataStats.payments, color: "bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300" },
                   { label: "الاختبارات", value: dataStats.exams, color: "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300" },
-                  { label: "الحصص", value: dataStats.sessions, color: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300" },
+                  { label: "أيام الحضور", value: dataStats.sessions, color: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300" },
                   { label: "سجلات الحضور", value: dataStats.attendance, color: "bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300" },
                   { label: "السنوات المغلقة", value: archives.length, color: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300" },
                 ].map((stat) => (
@@ -915,7 +919,7 @@ export default function SettingsPage() {
                             ["الاستحقاقات", "dues", dataStats.dues],
                             ["المدفوعات", "payments", dataStats.payments],
                             ["الاختبارات", "exams", dataStats.exams],
-                            ["الحصص", "sessions", dataStats.sessions],
+                            ["أيام الحضور", "sessions", dataStats.sessions],
                             ["الحضور", "attendance", dataStats.attendance],
                           ] as [string, string, number][]).map(([label, table, localCount]) => {
                             const remote = conn.counts[table] ?? 0

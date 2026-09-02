@@ -151,3 +151,58 @@
   font-family: 'Cairo', 'Tajawal', 'Segoe UI', 'Tahoma', 'Arial', sans-serif;
   letter-spacing: 0;
 }
+
+/* ورقة الامتحان — طباعة ومعاينة A4 */
+.exam-paper {
+  font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+  max-width: 190mm;
+  margin-inline: auto;
+  direction: rtl;
+  text-align: right;
+}
+.exam-paper h1, .exam-paper h3 {
+  font-family: inherit;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 12mm;
+}
+
+@media print {
+  .exam-ornaments { opacity: 0.85; }
+  .exam-paper {
+    box-shadow: none !important;
+    border-width: 2px !important;
+    max-width: 186mm;
+    width: 186mm;
+  }
+  .exam-q {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  body.printing-exam {
+    background: #fff !important;
+  }
+  body.printing-exam * {
+    visibility: hidden !important;
+  }
+  body.printing-exam #exam-preview-content,
+  body.printing-exam #exam-preview-content * {
+    visibility: visible !important;
+  }
+  body.printing-exam #exam-preview-content {
+    position: absolute !important;
+    inset: 0 auto auto 0;
+    width: 186mm;
+    max-width: 186mm;
+    margin: 0 auto;
+    background: #fff !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+  body.printing-exam .no-print {
+    display: none !important;
+  }
+}

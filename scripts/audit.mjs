@@ -107,19 +107,23 @@ check(
 const exams = read("src/app/dashboard/exams/page.tsx")
 check(
   "الاختبارات: المجموعات مُصفّاة حسب الصف المختار",
-  /\.filter\(g => !examForm\.gradeId \|\| g\.gradeId === examForm\.gradeId\)/.test(exams)
+  exams.includes("getGroupsOfGrade(grades, examForm.gradeId)")
 )
+check("الاختبارات: يمكن نشرها للطلاب على الموقع", exams.includes("allowOnline"))
+check("ورقة الاختبار تحمل توقيع المعلمة", read("src/components/exam/exam-paper.tsx").includes("TEACHER_SIGNATURE_LINE"))
+check("طباعة A4 متاحة من المعاينة", exams.includes("printA4"))
 
 const attendance = read("src/app/dashboard/attendance/page.tsx")
 check(
   "الحضور: المجموعات مُصفّاة حسب الصف المختار",
-  /allGroups\.filter\(g => !selectedGrade \|\| g\.gradeId === selectedGrade\)/.test(attendance)
+  attendance.includes("getGroupsOfGrade(grades, selectedGrade)")
 )
 check(
   "الحضور: أُزيل عنصر Select الميت المستخدم كنافذة",
   !/<Select open=\{newSessionDialog\}/.test(attendance)
 )
-check("الحضور: رسالة عند عدم وجود حصص", attendance.includes("لا توجد حصص لهذه المجموعة"))
+check("الحضور: لا يُسجَّل عبر الحصص بل يوم المجموعة", !attendance.includes("إضافة حصة جديدة") && attendance.includes("saveGroupDayAttendance"))
+check("الحضور: رسالة عند عدم وجود طلاب", attendance.includes("لا يوجد طلاب في هذه المجموعة"))
 
 const payments = read("src/app/dashboard/payments/page.tsx")
 check(
@@ -282,6 +286,16 @@ check(
 // حماية لوحة التحكم
 const middleware = read("src/middleware.ts")
 check("يوجد middleware لحماية المسارات", middleware.length > 0)
+
+const layout = read("src/app/dashboard/layout.tsx")
+check(
+  "تخطيط اللوحة بلا رسائل اتصال بقاعدة البيانات",
+  !layout.includes("SyncIndicator") && !/toast\.(error|success)/.test(layout)
+)
+check(
+  "أخطاء المزامنة لا تظهر كتوست في كل الصفحات",
+  !/toast\.error\(message/.test(sync)
+)
 
 // ============================================================
 section("8) سلامة الحسابات المالية")

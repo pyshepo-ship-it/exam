@@ -189,26 +189,48 @@ export const toExamRow = (e: any) => ({
   academic_year: e.academicYear || "",
   duration: e.duration ?? null,
   total_marks: e.totalMarks ?? null,
-  questions: e.questions || [],
+  // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
+  questions: {
+    _v: 2,
+    items: e.questions || [],
+    templateId: e.templateId || "classic",
+    showDecorations: e.showDecorations !== false,
+    teacherName: e.teacherName || "",
+    schoolName: e.schoolName || "",
+    allowOnline: !!e.allowOnline,
+    autoHonorBoard: !!e.autoHonorBoard,
+    honorMinPercent: e.honorMinPercent ?? 100,
+  },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
   updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
 });
 
-export const fromExamRow = (row: any) => ({
-  id: row.id,
-  gradeId: row.grade_id,
-  groupId: nil(row.group_id),
-  title: row.title,
-  month: row.month ?? undefined,
-  unit: nil(row.unit),
-  academicYear: row.academic_year,
-  duration: row.duration ?? undefined,
-  totalMarks: row.total_marks ?? undefined,
-  questions: row.questions || [],
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
+export const fromExamRow = (row: any) => {
+  const q = row.questions
+  const wrapped = q && typeof q === "object" && !Array.isArray(q) && Array.isArray(q.items)
+  return {
+    id: row.id,
+    gradeId: row.grade_id,
+    groupId: nil(row.group_id),
+    title: row.title,
+    month: row.month ?? undefined,
+    unit: nil(row.unit),
+    academicYear: row.academic_year,
+    duration: row.duration ?? undefined,
+    totalMarks: row.total_marks ?? undefined,
+    questions: wrapped ? q.items : (Array.isArray(q) ? q : []),
+    templateId: wrapped ? (q.templateId || "classic") : "classic",
+    showDecorations: wrapped ? q.showDecorations !== false : true,
+    teacherName: wrapped ? (q.teacherName || undefined) : undefined,
+    schoolName: wrapped ? (q.schoolName || undefined) : undefined,
+    allowOnline: wrapped ? !!q.allowOnline : false,
+    autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
+    honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+};
 
 const toSessionRow = (s: any) => ({
   id: s.id,
@@ -240,15 +262,21 @@ const toAttendanceRow = (a: any) => ({
   created_at: a.createdAt || new Date().toISOString(),
 });
 
-const fromAttendanceRow = (row: any) => ({
-  id: row.id,
-  sessionId: row.session_id,
-  studentId: row.student_id,
-  status: row.status,
-  lateMinutes: nil(row.late_minutes),
-  notes: nil(row.notes),
-  createdAt: row.created_at,
-});
+const fromAttendanceRow = (row: any) => {
+  const sessionId: string = row.session_id || ""
+  const dayMatch = /^att-(.+)-(\d{4}-\d{2}-\d{2})$/.exec(sessionId)
+  return {
+    id: row.id,
+    sessionId,
+    studentId: row.student_id,
+    groupId: dayMatch ? dayMatch[1] : undefined,
+    date: dayMatch ? dayMatch[2] : undefined,
+    status: row.status,
+    lateMinutes: nil(row.late_minutes),
+    notes: nil(row.notes),
+    createdAt: row.created_at,
+  }
+};
 
 const toAnnouncementRow = (a: any) => ({
   id: a.id,
@@ -365,13 +393,10 @@ function warnSyncError(err: unknown) {
   });
   const table = (err as any)?.table ? ` [جدول: ${(err as any).table}]` : "";
   const message = `تعذر الحفظ في قاعدة البيانات${table}: ${explainSupabaseError(err)}`;
-  // لا نكرر نفس الرسالة أكثر من مرة، لكن نعرض الأخطاء المختلفة كلها
   if (lastWarned === message) return;
   lastWarned = message;
   warnedOnce = true;
-  import("react-hot-toast")
-    .then(({ toast }) => toast.error(message, { duration: 10000 }))
-    .catch(() => {});
+  // رسائل الاتصال تظهر في صفحة الإعدادات فقط عبر SyncStatus
 }
 
 /** تنفيذ حفظ فوري (يُستخدم مع await) */
@@ -425,6 +450,7 @@ async function pushAllOrdered(): Promise<void> {
   await pushDues(localRows(STORAGE_KEYS.DUES) as any[]);
   await pushPayments(localRows(STORAGE_KEYS.PAYMENTS) as any[]);
   await pushExams(localRows(STORAGE_KEYS.EXAMS) as any[]);
+  await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
   await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
   await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
 }
@@ -552,6 +578,48 @@ export function pushImportantLinks(rows: any[]) {
 export function pushYearArchives(rows: YearArchiveShape[]) {
   return pushRows("year_archives", rows.map(toArchiveRow));
 }
+const toAttemptRow = (a: any) => ({
+  id: a.id,
+  exam_id: a.examId,
+  student_id: a.studentId || null,
+  student_name: a.studentName || "",
+  group_id: a.groupId || "",
+  grade_id: a.gradeId || "",
+  answers: a.answers || {},
+  score: a.score ?? 0,
+  total_marks: a.totalMarks ?? 0,
+  started_at: a.startedAt || new Date().toISOString(),
+  submitted_at: a.submittedAt || new Date().toISOString(),
+  duration_seconds: a.durationSeconds ?? 0,
+});
+
+const fromAttemptRow = (row: any) => ({
+  id: row.id,
+  examId: row.exam_id,
+  studentId: nil(row.student_id),
+  studentName: row.student_name,
+  groupId: row.group_id,
+  gradeId: row.grade_id,
+  answers: row.answers || {},
+  score: Number(row.score) || 0,
+  totalMarks: Number(row.total_marks) || 0,
+  startedAt: row.started_at,
+  submittedAt: row.submitted_at,
+  durationSeconds: Number(row.duration_seconds) || 0,
+});
+
+export function pushExamAttempts(rows: any[]) {
+  return (async () => {
+    try {
+      await pushRows("exam_attempts", rows.map(toAttemptRow));
+    } catch (err: any) {
+      // الجدول قد لا يكون مُنشأ بعد — لا نكسر باقي المزامنة
+      if (err?.code === "42P01" || /does not exist/i.test(err?.message || "")) return;
+      throw err;
+    }
+  })();
+}
+
 export function pushSetting(key: string, value: string) {
   return (async () => {
     const sb = getSupabase();
@@ -698,6 +766,23 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       }
     }
 
+    // محاولات الاختبار اختيارية (الجدول يُضاف في ترحيل 006)
+    try {
+      const attemptsRes = await sb.from("exam_attempts").select("*")
+      if (!attemptsRes.error) {
+        const localAttempts = localRows(STORAGE_KEYS.EXAM_ATTEMPTS)
+        if ((attemptsRes.data as any[]).length === 0 && localAttempts.length > 0) {
+          migrated = true
+          queuePush(() => pushExamAttempts(localAttempts as any[]))
+        } else if ((attemptsRes.data as any[]).length > 0) {
+          setLocal(STORAGE_KEYS.EXAM_ATTEMPTS, (attemptsRes.data as any[]).map(fromAttemptRow))
+        }
+        remoteIds["exam_attempts"] = new Set((attemptsRes.data as any[]).map((r) => r.id))
+      }
+    } catch {
+      /* الجدول غير موجود بعد */
+    }
+
     return { ok: true, migrated };
   } catch (err) {
     console.warn("Supabase pull failed:", err);
@@ -717,13 +802,33 @@ export interface PublicData {
   grades: { id: string; name: string }[];
   groups: { id: string; gradeId: string; name: string }[];
   settings: Record<string, string>;
+  exams: ReturnType<typeof fromExamRow>[];
+}
+
+/** إرسال محاولة طالب من الصفحة العامة (بدون تسجيل دخول) */
+export async function submitPublicAttempt(attempt: any): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb.from("exam_attempts").insert(toAttemptRow(attempt));
+  if (error && error.code !== "23505") {
+    console.warn("submitPublicAttempt:", error);
+  }
+}
+
+export async function submitPublicHonoree(h: any): Promise<void> {
+  const sb = getSupabase();
+  if (!sb) return;
+  const { error } = await sb.from("honorees").insert(toHonoreeRow(h));
+  if (error && error.code !== "23505") {
+    console.warn("submitPublicHonoree:", error);
+  }
 }
 
 export async function fetchPublicData(): Promise<PublicData | null> {
   const sb = getSupabase();
   if (!sb) return null;
 
-  const [ann, hon, files, links, grades, groups, settings] = await Promise.all([
+  const [ann, hon, files, links, grades, groups, settings, exams] = await Promise.all([
     sb.from("announcements").select("*"),
     sb.from("honorees").select("*"),
     sb.from("shared_files").select("*"),
@@ -731,6 +836,7 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     sb.from("grades").select("id,name"),
     sb.from("groups").select("id,grade_id,name"),
     sb.from("app_settings").select("key,value"),
+    sb.from("exams").select("*"),
   ]);
 
   if (ann.error || hon.error || files.error || links.error || grades.error || groups.error || settings.error) {
@@ -751,6 +857,7 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     grades: (grades.data as any[]).map((g) => ({ id: g.id, name: g.name })),
     groups: (groups.data as any[]).map((g) => ({ id: g.id, gradeId: g.grade_id, name: g.name })),
     settings: settingsMap,
+    exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
   };
 }
 
@@ -766,6 +873,8 @@ export async function clearAllRemote(): Promise<void> {
     const { error } = await sb.from(db).delete().neq("id", "__none__");
     if (error) throw error;
   }
+  const attemptsClear = await sb.from("exam_attempts").delete().neq("id", "__none__");
+  if (attemptsClear.error && attemptsClear.error.code !== "42P01") throw attemptsClear.error;
   const { error } = await sb.from("app_settings").delete().neq("key", "__none__");
   if (error) throw error;
   remoteIds = {};
@@ -789,6 +898,7 @@ export async function syncAllFromLocal(): Promise<void> {
   await pushSharedFiles(localRows(STORAGE_KEYS.SHARED_FILES) as any[]);
   await pushImportantLinks(localRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
   await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
+  await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
   const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
   if (year) await pushSetting("currentAcademicYear", year);
 }
@@ -1123,6 +1233,7 @@ export async function forcePushAll(): Promise<{ ok: boolean; error?: string }> {
     await pushSharedFiles(localRows(STORAGE_KEYS.SHARED_FILES) as any[]);
     await pushImportantLinks(localRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
     await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
+    await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
     const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
     if (year) await pushSetting("currentAcademicYear", year);
     return { ok: true };

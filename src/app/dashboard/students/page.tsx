@@ -411,7 +411,7 @@ export default function StudentsPage() {
                 .filter(g => filterGrade === "all" || g.gradeId === filterGrade)
                 .map(group => (
                   <SelectItem key={group.id} value={group.id}>
-                    {group.gradeName} - {group.name}
+                    {filterGrade === "all" ? `${group.gradeName} - ${group.name}` : group.name}
                   </SelectItem>
                 ))}
             </SelectContent>

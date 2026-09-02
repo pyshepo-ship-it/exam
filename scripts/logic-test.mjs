@@ -22,11 +22,15 @@ globalThis.window = globalThis
 let src = readFileSync("src/lib/data-storage.ts", "utf8")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
+const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
 // بدائل محلية
 src =
+  weekdays + "\n" +
   `const STORAGE_KEYS = ${JSON.stringify({
     GRADES: "grades", STUDENTS: "students", DUES: "dues", PAYMENTS: "payments",
     EXAMS: "exams", SESSIONS: "sessions", ATTENDANCE: "attendance",
+    EXAM_ATTEMPTS: "examAttempts",
     ANNOUNCEMENTS: "announcements", HONOREES: "honorees", SHARED_FILES: "sharedFiles",
     IMPORTANT_LINKS: "importantLinks", CURRENT_ACADEMIC_YEAR: "currentAcademicYear",
     YEAR_ARCHIVES: "yearArchives",
@@ -35,7 +39,7 @@ src =
   [
     "pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
     "pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles",
-    "pushImportantLinks","pushYearArchives","pushSetting",
+    "pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts",
   ].map((f) => `const ${f} = () => Promise.resolve();`).join("\n") +
   "\n" + src
 
@@ -45,6 +49,15 @@ const js = ts.transpileModule(src, {
 
 const mod = await import(
   "data:text/javascript;base64," + Buffer.from(js).toString("base64")
+)
+
+let gradeSrc = readFileSync("src/lib/exam-grade.ts", "utf8")
+gradeSrc = gradeSrc.replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "")
+const gradeJs = ts.transpileModule(gradeSrc, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+}).outputText
+const gradeMod = await import(
+  "data:text/javascript;base64," + Buffer.from(gradeJs).toString("base64")
 )
 
 let pass = 0, fail = 0
@@ -198,6 +211,189 @@ t("كل مجموعة تحمل gradeId و gradeName الصحيحين", () => {
   eq(gs.length, 3)
   eq(gs.filter((g) => g.gradeId === "A").length, 2, "مجموعات الصف الأول:")
   eq(gs.find((g) => g.id === "b1").gradeName, "الصف الثاني")
+})
+t("getGroupsOfGrade لا تُرجع مجموعات صف آخر", () => {
+  const grades = [
+    grade("A", "الصف الرابع الابتدائي", [group("a1", "م1"), group("a2", "م2")]),
+    grade("B", "الصف الأول الإعدادي", [group("b1", "م1")]),
+  ]
+  eq(mod.getGroupsOfGrade(grades, "A").map((g) => g.id), ["a1", "a2"])
+  eq(mod.getGroupsOfGrade(grades, "B").map((g) => g.id), ["b1"])
+  eq(mod.getGroupsOfGrade(grades, "").length, 0)
+  eq(mod.getGroupsOfGrade(grades).length, 0)
+})
+
+console.log("\n\x1b[1mسيناريو 9: حضور يومي بدون حصص يدوية\x1b[0m")
+t("حفظ حضور المجموعة ليوم ينشئ سجلاً داخلياً ويحفظ الحاضر والغائب", () => {
+  reset()
+  mod.saveGrades([grade("A", "الصف الرابع", [group("g1", "مجموعة السبت")])])
+  mod.saveStudents([
+    { id: "s1", name: "أحمد", gradeId: "A", groupId: "g1", status: "active", createdAt: "", updatedAt: "" },
+    { id: "s2", name: "سارة", gradeId: "A", groupId: "g1", status: "active", createdAt: "", updatedAt: "" },
+  ])
+  mod.saveGroupDayAttendance("g1", "2026-09-02", [
+    { studentId: "s1", present: true },
+    { studentId: "s2", present: false },
+  ])
+  const rec = mod.getGroupDayAttendance("g1", "2026-09-02")
+  eq(rec.length, 2)
+  eq(rec.find((a) => a.studentId === "s1").status, "present")
+  eq(rec.find((a) => a.studentId === "s2").status, "absent")
+  eq(mod.getGroupAttendanceDates("g1").includes("2026-09-02"), true)
+})
+t("يحمّل حضور السجلات القديمة لنفس اليوم دون تكرار بعد إعادة الحفظ", () => {
+  reset()
+  mod.saveGrades([grade("A", "الصف الرابع", [group("g1", "مجموعة السبت")])])
+  mod.saveStudents([
+    { id: "s1", name: "أحمد", gradeId: "A", groupId: "g1", status: "active", createdAt: "", updatedAt: "" },
+    { id: "s2", name: "سارة", gradeId: "A", groupId: "g1", status: "active", createdAt: "", updatedAt: "" },
+  ])
+  mod.saveSessions([{
+    id: "old-se", groupId: "g1", sessionDate: "2026-09-02",
+    startTime: "", endTime: "", createdAt: "2026-09-02T08:00:00Z",
+  }])
+  mod.saveAttendance([
+    { id: "a1", sessionId: "old-se", studentId: "s1", status: "present", createdAt: "2026-09-02T08:00:00Z" },
+  ])
+  const oldRec = mod.getGroupDayAttendance("g1", "2026-09-02")
+  eq(oldRec.find((a) => a.studentId === "s1").status, "present")
+  mod.saveGroupDayAttendance("g1", "2026-09-02", [
+    { studentId: "s1", present: false },
+    { studentId: "s2", present: true },
+  ])
+  const rec = mod.getGroupDayAttendance("g1", "2026-09-02")
+  eq(rec.length, 2)
+  eq(rec.find((a) => a.studentId === "s1").status, "absent")
+  eq(mod.getAttendanceForGroup("g1").filter((a) => a.studentId === "s1").length, 1)
+})
+
+console.log("\n\x1b[1mسيناريو 10: لوحة الشرف التلقائية من نتيجة الاختبار\x1b[0m")
+t("يُضاف المتفوق عند تفعيل الخيار وتحقيق النسبة", () => {
+  reset()
+  const exam = {
+    id: "e1", title: "اختبار الوحدة", autoHonorBoard: true, honorMinPercent: 100,
+    questions: [], gradeId: "A", academicYear: "2026-2027", createdAt: "", updatedAt: "",
+  }
+  const h = mod.maybeAutoHonor({
+    exam, studentName: "أحمد علي", groupId: "g1", studentId: "s1", score: 20, totalMarks: 20,
+  })
+  if (!h) throw new Error("كان يجب إضافة المكرَّم")
+  eq(h.autoPromoted, true)
+  eq(mod.getHonorees().length, 1)
+})
+t("لا يُضاف من لم يحقق النسبة", () => {
+  reset()
+  const exam = {
+    id: "e1", title: "اختبار", autoHonorBoard: true, honorMinPercent: 100,
+    questions: [], gradeId: "A", academicYear: "2026-2027", createdAt: "", updatedAt: "",
+  }
+  eq(mod.maybeAutoHonor({
+    exam, studentName: "سارة", groupId: "g1", score: 18, totalMarks: 20,
+  }), null)
+  eq(mod.getHonorees().length, 0)
+})
+t("لا يكرر نفس الطالب لنفس الاختبار في نفس الشهر", () => {
+  reset()
+  const exam = {
+    id: "e1", title: "اختبار", autoHonorBoard: true, honorMinPercent: 100,
+    questions: [], gradeId: "A", academicYear: "2026-2027", createdAt: "", updatedAt: "",
+  }
+  mod.maybeAutoHonor({ exam, studentName: "أحمد", groupId: "g1", studentId: "s1", score: 20, totalMarks: 20 })
+  eq(mod.maybeAutoHonor({ exam, studentName: "أحمد", groupId: "g1", studentId: "s1", score: 20, totalMarks: 20 }), null)
+  eq(mod.getHonorees().length, 1)
+})
+
+
+console.log("\n\x1b[1mسيناريو 11: التصحيح الآلي للاختبار الإلكتروني\x1b[0m")
+t("اختيار صحيح يمنح الدرجة واختيار خاطئ لا يمنحها", () => {
+  const exam = {
+    questions: [{
+      id: "q1", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "",
+      subQuestions: [{
+        id: "sq1", orderNumber: 1, questionText: "؟", marks: 2,
+        choices: [
+          { id: "c1", choiceKey: "أ", choiceText: "صح", isCorrect: true },
+          { id: "c2", choiceKey: "ب", choiceText: "خطأ", isCorrect: false },
+        ],
+      }],
+    }],
+  }
+  const ok = gradeMod.gradeExam(exam, { sq1: { choiceId: "c1" } })
+  eq(ok.score, 2)
+  eq(ok.autoTotal, 2)
+  const bad = gradeMod.gradeExam(exam, { sq1: { choiceId: "c2" } })
+  eq(bad.score, 0)
+})
+t("أكمل يطابق مع تطبيع التشكيل", () => {
+  const exam = {
+    questions: [{
+      id: "q2", questionType: 2, questionNumber: 1, orderNumber: 1, headerText: "",
+      subQuestions: [{ id: "sq2", orderNumber: 1, questionText: "", marks: 1, correctAnswer: "الأرض" }],
+    }],
+  }
+  const r = gradeMod.gradeExam(exam, { sq2: { text: " الارض " } })
+  eq(r.score, 1)
+})
+t("shouldPromoteToHonor يحترم النسبة والخيار", () => {
+  const exam = { autoHonorBoard: true, honorMinPercent: 100 }
+  eq(gradeMod.shouldPromoteToHonor(exam, { score: 20, autoTotal: 20, percent: 100 }), true)
+  eq(gradeMod.shouldPromoteToHonor(exam, { score: 19, autoTotal: 20, percent: 95 }), false)
+  eq(gradeMod.shouldPromoteToHonor({ autoHonorBoard: false }, { score: 20, autoTotal: 20, percent: 100 }), false)
+})
+
+let pubSrc = readFileSync("src/lib/exam-public.ts", "utf8")
+pubSrc = pubSrc.replace(/import type[\s\S]*?from\s*"\.\/data-storage"/, "")
+pubSrc = pubSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/exam-grade"/, "")
+let gradeBare = readFileSync("src/lib/exam-grade.ts", "utf8").replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "")
+const pubJs = ts.transpileModule(gradeBare + "\n" + pubSrc, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+}).outputText
+const pubMod = await import(
+  "data:text/javascript;base64," + Buffer.from(pubJs).toString("base64")
+)
+
+console.log("\n\x1b[1mسيناريو 12: إخفاء مفاتيح التصحيح عن واجهة الطالب\x1b[0m")
+t("stripExamAnswers يحذف isCorrect والإجابة النموذجية", () => {
+  const exam = {
+    id: "e1",
+    questions: [{
+      id: "q1", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "",
+      subQuestions: [{
+        id: "sq1", orderNumber: 1, questionText: "؟", marks: 2,
+        choices: [
+          { id: "c1", choiceKey: "أ", choiceText: "صح", isCorrect: true },
+          { id: "c2", choiceKey: "ب", choiceText: "خطأ", isCorrect: false },
+        ],
+      }],
+    }],
+  }
+  const stripped = pubMod.stripExamAnswers(exam)
+  eq(stripped.questions[0].subQuestions[0].choices.every((c) => c.isCorrect === false), true)
+})
+t("gradeSealedExam يصحح دون ظهور المفتاح في العرض", () => {
+  const exam = {
+    id: "e1",
+    questions: [{
+      id: "q1", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "",
+      subQuestions: [{
+        id: "sq1", orderNumber: 1, questionText: "؟", marks: 2,
+        choices: [
+          { id: "c1", choiceKey: "أ", choiceText: "صح", isCorrect: true },
+          { id: "c2", choiceKey: "ب", choiceText: "خطأ", isCorrect: false },
+        ],
+      }],
+    }],
+  }
+  const { view, token } = pubMod.sealExamForStudent(exam)
+  eq(view.questions[0].subQuestions[0].choices.find((c) => c.id === "c1").isCorrect, false)
+  const ok = pubMod.gradeSealedExam(view, token, { sq1: { choiceId: "c1" } })
+  eq(ok.score, 2)
+  const bad = pubMod.gradeSealedExam(view, token, { sq1: { choiceId: "c2" } })
+  eq(bad.score, 0)
+})
+t("بطاقة الصفحة الرئيسية لا تحمل الأسئلة", () => {
+  const exam = { id: "e1", questions: [{ id: "q", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "", subQuestions: [] }] }
+  eq(pubMod.toPublicExamCard(exam).questions.length, 0)
 })
 
 console.log(`\n${"=".repeat(56)}`)

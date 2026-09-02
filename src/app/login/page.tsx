@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useRouter } from "next/navigation"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import toast from "react-hot-toast"
+import { TeacherSignature } from "@/components/teacher-signature"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -240,6 +241,7 @@ export default function LoginPage() {
 
           </CardContent>
         </Card>
+        <TeacherSignature compact className="mt-6" />
       </motion.div>
     </div>
   )

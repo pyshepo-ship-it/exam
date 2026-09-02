@@ -24,8 +24,10 @@ import {
   SharedFile,
   ImportantLink,
   Grade,
+  Exam,
   getAllGroups,
   getGrades,
+  getExams,
   getAnnouncements,
   getHonorees,
   getSharedFiles,
@@ -34,6 +36,8 @@ import {
   isHonoreeActive,
 } from "@/lib/data-storage"
 import { fetchPublicData } from "@/lib/supabase/sync"
+import { toPublicExamCard } from "@/lib/exam-public"
+import { TeacherSignature } from "@/components/teacher-signature"
 
 // أيقونة واتساب (SVG)
 function WhatsAppIcon({ className }: { className?: string }) {
@@ -70,6 +74,7 @@ export default function HomePage() {
   const [files, setFiles] = useState<SharedFile[]>([])
   const [links, setLinks] = useState<ImportantLink[]>([])
   const [whatsappNumber, setWhatsappNumber] = useState("")
+  const [onlineExams, setOnlineExams] = useState<Exam[]>([])
 
   useEffect(() => {
     const load = async () => {
@@ -101,6 +106,7 @@ export default function HomePage() {
           }))
         )
         setWhatsappNumber(publicData.settings?.whatsappNumber || "")
+        setOnlineExams((publicData.exams || []).filter(e => e.allowOnline).map(toPublicExamCard))
       } else {
         // 2) وضع محلي (عند عدم تهيئة Supabase): من متصفح الجهاز
         setGrades(getGrades())
@@ -109,6 +115,7 @@ export default function HomePage() {
         setFiles(getSharedFiles())
         setLinks(getImportantLinks())
         setWhatsappNumber(getSetting("whatsappNumber"))
+        setOnlineExams(getExams().filter(e => e.allowOnline))
       }
       setMounted(true)
     }
@@ -329,6 +336,38 @@ export default function HomePage() {
               )}
             </motion.section>
 
+            {/* ============ اختبارات مفتوحة للطلاب ============ */}
+            {onlineExams.length > 0 && (
+              <motion.section
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-4"
+              >
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg">
+                    <GraduationCap className="w-5 h-5 text-white" />
+                  </div>
+                  اختبارات مفتوحة الآن
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {onlineExams.map(exam => (
+                    <a
+                      key={exam.id}
+                      href={`/exam/${exam.id}`}
+                      className="bg-white dark:bg-gray-900 rounded-2xl border border-indigo-200 dark:border-indigo-800 p-5 hover:shadow-md transition-shadow"
+                    >
+                      <p className="font-bold text-gray-900 dark:text-white">{exam.title}</p>
+                      <p className="text-sm text-gray-500 mt-1">
+                        الزمن {exam.duration || 60} دقيقة
+                        {exam.totalMarks ? ` • ${exam.totalMarks} درجة` : ""}
+                      </p>
+                      <p className="text-indigo-600 text-sm font-semibold mt-3">ابدأ الاختبار ←</p>
+                    </a>
+                  ))}
+                </div>
+              </motion.section>
+            )}
+
             {/* ============ الإعلانات ============ */}
             <motion.section
               initial={{ opacity: 0, y: 20 }}
@@ -519,7 +558,8 @@ export default function HomePage() {
             </a>
           </div>
         )}
-        <div className="border-t border-gray-200 dark:border-gray-800 py-5">
+        <div className="border-t border-gray-200 dark:border-gray-800 py-5 space-y-3">
+          <TeacherSignature compact />
           <p className="text-center text-sm text-gray-400 dark:text-gray-600">
             نظام إدارة الدروس الخصوصية — جميع الحقوق محفوظة © {now.getFullYear()}
           </p>

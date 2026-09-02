@@ -21,10 +21,10 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { SyncIndicator } from "@/components/sync-indicator"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { pullAllData } from "@/lib/supabase/sync"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { TeacherSignature } from "@/components/teacher-signature"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -85,19 +85,9 @@ export default function DashboardLayout({
 
       setUserEmail(session.user.email || '')
 
-      // جلب كل البيانات من Supabase (المصدر الحقيقي) قبل عرض المحتوى
-      const { ok, migrated } = await pullAllData()
+      // جلب البيانات من Supabase بصمت — رسائل الاتصال تظهر في الإعدادات فقط
+      await pullAllData()
       if (cancelled) return
-
-      import("react-hot-toast")
-        .then(({ toast }) => {
-          if (migrated) {
-            toast.success("تم رفع بيانات جهازك إلى Supabase بنجاح — أصبحت متاحة من أي جهاز")
-          } else if (!ok) {
-            toast.error("تعذر الاتصال بـ Supabase حالياً — يتم عرض البيانات المحفوظة محلياً")
-          }
-        })
-        .catch(() => {})
 
       setMounted(true)
     }
@@ -297,7 +287,6 @@ export default function DashboardLayout({
           </Button>
 
           <div className="flex items-center gap-4">
-            <SyncIndicator />
             <div className="text-right hidden sm:block">
               <p className="font-semibold text-gray-900 dark:text-white">مرحباً بك</p>
               <p className="text-xs text-gray-500 dark:text-gray-400">{userEmail || 'مدير النظام'}</p>
@@ -315,6 +304,7 @@ export default function DashboardLayout({
         {/* Page Content */}
         <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           {children}
+          <TeacherSignature />
         </div>
       </main>
     </div>
