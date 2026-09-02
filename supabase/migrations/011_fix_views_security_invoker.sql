@@ -9,6 +9,7 @@
 -- بصلاحيات المستخدم نفسه عبر security_invoker = on — عندها تُطبَّق RLS
 -- الخاصة بكل دور بشكل صحيح، ويختفي التنبيه من Database Linter.
 --
+-- ملاحظة: لا يحتاج أي ALTER DATABASE — الإصلاح على مستوى الـ View فقط
 -- ✅ آمن للتكرار (idempotent) — لا يمس أي بيانات
 -- • exam_attempt_counts: عدّاد محاولات الاختبار — الطالب (anon) عنده
 --   سياسة قراءة على exam_attempts فسيستمر العد بالعمل كما هو.
@@ -26,9 +27,6 @@ BEGIN
     EXECUTE 'ALTER VIEW public.group_schedule_conflicts SET (security_invoker = true)';
   END IF;
 END $$;
-
--- أي View يُنشأ مستقبلاً في هذا المشروع: امنع تكرار التنبيه من البداية
-ALTER DATABASE postgres SET trusted_schemas_placement_override = 'public';
 
 -- ============================================================
 -- انتهى — أعد فحص Database Linter من القائمة الجانبية وستجدها خالية ✅
