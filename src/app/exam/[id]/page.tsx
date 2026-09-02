@@ -81,7 +81,7 @@ export default function TakeExamPage() {
     const load = async () => {
       let found = getExams().find(e => e.id === examId) || null
       let nextGrades = getGrades()
-      let nextStudents = getStudents()
+      const nextStudents = getStudents()
 
       const publicData = await fetchPublicData()
       if (publicData) {
