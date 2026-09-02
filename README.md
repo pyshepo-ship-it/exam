@@ -48,7 +48,7 @@
 - **Animations**: Framer Motion
 - **PDF Export**: jsPDF, html2canvas
 - **Notifications**: react-hot-toast
-- **Hosting**: Netlify
+- **Hosting**: Vercel
 
 ## 🚀 الإعداد والتشغيل
 
@@ -57,7 +57,7 @@
 - Node.js 22 أو أحدث
 - npm أو yarn
 - حساب Supabase (مجاني)
-- حساب Netlify (مجاني)
+- حساب Vercel (مجاني)
 
 ### 1️⃣ تثبيت المكتبات
 
@@ -93,14 +93,29 @@ npm run dev
 
 افتح [http://localhost:3000](http://localhost:3000)
 
-### 5️⃣ النشر على Netlify
+### 5️⃣ النشر على Vercel
 
 1. ارفع الكود إلى GitHub
-2. اربط المشروع بـ Netlify
-3. أضف المتغيرات البيئية في Netlify
-4. Deploy!
+2. اذهب إلى [vercel.com](https://vercel.com) وسجّل الدخول بحساب GitHub
+3. اضغط **Add New → Project** واختر repository الخاص بك
+4. Vercel يتعرّف على المشروع تلقائياً (Next.js):
+   - **Framework Preset**: Next.js
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `.next` (الافتراضي)
+5. قبل الضغط على Deploy، افتح **Environment Variables** وأضف:
 
-راجع [netlify.toml](./netlify.toml) للإعدادات.
+```
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
+```
+
+6. اضغط **Deploy**
+
+بعد أول deploy، كل push على الفرع الرئيسي ينشر تلقائياً، وكل Pull Request يحصل على رابط معاينة (Preview).
+
+راجع [vercel.json](./vercel.json) للإعدادات (إطار العمل وأوامر البناء وترويسات الأمان).
+
+> **ملاحظة**: المشروع لم يعد يستخدم Netlify — تم حذف `netlify.toml` وإزالة حزمة `@netlify/plugin-nextjs`.
 
 ## 🔒 الأمان
 
@@ -115,12 +130,12 @@ npm run dev
   - فقط المستخدمون المصادق عليهم يمكنهم الوصول
   
 - **HTTPS**
-  - Netlify يوفر HTTPS تلقائياً
+  - Vercel يوفر HTTPS تلقائياً
   - جميع الاتصالات مشفرة
 
 - **Environment Variables**
   - المفاتيح ليست في Git
-  - محمية في Netlify Dashboard
+  - محمية في Vercel Dashboard
 
 ## 📁 هيكل المشروع
 
@@ -149,7 +164,7 @@ exam/
 │   └── schema.sql          # مخطط قاعدة البيانات
 ├── public/                 # الملفات الثابتة
 ├── .env.example            # مثال المتغيرات البيئية
-├── netlify.toml            # إعدادات Netlify
+├── vercel.json             # إعدادات Vercel
 ├── SUPABASE_SETUP.md       # دليل إعداد Supabase
 └── README.md               # هذا الملف
 ```
@@ -200,7 +215,7 @@ exam/
 
 - **Supabase Docs**: [supabase.com/docs](https://supabase.com/docs)
 - **Next.js Docs**: [nextjs.org/docs](https://nextjs.org/docs)
-- **Netlify Docs**: [docs.netlify.com](https://docs.netlify.com)
+- **Vercel Docs**: [vercel.com/docs](https://vercel.com/docs)
 
 ## 📝 الترخيص
 
