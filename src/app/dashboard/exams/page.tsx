@@ -1417,7 +1417,7 @@ export default function ExamsPage() {
 
                             <Button variant="outline" size="sm" onClick={() => addSubQuestion(question.id)} className="w-full">
                               <Plus className="w-4 h-4" />
-                              <span>إضافة سؤال فرعي ({question.subQuestions.length})</span>
+                              <span>إضافة سؤال فرعي جديد ({question.subQuestions.length + 1})</span>
                             </Button>
                           </div>
                         </CardContent>
