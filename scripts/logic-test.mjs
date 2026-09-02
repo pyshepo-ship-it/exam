@@ -433,6 +433,34 @@ t("امتحان أكثر من 5 أسئلة يتوزع تلقائياً على 3 
   eq(allIds.length, 7)
 })
 
+console.log("\n\x1b[1mسيناريو 14: أنواع الأسئلة الجديدة (المصطلح العلمي، التعريفات، السؤال الحر، واختيار الكلمات التفاعلي)\x1b[0m")
+t("التعرف على رؤوس الأسئلة للأنواع 6 و 7 و 8 وإمكانية تخصيص رأس السؤال", () => {
+  const q6 = { id: "q6", questionType: 6, questionNumber: 1, orderNumber: 1, headerText: "", subQuestions: [] }
+  const q7 = { id: "q7", questionType: 7, questionNumber: 2, orderNumber: 2, headerText: "", subQuestions: [] }
+  const q8 = { id: "q8", questionType: 8, questionNumber: 3, orderNumber: 3, headerText: "", subQuestions: [] }
+  const qCustom = { id: "qc", questionType: 8, questionNumber: 4, orderNumber: 4, headerText: "قارن بين كل من:", subQuestions: [] }
+
+  eq(tplMod.getQuestionHeader(q6), "اكتب المصطلح العلمي الدال على كل عبارة مما يأتي:")
+  eq(tplMod.getQuestionHeader(q7), "ما المقصود بكل مما يأتي:")
+  eq(tplMod.getQuestionHeader(q8), "أجب عن الأسئلة الآتية:")
+  eq(tplMod.getQuestionHeader(qCustom), "قارن بين كل من:")
+})
+
+t("تحديد الكلمات في صوب ما تحته خط بدقة عبر getUnderlinedWords", () => {
+  const sq = {
+    id: "sq1",
+    orderNumber: 1,
+    questionText: "تتحرك الكواكب في مدارات دائرية حول الأرض",
+    marks: 1,
+    corrections: [{ id: "c1", wrongWord: "الأرض", correctAnswer: "الشمس", wordPosition: 7, wordCount: 1 }],
+  }
+  const words = tplMod.getUnderlinedWords(sq)
+  eq(words.length, 7)
+  eq(words[6].word, "الأرض")
+  eq(words[6].underlined, true)
+  eq(words[0].underlined, false)
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {

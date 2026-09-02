@@ -113,7 +113,7 @@ export default function ExamsPage() {
     )
   }
 
-  const makeSubQuestion = (type: 1 | 2 | 3 | 4 | 5, index: number): SubQuestion => {
+  const makeSubQuestion = (type: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8, index: number): SubQuestion => {
     const id = `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`
     const sub: SubQuestion = {
       id,
@@ -135,22 +135,31 @@ export default function ExamsPage() {
       ]
     } else if (type === 5) {
       sub.corrections = [
-        { id: `${id}-c1`, wrongWord: "", correctAnswer: "", wordPosition: 1, wordCount: 1 },
+        { id: `${id}-c1`, wrongWord: "", correctAnswer: "", wordPosition: 0, wordCount: 0 },
       ]
-    } else if (type === 4) {
+      sub.answerLines = 1
+    } else if (type === 4 || type === 6 || type === 7 || type === 8) {
       sub.answerLines = 1
     }
     return sub
   }
 
-  const addQuestion = (type: 1 | 2 | 3 | 4 | 5, reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية") => {
+  const addQuestion = (
+    type: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8,
+    reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية"
+  ) => {
     const questionNumber = examForm.questions.length + 1
+    let defaultHeader = ""
+    if (type === 6) defaultHeader = "اكتب المصطلح العلمي الدال على كل عبارة مما يأتي:"
+    else if (type === 7) defaultHeader = "ما المقصود بكل مما يأتي:"
+    else if (type === 8) defaultHeader = "أجب عن الأسئلة الآتية:"
+
     const newQuestion: Question = {
       id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 6),
       questionType: type,
       questionNumber,
       orderNumber: questionNumber,
-      headerText: "",
+      headerText: defaultHeader,
       reasoningType: type === 4 ? reasoningType || "علل" : undefined,
       subQuestions: [0, 1, 2, 3].map(i => makeSubQuestion(type, i)),
     }
@@ -287,6 +296,42 @@ export default function ExamsPage() {
                 return {
                   ...sq,
                   parts: sq.parts.map((p, i) => (i === 1 ? { ...p, blankPosition: position } : p)),
+                }
+              }
+              return sq
+            }),
+          }
+        }
+        return q
+      }),
+    }))
+  }
+
+  const updateCorrectionRange = (questionId: string, subQuestionId: string, wordPosition: number, wordCount: number) => {
+    setExamForm(prev => ({
+      ...prev,
+      questions: prev.questions.map(q => {
+        if (q.id === questionId) {
+          return {
+            ...q,
+            subQuestions: q.subQuestions.map(sq => {
+              if (sq.id === subQuestionId) {
+                const prevCorr = sq.corrections?.[0] || {
+                  id: `${sq.id}-c1`,
+                  wrongWord: "",
+                  correctAnswer: "",
+                  wordPosition: 0,
+                  wordCount: 0,
+                }
+                return {
+                  ...sq,
+                  corrections: [
+                    {
+                      ...prevCorr,
+                      wordPosition,
+                      wordCount,
+                    },
+                  ],
                 }
               }
               return sq
@@ -507,7 +552,7 @@ export default function ExamsPage() {
         <h3 className="font-bold text-gray-900 dark:text-white mb-4">
           أنواع الأسئلة (رأس كل سؤال يُكتب تلقائياً — وشارة ملوّنة تميّز نوعه)
         </h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {QUESTION_TYPES.map((type) => (
             <div
               key={type.id}
@@ -861,7 +906,7 @@ export default function ExamsPage() {
                 <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">4</span>
                 إضافة سؤال رئيسي
               </h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
                 {QUESTION_BUTTONS.map((btn, i) => {
                   const meta = getQuestionTypeMeta(btn.type)
                   return (
@@ -944,22 +989,62 @@ export default function ExamsPage() {
 
                       {expanded && (
                         <CardContent className="space-y-4 pt-0">
-                          {question.questionType === 4 && (
-                            <div className="flex items-center gap-3">
-                              <Label className="shrink-0">نوع السؤال:</Label>
-                              <Select
-                                value={question.reasoningType || "علل"}
-                                onValueChange={(val) => updateReasoningType(question.id, val)}
-                              >
-                                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="علل">علل لما يأتي</SelectItem>
-                                  <SelectItem value="بم تفسر">بم تفسر</SelectItem>
-                                  <SelectItem value="اذكر أهمية">اذكر أهمية</SelectItem>
-                                </SelectContent>
-                              </Select>
+                          {/* رأس / عنوان السؤال — قابل للتعديل بحرية */}
+                          <div className="space-y-1.5 pb-2 border-b border-gray-200 dark:border-gray-800">
+                            <div className="flex items-center justify-between gap-2">
+                              <Label className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                                {question.questionType === 8 ? "عنوان / رأس السؤال المخصص *" : "رأس السؤال (يمكنك تعديل نصه):"}
+                              </Label>
+                              {question.questionType === 4 && (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[11px] text-gray-500">الصياغة:</span>
+                                  <Select
+                                    value={question.reasoningType || "علل"}
+                                    onValueChange={(val) => {
+                                      updateReasoningType(question.id, val)
+                                      setExamForm(prev => ({
+                                        ...prev,
+                                        questions: prev.questions.map(q =>
+                                          q.id === question.id
+                                            ? {
+                                                ...q,
+                                                headerText:
+                                                  val === "بم تفسر"
+                                                    ? "بم تفسر:"
+                                                    : val === "اذكر أهمية"
+                                                    ? "اذكر أهمية:"
+                                                    : "علل لما يأتي:",
+                                              }
+                                            : q
+                                        ),
+                                      }))
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-32 h-7 text-xs"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="علل">علل لما يأتي</SelectItem>
+                                      <SelectItem value="بم تفسر">بم تفسر</SelectItem>
+                                      <SelectItem value="اذكر أهمية">اذكر أهمية</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
                             </div>
-                          )}
+                            <Input
+                              value={question.headerText}
+                              placeholder={getQuestionHeader(question)}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setExamForm(prev => ({
+                                  ...prev,
+                                  questions: prev.questions.map(q =>
+                                    q.id === question.id ? { ...q, headerText: val } : q
+                                  ),
+                                }))
+                              }}
+                              className="h-9 text-sm"
+                            />
+                          </div>
 
                           <div className="space-y-4">
                             {question.subQuestions.map((sq, index) => (
@@ -1003,6 +1088,7 @@ export default function ExamsPage() {
                                     </div>
                                   </div>
 
+                                  {/* 1. اختر الإجابة الصحيحة */}
                                   {question.questionType === 1 && (
                                     <>
                                       <div>
@@ -1048,6 +1134,7 @@ export default function ExamsPage() {
                                     </>
                                   )}
 
+                                  {/* 2. أكمل */}
                                   {question.questionType === 2 && sq.parts && (
                                     <>
                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -1100,6 +1187,7 @@ export default function ExamsPage() {
                                     </>
                                   )}
 
+                                  {/* 3. صح أو خطأ */}
                                   {question.questionType === 3 && (
                                     <>
                                       <div>
@@ -1135,12 +1223,29 @@ export default function ExamsPage() {
                                     </>
                                   )}
 
-                                  {question.questionType === 4 && (
+                                  {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر */}
+                                  {(question.questionType === 4 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
                                     <>
                                       <div>
-                                        <Label className="text-xs">نص العبارة</Label>
+                                        <Label className="text-xs">
+                                          {question.questionType === 6
+                                            ? "نص العبارة / المفهوم العلمي"
+                                            : question.questionType === 7
+                                            ? "المصطلح أو المفهوم المراد تعريفه"
+                                            : question.questionType === 8
+                                            ? "نص السؤال الفرعي"
+                                            : "نص العبارة"}
+                                        </Label>
                                         <Input
-                                          placeholder="مثال: الشروق يكون من الشرق"
+                                          placeholder={
+                                            question.questionType === 6
+                                              ? "مثال: المسافة المقطوعة خلال وحدة الزمن"
+                                              : question.questionType === 7
+                                              ? "مثال: السرعة المتجهة"
+                                              : question.questionType === 8
+                                              ? "مثال: قارن بين التكاثر الجنسي واللاجنسي من حيث..."
+                                              : "مثال: الشروق يكون من الشرق"
+                                          }
                                           value={sq.questionText}
                                           onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
                                           className="mt-1"
@@ -1161,76 +1266,151 @@ export default function ExamsPage() {
                                           </SelectContent>
                                         </Select>
                                       </div>
-                                    </>
-                                  )}
-
-                                  {question.questionType === 5 && (
-                                    <>
-                                      <div>
-                                        <Label className="text-xs">نص الجملة</Label>
-                                        <Input
-                                          placeholder="مثال: الشمس تشرق من الغرب"
-                                          value={sq.questionText}
-                                          onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                          className="mt-1"
-                                        />
-                                      </div>
-                                      <div className="grid grid-cols-2 gap-2">
-                                        <div>
-                                          <Label className="text-xs">الخط يبدأ من كلمة رقم</Label>
-                                          <Input
-                                            type="number"
-                                            min={1}
-                                            value={sq.corrections?.[0]?.wordPosition || 1}
-                                            onChange={(e) => updateCorrection(question.id, sq.id, "wordPosition", parseInt(e.target.value) || 1)}
-                                            className="mt-1 h-8 text-sm"
-                                          />
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs">عدد الكلمات تحتها خط</Label>
-                                          <Input
-                                            type="number"
-                                            min={1}
-                                            value={sq.corrections?.[0]?.wordCount || 1}
-                                            onChange={(e) => updateCorrection(question.id, sq.id, "wordCount", parseInt(e.target.value) || 1)}
-                                            className="mt-1 h-8 text-sm"
-                                          />
-                                        </div>
-                                      </div>
-                                      {sq.questionText && (
-                                        <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
-                                          {renderCorrectionSentence(sq)}
-                                        </p>
-                                      )}
                                       {examForm.allowOnline && (
                                         <div>
                                           <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
                                           <Input
-                                            placeholder="الكلمة الصحيحة بدل ما تحته خط"
-                                            value={sq.corrections?.[0]?.correctAnswer || ""}
-                                            onChange={(e) => {
-                                              const val = e.target.value
-                                              setExamForm(prev => ({
-                                                ...prev,
-                                                questions: prev.questions.map(q =>
-                                                  q.id !== question.id ? q : {
-                                                    ...q,
-                                                    subQuestions: q.subQuestions.map(s =>
-                                                      s.id !== sq.id || !s.corrections ? s : {
-                                                        ...s,
-                                                        corrections: s.corrections.map(c => ({ ...c, correctAnswer: val })),
-                                                      }
-                                                    ),
-                                                  }
-                                                ),
-                                              }))
-                                            }}
+                                            placeholder={
+                                              question.questionType === 6
+                                                ? "المصطلح العلمي الصحيح (مثال: السرعة)"
+                                                : question.questionType === 7
+                                                ? "التعريف النموذجي"
+                                                : "الإجابة النموذجية"
+                                            }
+                                            value={sq.correctAnswer || ""}
+                                            onChange={(e) => updateSubQuestion(question.id, sq.id, "correctAnswer", e.target.value)}
                                             className="mt-1 h-8 text-sm"
                                           />
                                         </div>
                                       )}
                                     </>
                                   )}
+
+                                  {/* 5. صوب ما تحته خط — نظام تفاعلي حديث باختيار الكلمات بالضغط المباشر */}
+                                  {question.questionType === 5 && (() => {
+                                    const words = (sq.questionText || "").trim().split(/\s+/).filter(Boolean)
+                                    const currentCorr = sq.corrections?.[0]
+                                    const startIdx = currentCorr && currentCorr.wordPosition > 0 ? currentCorr.wordPosition - 1 : -1
+                                    const count = currentCorr?.wordCount && currentCorr.wordCount > 0 ? currentCorr.wordCount : (startIdx >= 0 ? 1 : 0)
+
+                                    const toggleWord = (wi: number) => {
+                                      if (startIdx === -1 || count === 0) {
+                                        updateCorrectionRange(question.id, sq.id, wi + 1, 1)
+                                      } else if (wi >= startIdx && wi < startIdx + count) {
+                                        if (count === 1) {
+                                          updateCorrectionRange(question.id, sq.id, 0, 0)
+                                        } else if (wi === startIdx) {
+                                          updateCorrectionRange(question.id, sq.id, startIdx + 2, count - 1)
+                                        } else if (wi === startIdx + count - 1) {
+                                          updateCorrectionRange(question.id, sq.id, startIdx + 1, count - 1)
+                                        } else {
+                                          updateCorrectionRange(question.id, sq.id, wi + 1, 1)
+                                        }
+                                      } else {
+                                        const newStart = Math.min(startIdx, wi)
+                                        const newEnd = Math.max(startIdx + count - 1, wi)
+                                        updateCorrectionRange(question.id, sq.id, newStart + 1, newEnd - newStart + 1)
+                                      }
+                                    }
+
+                                    return (
+                                      <>
+                                        <div>
+                                          <Label className="text-xs">
+                                            نص الجملة <span className="text-rose-600 font-normal dark:text-rose-400">(اكتب الجملة ثم اضغط مباشرة على الكلمة المراد وضع خط تحتها)</span>:
+                                          </Label>
+                                          <Input
+                                            placeholder="مثال: الشمس تشرق من الغرب"
+                                            value={sq.questionText}
+                                            onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                            className="mt-1"
+                                          />
+                                        </div>
+
+                                        {words.length > 0 && (
+                                          <div className="p-3 bg-white dark:bg-gray-900 rounded-xl border border-rose-200 dark:border-rose-900/60 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-xs font-bold text-gray-700 dark:text-gray-300">
+                                                👇 اضغط على الكلمة / الكلمات لوضع خط تحتها:
+                                              </span>
+                                              {startIdx >= 0 && (
+                                                <Button
+                                                  type="button"
+                                                  variant="ghost"
+                                                  size="sm"
+                                                  className="h-6 text-[11px] text-gray-500 hover:text-rose-600 px-2"
+                                                  onClick={() => updateCorrectionRange(question.id, sq.id, 0, 0)}
+                                                >
+                                                  إلغاء التحديد
+                                                </Button>
+                                              )}
+                                            </div>
+
+                                            <div className="flex flex-wrap gap-1.5 p-2 bg-gray-50 dark:bg-gray-800/60 rounded-lg">
+                                              {words.map((word, wi) => {
+                                                const isUnderlined = startIdx >= 0 && wi >= startIdx && wi < startIdx + count
+                                                return (
+                                                  <button
+                                                    key={wi}
+                                                    type="button"
+                                                    onClick={() => toggleWord(wi)}
+                                                    className={`px-3 py-1 rounded-md text-sm transition-all cursor-pointer select-none ${
+                                                      isUnderlined
+                                                        ? "bg-rose-600 text-white font-bold underline decoration-2 underline-offset-4 shadow-sm ring-2 ring-rose-400"
+                                                        : "bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 hover:bg-rose-50 dark:hover:bg-rose-950/60 border border-gray-200 dark:border-gray-700"
+                                                    }`}
+                                                  >
+                                                    {word}
+                                                  </button>
+                                                )
+                                              })}
+                                            </div>
+
+                                            {startIdx >= 0 ? (
+                                              <div className="flex items-center gap-2 text-xs text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1.5 rounded-md">
+                                                <span className="font-bold">المحدد تحته خط:</span>
+                                                <span className="font-extrabold underline decoration-rose-500 underline-offset-4">
+                                                  {words.slice(startIdx, startIdx + count).join(" ")}
+                                                </span>
+                                              </div>
+                                            ) : (
+                                              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                                                💡 اضغط على الكلمة المراد وضع خط تحتها ليراها الطالب بخط سفلي في ورقة الامتحان.
+                                              </p>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {examForm.allowOnline && (
+                                          <div>
+                                            <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                            <Input
+                                              placeholder="الكلمة الصحيحة بدل ما تحته خط"
+                                              value={sq.corrections?.[0]?.correctAnswer || ""}
+                                              onChange={(e) => {
+                                                const val = e.target.value
+                                                setExamForm(prev => ({
+                                                  ...prev,
+                                                  questions: prev.questions.map(q =>
+                                                    q.id !== question.id ? q : {
+                                                      ...q,
+                                                      subQuestions: q.subQuestions.map(s =>
+                                                        s.id !== sq.id || !s.corrections ? s : {
+                                                          ...s,
+                                                          corrections: s.corrections.map(c => ({ ...c, correctAnswer: val })),
+                                                        }
+                                                      ),
+                                                    }
+                                                  ),
+                                                }))
+                                              }}
+                                              className="mt-1 h-8 text-sm"
+                                            />
+                                          </div>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
                                 </div>
                               </div>
                             ))}

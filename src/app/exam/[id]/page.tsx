@@ -220,8 +220,7 @@ export default function TakeExamPage() {
         if (q.questionType === 1 && !a?.choiceId) n++
         else if (q.questionType === 2 && !(a?.text || "").trim()) n++
         else if (q.questionType === 3 && typeof a?.isTrue !== "boolean") n++
-        else if (q.questionType === 4 && !(a?.text || "").trim()) n++
-        else if (q.questionType === 5 && !(a?.text || "").trim()) n++
+        else if ((q.questionType === 4 || q.questionType === 5 || q.questionType === 6 || q.questionType === 7 || q.questionType === 8) && !(a?.text || "").trim()) n++
       }
     }
     return n
@@ -424,22 +423,30 @@ export default function TakeExamPage() {
                         </div>
                       )}
 
-                      {(question.questionType === 4 || question.questionType === 5) && (
+                      {(question.questionType === 4 || question.questionType === 5 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
                         <div>
                           {question.questionType === 5 && (
                             <p className="text-sm mb-2">
                               {getUnderlinedWords(sq).map((w, i) => (
                                 <span key={i}>
-                                  <span className={w.underlined ? "underline font-semibold" : undefined}>{w.word}</span>
+                                  <span className={w.underlined ? "underline font-bold text-rose-600 dark:text-rose-400" : undefined}>{w.word}</span>
                                   {i < getUnderlinedWords(sq).length - 1 ? " " : ""}
                                 </span>
                               ))}
                             </p>
                           )}
                           <textarea
-                            rows={question.questionType === 4 ? (sq.answerLines || 2) : 2}
+                            rows={question.questionType === 5 ? 2 : (sq.answerLines || 1)}
                             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                            placeholder={question.questionType === 5 ? "التصحيح" : "إجابتك"}
+                            placeholder={
+                              question.questionType === 5
+                                ? "التصحيح"
+                                : question.questionType === 6
+                                ? "اكتب المصطلح العلمي هنا"
+                                : question.questionType === 7
+                                ? "اكتب التعريف هنا"
+                                : "إجابتك"
+                            }
                             value={answers[sq.id]?.text || ""}
                             onChange={e => setAnswer(sq.id, { text: e.target.value })}
                           />

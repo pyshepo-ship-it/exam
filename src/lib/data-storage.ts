@@ -83,7 +83,7 @@ export interface Exam {
 
 export interface Question {
   id: string
-  questionType: 1 | 2 | 3 | 4 | 5
+  questionType: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
   questionNumber: number
   orderNumber: number
   headerText: string

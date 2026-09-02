@@ -36,6 +36,8 @@ function collectAnswerSpec(exam: Exam): Record<string, AnswerSpec> {
         spec[sq.id] = { isTrue: sq.isTrue }
       } else if (q.questionType === 5) {
         spec[sq.id] = { text: sq.corrections?.[0]?.correctAnswer }
+      } else if (q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
+        spec[sq.id] = { text: sq.correctAnswer }
       }
     }
   }
@@ -63,6 +65,9 @@ function applyAnswerSpec(exam: Exam, spec: Record<string, AnswerSpec>): Exam {
             ...sq,
             corrections: sq.corrections?.map(c => ({ ...c, correctAnswer: s.text || "" })),
           }
+        }
+        if (q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
+          return { ...sq, correctAnswer: s.text }
         }
         return sq
       }),

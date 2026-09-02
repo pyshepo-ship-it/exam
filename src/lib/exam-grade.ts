@@ -2,7 +2,7 @@ import type { Exam, ExamAttemptAnswer, SubQuestion } from "./data-storage"
 
 export interface GradedItem {
   subQuestionId: string
-  questionType: 1 | 2 | 3 | 4 | 5
+  questionType: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
   auto: boolean
   correct: boolean
   marks: number
@@ -73,6 +73,11 @@ export function gradeExam(
         if (expected && expected.trim()) {
           auto = true
           correct = textsMatch(ans.text, expected)
+        }
+      } else if (question.questionType === 6 || question.questionType === 7 || question.questionType === 8) {
+        if (sq.correctAnswer && sq.correctAnswer.trim()) {
+          auto = true
+          correct = textsMatch(ans.text, sq.correctAnswer)
         }
       }
 

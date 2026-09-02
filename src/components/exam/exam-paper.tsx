@@ -128,8 +128,8 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
         </div>
       )}
 
-      {/* 4. علل / بم تفسر / اذكر أهمية (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
-      {question.questionType === 4 && (
+      {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
+      {(question.questionType === 4 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
         <div className="space-y-1.5">
           <p className="font-medium text-right leading-relaxed">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
