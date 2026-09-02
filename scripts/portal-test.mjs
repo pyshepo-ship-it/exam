@@ -64,10 +64,19 @@ const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g,
 // 3) utils (بلا clsx/twMerge — cn غير مستخدم في المسارات المختبرة)
 const utils = readFileSync("src/lib/utils.ts", "utf8").replace(/import[\s\S]*?from\s*"[\w/.@-]+"/g, "")
 
-const rewrite = (src) => src.replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
+const rewrite = (src) =>
+  src
+    .replace(/from "\.\.\/storage-keys"/g, 'from "../storage-keys.mjs"')
+    .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
+    .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
 const files = {}
-files["storage-keys.mjs"] = storageKeys
+// نسخة قابلة للاستيراد لوحدات ES (تستخدمها sync.ts في الاختبار)
+files["storage-keys.mjs"] = `const STORAGE_KEYS = ${JSON.stringify(
+  Object.fromEntries([...storageKeys.matchAll(/([A-Z_]+):\s*"([\w-]+)"/g)].map(m => [m[1], m[2]]))
+)};
+export { STORAGE_KEYS };
+const STORAGE_KEYS_INTERNAL = STORAGE_KEYS;`
 files["weekdays.mjs"] = weekdays
 files["utils.mjs"] = rewrite(utils)
 
@@ -101,19 +110,37 @@ files["utils.mjs"] = rewrite(utils)
   sr = rewrite(sr)
   files["student-report.mjs"] = sr
 }
+{
+  // sync الحقيقية مع تعطيل Supabase (createClient → null)
+  let syn = readFileSync("src/lib/supabase/sync.ts", "utf8")
+  syn = syn.replace(/import \{ createClient, isSupabaseConfigured \} from "\.\/client"/,
+    `const createClient = () => null
+const isSupabaseConfigured = () => false`)
+  files["supabase/sync.mjs"] = rewrite(syn)
+}
+{
+  files["inquiries.mjs"] = rewrite(readFileSync("src/lib/inquiries.ts", "utf8"))
+}
+{
+  files["portal-content.mjs"] = rewrite(readFileSync("src/lib/portal-content.ts", "utf8"))
+}
 
-for (const [name, src] of Object.entries(files)) {
-  const js = ts.transpileModule(src, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
-  }).outputText
-  // eslint-disabled: ملف مؤقت للاختبار
-  const { writeFileSync } = await import("node:fs")
-  writeFileSync(join(TMP, name), js, "utf8")
+{
+  const { writeFileSync, mkdirSync: mkd } = await import("node:fs")
+  mkd(join(TMP, "supabase"), { recursive: true })
+  for (const [name, src] of Object.entries(files)) {
+    const js = ts.transpileModule(src, {
+      compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+    }).outputText
+    writeFileSync(join(TMP, name), js, "utf8")
+  }
 }
 
 const DS = await import("file://" + join(TMP, "data-storage.mjs"))
 const SA = await import("file://" + join(TMP, "student-accounts.mjs"))
 const SR = await import("file://" + join(TMP, "student-report.mjs"))
+const IQ = await import("file://" + join(TMP, "inquiries.mjs"))
+const PC = await import("file://" + join(TMP, "portal-content.mjs"))
 
 // jsdom لا يحسب أبعاداً حقيقية → محاكاة ارتفاع ثابت لكل عنصر (كما في اختبار الجدول)
 dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
@@ -128,6 +155,12 @@ const eq = (name, cond, extra = "") => {
   else { fail++; fails.push(name + (extra ? ` — ${extra}` : "")); console.log("  ❌ " + name + (extra ? " — " + extra : "")) }
 }
 const section = (t) => console.log(`\n${"=".repeat(56)}\n${t}\n${"=".repeat(56)}`)
+
+const dateSlash = (iso) => {
+  const d = new Date(iso)
+  if (isNaN(d)) return ""
+  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`
+}
 
 const NOW = new Date()
 const Y = NOW.getFullYear()
@@ -158,7 +191,19 @@ SA.setRegistrationOpen(false)
 eq("التسجيل مغلق → يُرفض الطلب", !(await SA.registerStudentAccount({ name: "محمد علي حسن", phone: "01000000002", email: "mohamed@test.com", password: "secret1", confirmPassword: "secret1", gradeId: "g-1", groupId: "gr-1" })).ok)
 SA.setRegistrationOpen(true)
 
-const base = { name: "محمد علي حسن", phone: "01000000001", email: "Mohamed@Test.com", password: "secret1", confirmPassword: "secret1", gradeId: "g-1", groupId: "gr-1" }
+const base = { name: "محمد علي حسن", phone: "01000000001", guardianPhone: "01111111111", email: "Mohamed@Test.com", password: "secret1", confirmPassword: "secret1", gradeId: "g-1", groupId: "gr-1" }
+eq("بريد بحروف عربية → يُرفض", !(await SA.registerStudentAccount({ ...base, email: "طالب@مدرسة.كوم", phone: "01000000099", guardianPhone: "01111111112" })).ok)
+eq("حروف في رقم الهاتف → يُرفض", !(await SA.registerStudentAccount({ ...base, phone: "010abc23456" })).ok)
+eq("أرقام في الاسم → يُرفض", !(await SA.registerStudentAccount({ ...base, name: "محمد علي 123" })).ok)
+const arReq0 = await SA.registerStudentAccount({ ...base, phone: "٠١٠٠٠٠٠٠٠٠١", email: "test-arabic-digits@test.com" })
+if (arReq0.ok) {
+  const arReqSaved = DS.getRegistrationRequests().find(r => r.email === "test-arabic-digits@test.com")
+  eq("الأرقام العربية-الهندية في الهاتف تُوحَّد إلى لاتينية", arReqSaved?.phone === "01000000001")
+  DS.saveRegistrationRequests(DS.getRegistrationRequests().filter(r => r.email !== "test-arabic-digits@test.com"))
+} else {
+  eq("توحيد الأرقام العربية (رُفض لسبب آخر)", false, arReq0.error || "")
+}
+eq("بدون هاتف ولي الأمر → يُرفض (إجباري)", !(await SA.registerStudentAccount({ ...base, guardianPhone: "", email: "noguardian@test.com" })).ok)
 eq("اسم قصير جداً → يُرفض", !(await SA.registerStudentAccount({ ...base, name: "محمد" })).ok)
 eq("هاتف غير صحيح → يُرفض", !(await SA.registerStudentAccount({ ...base, phone: "12" })).ok)
 eq("بريد غير صحيح → يُرفض", !(await SA.registerStudentAccount({ ...base, email: "not-an-email" })).ok)
@@ -209,7 +254,7 @@ eq("تسجيل الخروج يمسح الجلسة", SA.getPortalSession() === nu
 // ============================================================
 section("سيناريو 3: الموافقة بدون بيانات سابقة → إنشاء طالب فوري")
 
-const reg2 = await SA.registerStudentAccount({ name: "سارة محمود خالد", phone: "01000000003", email: "sara@test.com", password: "sara123", confirmPassword: "sara123", gradeId: "g-2", groupId: "gr-3" })
+const reg2 = await SA.registerStudentAccount({ name: "سارة محمود خالد", phone: "01000000003", guardianPhone: "01111111113", email: "sara@test.com", password: "sara123", confirmPassword: "sara123", gradeId: "g-2", groupId: "gr-3" })
 eq("طلب سارة يُقبل", reg2.ok === true, reg2.error || "")
 const beforeCount = DS.getStudents().length
 const outcome2 = SA.approveRegistrationRequest(DS.getRegistrationRequests().find(r => r.email === "sara@test.com").id)
@@ -226,7 +271,7 @@ SA.portalLogout()
 // ============================================================
 section("سيناريو 4: الرفض وإعادة التقديم وحظر الحساب")
 
-const reg3 = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
+const reg3 = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
 eq("طلب كريم يُقبل", reg3.ok === true)
 const karimReqId = DS.getRegistrationRequests().find(r => r.email === "karim@test.com").id
 const rej = SA.rejectRegistrationRequest(karimReqId, "البيانات غير مكتملة")
@@ -237,23 +282,31 @@ const karimLogin1 = await SA.portalLogin("karim@test.com", "karim123")
 eq("الدخول بعد الرفض → ممنوع (rejected)", karimLogin1.ok === false && karimLogin1.status === "rejected")
 
 // إعادة التقديم بنفس البريد بعد الرفض مسموحة
-const reg3b = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
-eq("إعادة التقديم بعد الرفض مسموحة", reg3b.ok === true, reg3b.error || "")
-const karimReqs = DS.getRegistrationRequests().filter(r => r.email === "karim@test.com")
-const karimReq2 = karimReqs[karimReqs.length - 1]
-eq("إعادة التقديم أنشأت طلباً جديداً pending (والقديم ظل rejected)", karimReqs.length === 2 && karimReq2.status === "pending" && karimReqs[0].status === "rejected")
+const sameEmail = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
+eq("البريد المستخدم في طلب مرفوض لا يُعاد (فريد نهائياً)", sameEmail.ok === false, "المفروض يُرفض")
+
+// نفس الهاتف بعد رفض حديث → ممنوع (مهلة يومين) — ثم نؤرخ الطلب القديم 3 أيام للخلف فيُسمح
+const phoneCool = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim2@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
+eq("نفس الهاتف خلال مهلة يومين → ممنوع", phoneCool.ok === false, phoneCool.error || "قبول خاطئ")
+
+const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString()
+DS.saveRegistrationRequests(
+  DS.getRegistrationRequests().map(r => (r.email === "karim@test.com" ? { ...r, createdAt: threeDaysAgo } : r))
+)
+const reg3b = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim2@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
+eq("بعد مرور مهلة اليومين: نفس الهاتف يُقبل (البريد جديد)", reg3b.ok === true, reg3b.error || "")
+const karimReq2 = DS.getRegistrationRequests().find(r => r.email === "karim2@test.com")
+eq("الطلب الجديد pending وبه هاتف ولي الأمر", karimReq2?.status === "pending" && karimReq2?.guardianPhone === "01111111114")
 
 // موافقة ثم حظر ثم إعادة تفعيل ثم حذف الحساب
 SA.approveRegistrationRequest(karimReq2.id)
-const karimId = DS.getRegistrationRequests()
-  .filter(r => r.email === "karim@test.com" && r.status === "approved")
-  .map(r => r.linkedStudentId)[0]
+const karimId = DS.getRegistrationRequests().find(r => r.email === "karim2@test.com")?.linkedStudentId
 const blockRes = SA.setStudentPortalActive(karimId, false)
 eq("حظر الطالب ينجح", blockRes.ok === true)
-const karimLogin2 = await SA.portalLogin("karim@test.com", "karim123")
+const karimLogin2 = await SA.portalLogin("karim2@test.com", "karim123")
 eq("الدخول بعد الحظر → ممنوع (blocked)", karimLogin2.ok === false && karimLogin2.status === "blocked")
 SA.setStudentPortalActive(karimId, true)
-const karimLogin3 = await SA.portalLogin("karim@test.com", "karim123")
+const karimLogin3 = await SA.portalLogin("karim2@test.com", "karim123")
 eq("إعادة التفعيل تسمح بالدخول", karimLogin3.ok === true)
 SA.portalLogout()
 
@@ -381,6 +434,108 @@ eq("تفعيل تقارير الطلاب", SA.areStudentReportsEnabled() === tru
 // حذف الطالب ينظف حسابه
 SA.removeStudentPortalAccount(saraId)
 eq("حذف الحساب يزيل ربط البريد", !DS.getStudentAccounts().some(a => a.studentId === saraId))
+
+// ============================================================
+section("سيناريو 9: الجلسة — صلاحية 30 يوماً + كوكيز")
+
+const sessLogin = await SA.portalLogin("mohamed@test.com", "secret1")
+eq("الدخول ينشئ جلسة منضبطة بالوقت", sessLogin.ok === true && typeof sessLogin.session.exp === "number" && sessLogin.session.exp > Date.now() + 29 * 24 * 3600 * 1000)
+eq("كوكي الجلسة كُتب (مرآة للميدل وير)", document.cookie.includes("studentPortalSession="))
+// انتهاء الصلاحية → الجلسة تُلغى
+const rawSess = JSON.parse(localStorage.getItem("studentPortalSession"))
+localStorage.setItem("studentPortalSession", JSON.stringify({ ...rawSess, exp: Date.now() - 1000 }))
+eq("جلسة منتهية الصلاحية → تُلغى تلقائياً", SA.getPortalSession() === null)
+eq("الخروج يمسح الكوكي أيضاً", (SA.portalLogout(), !document.cookie.includes("studentPortalSession=")))
+
+// ============================================================
+section("سيناريو 10: الاستفسارات — رسالة واحدة ورد وغلق")
+
+const saraLogin2 = await SA.portalLogin("sara@test.com", "sara123")
+const saraSess = saraLogin2.session
+eq("سارة تدخل للاختبار", !!saraSess)
+SA.portalLogout()
+
+const inqState0 = IQ.canStudentSendInquiry(saraId)
+eq("لا استفسارات سابقة → مسموح الإرسال", inqState0.allowed === true)
+const inq1 = await IQ.sendStudentInquiry(saraId, "هل الامتحان الأسبوع القادم شامل الوحدة الثالثة؟")
+eq("إرسال الاستفسار ينجح", inq1.ok === true, inq1.error || "")
+const inq2 = await IQ.sendStudentInquiry(saraId, "رسالة ثانية قبل الرد")
+eq("رسالة ثانية قبل رد المعلم → ممنوعة", inq2.ok === false)
+const thread1 = IQ.getInquiries().find(t => t.studentId === saraId)
+eq("الاستفسار محفوظ مفتوحاً برسالة الطالب", thread1?.status === "open" && thread1?.messages.length === 1 && thread1.messages[0].from === "student")
+
+const rep1 = IQ.teacherReplyInquiry(thread1.id, "نعم شامل — ركز على درس الطاقة")
+eq("رد المعلم ينجح", rep1.ok === true, rep1.error || "")
+const inq3 = await IQ.sendStudentInquiry(saraId, "شكراً — وهل هو بدرجة 20؟")
+eq("الطالب يرد مرة أخرى بعد رد المعلم (مفتوح)", inq3.ok === true, inq3.error || "")
+const close1 = IQ.teacherCloseInquiry(thread1.id)
+eq("المعلم يغلق الاستفسار", close1.ok === true)
+const inq4 = await IQ.sendStudentInquiry(saraId, "سؤال بعد الغلق")
+eq("الطالب يفتح استفساراً جديداً بعد الغلق", inq4.ok === true, inq4.error || "")
+const repClosed = IQ.teacherReplyInquiry(thread1.id, "رد بعد الغلق")
+eq("رد المعلم على استفسار مغلق → مرفوض", repClosed.ok === false)
+// نظافة: أغلق الاستفسار الجديد كي لا يؤثر على بقية الفحوصات
+const lastThread = IQ.getInquiries().filter(t => t.studentId === saraId).pop()
+IQ.teacherCloseInquiry(lastThread.id)
+
+// ============================================================
+section("سيناريو 11: إتاحة الاختبارات + العزل حسب الصف/المجموعة + التعديل اليدوي")
+
+const mkExam = (over) => ({
+  id: "ex-av-1", gradeId: "g-1", title: "اختبار الوحدة", academicYear: "2025-2026",
+  questions: [], allowOnline: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  ...over,
+})
+eq("مفتوح دائماً → متاح", PC.examAvailability(mkExam({})).open === true)
+eq("غير منشور → مغلق", PC.examAvailability(mkExam({ allowOnline: false })).open === false)
+
+const nowIso = () => new Date().toISOString()
+eq("فترة مستقبلية → مغلق الآن", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() + 3600e3).toISOString(), availableUntil: new Date(Date.now() + 7200e3).toISOString() })).open === false)
+eq("فترة منتهية → مغلق", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 7200e3).toISOString(), availableUntil: new Date(Date.now() - 3600e3).toISOString() })).open === false)
+eq("داخل الفترة → متاح", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 3600e3).toISOString(), availableUntil: new Date(Date.now() + 3600e3).toISOString() })).open === true)
+
+eq("اختبار لصف آخر → لا يظهر للطالب", PC.isExamForStudent(mkExam({ gradeId: "g-2" }), "g-1", "gr-1") === false)
+eq("اختبار الصف بلا استهداف مجموعات → يظهر لكل المجموعات", PC.isExamForStudent(mkExam({}), "g-1", "gr-2") === true)
+eq("اختبار لمجموعة محددة → لا يظهر لمجموعة أخرى", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-2"] }), "g-1", "gr-1") === false)
+eq("اختبار للمجموعة المستهدفة → يظهر", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-1"] }), "g-1", "gr-1") === true)
+
+const attemptWithOverride = { score: 10, manualOverride: { score: 17, reason: "تساهل", at: nowIso() } }
+eq("الدرجة الفعلية تراعي التعديل اليدوي", PC.effectiveAttemptScore(attemptWithOverride) === 17)
+eq("بدون تعديل → الدرجة الآلية", PC.effectiveAttemptScore({ score: 10 }) === 10)
+
+// ============================================================
+section("سيناريو 12: عزل الإعلانات والأسئلة المهمة حسب الصف")
+
+const anns = [
+  { id: "a1", title: "عام", body: "للجميع", pinned: false, targetGradeIds: [], createdAt: nowIso() },
+  { id: "a2", title: "سؤال الصف الأول", body: "خاص", pinned: false, targetGradeIds: ["g-1"], createdAt: nowIso() },
+  { id: "a3", title: "سؤال الصف الثاني", body: "لغيره", pinned: false, targetGradeIds: ["g-2"], createdAt: nowIso() },
+]
+const g1Anns = PC.announcementsForGrade(anns, "g-1")
+eq("طالب الصف الأول يرى العام + خاص بصفه فقط", g1Anns.length === 2 && g1Anns.some(a => a.id === "a2") && !g1Anns.some(a => a.id === "a3"))
+const g2Anns = PC.announcementsForGrade(anns, "g-2")
+eq("طالب الصف الثاني لا يرى سؤال الصف الأول بأي شكل", g2Anns.length === 2 && !g2Anns.some(a => a.id === "a2"))
+
+// ============================================================
+section("سيناريو 13: كشف الحساب في تقرير الطالب (استحقاق/مدفوع/متبقي)")
+
+// أحمد: استحقاق 100 دُفع منه 60 → متبقي 40
+const rep2 = SR.collectStudentReport("st-old")
+eq("التقرير يحمل المستحقات بكامل حالتها", rep2.dues.length === 1 && rep2.dues[0].amount === 100)
+const stmtPages = SR.buildStudentReportPagesHtml({ report: rep2, type: "payments", mode: "teacher" })
+eq("كشف الحساب يعرض الاستحقاق والمدفوع والمتبقي", stmtPages.html.includes("كشف الحساب الشهري") && stmtPages.html.includes("الرصيد المتبقي"))
+eq("كشف الحساب يوضح الحالة الجزئية", stmtPages.html.includes("جزئي") && stmtPages.html.includes((40).toLocaleString("ar-EG")))
+const arMonthName = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"][new Date().getMonth()]
+eq("سجل الدفعات يعرض تاريخ التحصيل الفعلي", stmtPages.html.includes("سجل الدفعات") && stmtPages.html.includes(`${arMonthName} ${new Date().getDate()}`))
+
+// درجة الاختبار المعدلة يدوياً في التقرير
+const attemptsNow = DS.getExamAttempts().map(a =>
+  a.id === "att-ex-1" ? { ...a, manualOverride: { score: 19, reason: "الآلي لم ير صياغة صحيحة", at: nowIso() } } : a
+)
+DS.saveExamAttempts(attemptsNow)
+const rep3 = SR.collectStudentReport("st-old")
+const gradesPages = SR.buildStudentReportPagesHtml({ report: rep3, type: "grades", mode: "teacher" })
+eq("التقرير يعرض الدرجة المعدلة يدوياً مع الأصلية", gradesPages.html.includes("درجة معدلة يدوياً") && gradesPages.html.includes("19") && gradesPages.html.includes("15"))
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

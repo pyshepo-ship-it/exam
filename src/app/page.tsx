@@ -168,11 +168,13 @@ export default function HomePage() {
   // الجدول المنشور للطلاب (مواعيد فقط)
   const publicSchedule = schedulePublished ? buildPublicSchedule(grades) : []
 
-  // الإعلانات: المثبتة أولاً ثم الأحدث
-  const sortedAnnouncements = [...announcements].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  })
+  // الإعلانات: المثبتة أولاً ثم الأحدث — العامة فقط؛ المستهدفة بصف تظهر في بوابة طلابه فقط
+  const sortedAnnouncements = [...announcements]
+    .filter(a => !a.targetGradeIds || a.targetGradeIds.length === 0)
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
 
   // لوحة الشرف: المكرّمون في الشهر والعام الحاليين، مقسّمون حسب الصف الدراسي
   const activeHonorees = honorees.filter(h => isHonoreeActive(h, now))
@@ -274,6 +276,20 @@ export default function HomePage() {
                 الإعلانات ولوحة الشرف والملفات
               </p>
             </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href="/student/register"
+              className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-700 hover:to-purple-700 transition-all"
+            >
+              تسجيل طالب جديد
+            </a>
+            <a
+              href="/student/login"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold border-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-all"
+            >
+              دخول الطالب
+            </a>
           </div>
         </div>
       </header>

@@ -26,6 +26,7 @@ export default function StudentRegisterPage() {
   const [form, setForm] = useState({
     name: "",
     phone: "",
+    guardianPhone: "",
     email: "",
     password: "",
     confirmPassword: "",
@@ -121,7 +122,7 @@ export default function StudentRegisterPage() {
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <Label>رقم الهاتف *</Label>
+                    <Label>رقم الهاتف * <span className="text-xs text-gray-400">(أرقام فقط بدون حروف)</span></Label>
                     <div className="relative mt-1">
                       <Input
                         dir="ltr"
@@ -131,6 +132,19 @@ export default function StudentRegisterPage() {
                         className="pr-10"
                       />
                       <Phone className="w-4 h-4 text-gray-400 absolute top-1/2 right-3 -translate-y-1/2" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>هاتف ولي الأمر * (إجباري)</Label>
+                    <div className="relative mt-1">
+                      <Input
+                        dir="ltr"
+                        placeholder="01098765432"
+                        value={form.guardianPhone}
+                        onChange={e => setForm(p => ({ ...p, guardianPhone: e.target.value }))}
+                        className="pr-10"
+                      />
+                      <Phone className="w-4 h-4 text-amber-500 absolute top-1/2 right-3 -translate-y-1/2" />
                     </div>
                   </div>
                   <div>

@@ -34,6 +34,8 @@ import { fetchPublicData, submitPublicAttempt, submitPublicHonoree } from "@/lib
 import { TeacherSignature } from "@/components/teacher-signature"
 import { TEACHER_NAME } from "@/lib/branding"
 import { getPortalSession } from "@/lib/student-accounts"
+import { examAvailability } from "@/lib/portal-content"
+import { decodeSealForReview } from "@/lib/exam-public"
 import {
   ARABIC_ORDINALS,
   getQuestionHeader,
@@ -42,7 +44,7 @@ import {
   getUnderlinedWords,
 } from "@/lib/exam-templates"
 
-type Step = "load" | "missing" | "identify" | "exam" | "result"
+type Step = "load" | "missing" | "identify" | "exam" | "result" | "closed"
 
 function formatTime(totalSeconds: number) {
   const m = Math.max(0, Math.floor(totalSeconds / 60))
@@ -69,10 +71,13 @@ export default function TakeExamPage() {
   const [startedAt, setStartedAt] = useState("")
   const [remaining, setRemaining] = useState(0)
   const [result, setResult] = useState<ReturnType<typeof gradeExam> | null>(null)
+  const [answerVisibility, setAnswerVisibility] = useState<'never' | 'afterEach' | 'atEnd'>("never")
+  const [closedReason, setClosedReason] = useState("")
   const [honored, setHonored] = useState(false)
   const submittedRef = React.useRef(false)
   const hadPositiveTime = React.useRef(false)
   const sealRef = React.useRef("")
+  const specRef = React.useRef<Record<string, { choiceId?: string; text?: string; isTrue?: boolean }>>({})
 
   useEffect(() => {
     const load = async () => {
@@ -104,12 +109,52 @@ export default function TakeExamPage() {
         }
       }
 
+      // جلسة الطالب: عزل تام — لا يختار صفاً أو مجموعة غير مجموعته
+      const portal = getPortalSession()
+      if (portal) {
+        const me = nextStudents.find(s => s.id === portal.studentId)
+        if (me) {
+          nextStudents = nextStudents // نفس القائمة
+          setGradeId(me.gradeId)
+          setGroupId(me.groupId)
+        }
+      }
+
       if (found) {
+        // منع الطالب من اختبار ليس لمجموعته (عزل تام حسب الصف والمجموعة)
+        if (portal) {
+          const me = nextStudents.find(s => s.id === portal.studentId)
+          if (me) {
+            if (found.gradeId && found.gradeId !== me.gradeId) {
+              setStep("missing")
+              setGrades(nextGrades)
+              setStudents(nextStudents)
+              return
+            }
+            const targets = found.targetGroupIds || []
+            if (targets.length > 0 && !targets.includes(me.groupId)) {
+              setStep("missing")
+              setGrades(nextGrades)
+              setStudents(nextStudents)
+              return
+            }
+          }
+        }
+        // بوابة الإتاحة الزمنية
+        const av = examAvailability(found)
+        if (!av.open) {
+          setClosedReason(av.reason || "الاختبار مغلق حالياً")
+          setStep("closed")
+          setGrades(nextGrades)
+          setStudents(nextStudents)
+          return
+        }
         const sealed = sealExamForStudent(found)
         sealRef.current = sealed.token
+        setAnswerVisibility(found.answerVisibility || "never")
         setExam(sealed.view)
-        setGradeId(found.gradeId || "")
-        setGroupId(found.groupId || "")
+        setGradeId(prev => (portal ? prev : found!.gradeId || ""))
+        setGroupId(prev => (portal ? prev : found!.groupId || ""))
       } else {
         setExam(null)
       }
@@ -151,6 +196,10 @@ export default function TakeExamPage() {
 
   const startExam = () => {
     if (!exam) return
+    // وضع «بعد الإجابة على السؤال»: مفاتيح الإجابات تُفك محلياً بقرار صريح من المعلم
+    if (answerVisibility === "afterEach" && sealRef.current) {
+      specRef.current = decodeSealForReview(sealRef.current, exam.id)
+    }
     if (!studentName.trim()) {
       alert("يرجى كتابة اسمك")
       return
@@ -218,6 +267,18 @@ export default function TakeExamPage() {
     setStep("result")
   }
 
+  // نص الإجابة الصحيحة لسؤال فرعي (من المفتاح المفكوك — يُستخدم في afterEach/atEnd فقط)
+  const correctAnswerLabel = (sqId: string, questionType: number, subQuestion?: { choices?: { id: string; choiceKey?: string; choiceText: string }[] }): string => {
+    const spec = specRef.current[sqId]
+    if (!spec) return ""
+    if (questionType === 1) {
+      const c = subQuestion?.choices?.find(x => x.id === spec.choiceId)
+      return c ? `(${c.choiceKey || ""}) ${c.choiceText}` : ""
+    }
+    if (questionType === 3) return spec.isTrue === true ? "صح" : "خطأ"
+    return spec.text || ""
+  }
+
   const unanswered = useMemo(() => {
     if (!exam) return 0
     let n = 0
@@ -237,6 +298,20 @@ export default function TakeExamPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500" />
+      </div>
+    )
+  }
+
+  if (step === "closed") {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <div className="max-w-md text-center space-y-4">
+          <Clock className="w-14 h-14 mx-auto text-amber-500" />
+          <h1 className="text-2xl font-bold">الاختبار مغلق الآن</h1>
+          <p className="text-gray-500">{closedReason || "لم يفت موعد هذا الاختبار بعد — تابع إعلانات المعلم"}</p>
+          <Link href="/student"><Button variant="outline">بوابة الطالب</Button></Link>
+          <TeacherSignature />
+        </div>
       </div>
     )
   }
@@ -316,7 +391,7 @@ export default function TakeExamPage() {
               <Label>الصف *</Label>
               <Select
                 value={gradeId || undefined}
-                disabled={Boolean(exam.gradeId)}
+                disabled={Boolean(exam.gradeId) || Boolean(getPortalSession())}
                 onValueChange={val => {
                   setGradeId(val)
                   if (!exam.groupId) setGroupId("")
@@ -334,7 +409,7 @@ export default function TakeExamPage() {
               <Label>المجموعة *</Label>
               <Select
                 value={groupId || undefined}
-                disabled={!gradeId || Boolean(exam.groupId)}
+                disabled={!gradeId || Boolean(exam.groupId) || Boolean(getPortalSession())}
                 onValueChange={setGroupId}
               >
                 <SelectTrigger className="mt-1">
@@ -371,7 +446,23 @@ export default function TakeExamPage() {
                     </span>
                     السؤال {ARABIC_ORDINALS[qi] || qi + 1}: {getQuestionHeader(question)}
                   </h3>
-                  {question.subQuestions.map((sq, si) => (
+                  {question.subQuestions.map((sq, si) => {
+                    // تغذية راجعة فورية عند اختيار المعلم «بعد الإجابة على السؤال»
+                    const answered = answers[sq.id] && (answers[sq.id].choiceId || answers[sq.id].text?.trim() || typeof answers[sq.id].isTrue === "boolean")
+                    const feedback = answerVisibility === "afterEach" && answered ? (() => {
+                      const gradedDetail = specRef.current[sq.id]
+                      if (!gradedDetail) return null
+                      let correct = false
+                      if (question.questionType === 1) correct = answers[sq.id].choiceId === gradedDetail.choiceId
+                      else if (question.questionType === 3) correct = answers[sq.id].isTrue === gradedDetail.isTrue
+                      else {
+                        const norm = (s?: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase()
+                        correct = norm(answers[sq.id].text) === norm(gradedDetail.text) && !!norm(gradedDetail.text)
+                      }
+                      const label = correctAnswerLabel(sq.id, question.questionType, sq)
+                      return { correct, label }
+                    })() : null
+                    return (
                     <div key={sq.id} className="border-t border-dashed pt-3 space-y-2">
                       <p className="font-semibold">{si + 1} – {sq.questionText}</p>
 
@@ -459,8 +550,19 @@ export default function TakeExamPage() {
                           />
                         </div>
                       )}
+
+                      {feedback && (
+                        <div className={`rounded-xl border px-3 py-2 text-sm font-bold ${
+                          feedback.correct
+                            ? "bg-green-50 dark:bg-green-950/30 border-green-300 dark:border-green-800 text-green-700 dark:text-green-300"
+                            : "bg-red-50 dark:bg-red-950/30 border-red-300 dark:border-red-800 text-red-700 dark:text-red-300"
+                        }`}>
+                          {feedback.correct ? "✅ إجابة صحيحة" : `❌ إجابة خاطئة — الإجابة الصحيحة: ${feedback.label}`}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </section>
               )
             })}
@@ -493,6 +595,47 @@ export default function TakeExamPage() {
                 <p className="font-bold">مبروك — اسمك على لوحة الشرف هذا الشهر</p>
               </div>
             )}
+
+            {/* مراجعة الإجابات الصحيحة — عند اختيار المعلم «في نهاية الاختبار» */}
+            {answerVisibility === "atEnd" && (() => {
+              specRef.current = decodeSealForReview(sealRef.current, exam.id)
+              const detailMap = new Map(result.details.map(d => [d.subQuestionId, d]))
+              const reviewRows: { text: string; correct: boolean; answer: string; right: string }[] = []
+              for (const q of exam.questions || []) {
+                for (const sq of q.subQuestions || []) {
+                  const d = detailMap.get(sq.id)
+                  if (!d || !d.auto) continue
+                  const ans = answers[sq.id] || {}
+                  const myAnswer =
+                    q.questionType === 1
+                      ? sq.choices?.find(c => c.id === ans.choiceId)?.choiceText || "—"
+                      : q.questionType === 3
+                      ? ans.isTrue === true ? "صح" : ans.isTrue === false ? "خطأ" : "—"
+                      : ans.text?.trim() || "—"
+                  reviewRows.push({
+                    text: `${getQuestionHeader(q)} — ${sq.questionText}`,
+                    correct: d.correct,
+                    answer: myAnswer,
+                    right: correctAnswerLabel(sq.id, q.questionType, sq) || "—",
+                  })
+                }
+              }
+              if (reviewRows.length === 0) return null
+              return (
+                <div className="text-right border-t pt-4 mt-2 space-y-2">
+                  <h3 className="font-extrabold">مراجعة الإجابات الصحيحة</h3>
+                  {reviewRows.map((r, i) => (
+                    <div key={i} className={`rounded-xl border px-4 py-3 text-sm ${
+                      r.correct ? "border-green-200 dark:border-green-900 bg-green-50/60 dark:bg-green-950/20" : "border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/20"
+                    }`}>
+                      <p className="font-bold text-gray-800 dark:text-gray-100">{r.correct ? "✅" : "❌"} {r.text}</p>
+                      <p className="text-gray-600 dark:text-gray-300 mt-1">إجابتك: {r.answer}</p>
+                      {!r.correct && <p className="text-green-700 dark:text-green-300 font-bold mt-0.5">الصحيح: {r.right}</p>}
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
             <p className="text-sm text-gray-400">إعداد {TEACHER_NAME}</p>
             <Link href="/"><Button variant="outline">العودة للصفحة الرئيسية</Button></Link>
           </div>

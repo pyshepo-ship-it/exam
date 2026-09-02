@@ -14,6 +14,9 @@ import {
   BookOpen,
   Link2,
   Sparkles,
+  MessageCircleQuestion,
+  Reply,
+  Lock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -46,8 +49,14 @@ import {
   rejectGroupTransferRequest,
   findMatchingStudent,
 } from "@/lib/student-accounts"
+import {
+  getInquiries,
+  teacherReplyInquiry,
+  teacherCloseInquiry,
+} from "@/lib/inquiries"
+import type { InquiryThread } from "@/lib/data-storage"
 
-type TabKey = "registrations" | "transfers"
+type TabKey = "registrations" | "transfers" | "inquiries"
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   pending: { label: "قيد المراجعة", className: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300" },
@@ -61,6 +70,9 @@ export default function RequestsPage() {
   const [students, setStudents] = useState<Student[]>([])
   const [regRequests, setRegRequests] = useState<RegistrationRequest[]>([])
   const [transferRequests, setTransferRequests] = useState<GroupTransferRequest[]>([])
+  const [inquiries, setInquiries] = useState<InquiryThread[]>([])
+  const [replyTarget, setReplyTarget] = useState<InquiryThread | null>(null)
+  const [replyText, setReplyText] = useState("")
   const [rejectTarget, setRejectTarget] = useState<{ kind: "reg" | "transfer"; id: string; name: string } | null>(null)
   const [rejectNote, setRejectNote] = useState("")
 
@@ -69,6 +81,7 @@ export default function RequestsPage() {
     setStudents(getStudents())
     setRegRequests(getRegistrationRequests())
     setTransferRequests(getGroupTransferRequests())
+    setInquiries(getInquiries())
   }
 
   useEffect(() => {
@@ -97,6 +110,12 @@ export default function RequestsPage() {
 
   const pendingRegs = regRequests.filter(r => r.status === "pending").length
   const pendingTransfers = transferRequests.filter(r => r.status === "pending").length
+  // استفسارات بانتظار رد المعلم (آخر رسالة من الطالب)
+  const awaitingReply = inquiries.filter(t => {
+    if (t.status !== "open") return false
+    const last = t.messages[t.messages.length - 1]
+    return last && last.from === "student"
+  }).length
 
   const handleApproveReg = (r: RegistrationRequest) => {
     const res = approveRegistrationRequest(r.id)
@@ -153,6 +172,7 @@ export default function RequestsPage() {
         {([
           { key: "registrations" as TabKey, label: "طلبات التسجيل", icon: UserPlus, count: pendingRegs, color: "from-indigo-500 to-purple-600" },
           { key: "transfers" as TabKey, label: "طلبات نقل المجموعة", icon: ArrowLeftRight, count: pendingTransfers, color: "from-emerald-500 to-teal-600" },
+          { key: "inquiries" as TabKey, label: "الاستفسارات", icon: MessageCircleQuestion, count: awaitingReply, color: "from-sky-500 to-blue-600" },
         ]).map(({ key, label, icon: Icon, count, color }) => (
           <button
             key={key}
@@ -339,6 +359,137 @@ export default function RequestsPage() {
           )}
         </div>
       )}
+
+      {/* ============ الاستفسارات ============ */}
+      {tab === "inquiries" && (
+        <div className="space-y-4">
+          {inquiries.length === 0 ? (
+            <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+              <CardContent className="py-12 text-center">
+                <MessageCircleQuestion className="w-14 h-14 mx-auto mb-3 text-gray-300 dark:text-gray-700" />
+                <p className="text-gray-500 dark:text-gray-400">لا توجد استفسارات بعد</p>
+                <p className="text-xs text-gray-400 mt-1">يرسل الطالب استفساراً واحداً من بوابته ويرد عليه هنا</p>
+              </CardContent>
+            </Card>
+          ) : (
+            [...inquiries]
+              .sort((a, b) => {
+                const aWait = a.status === "open" && a.messages[a.messages.length - 1]?.from === "student" ? 1 : 0
+                const bWait = b.status === "open" && b.messages[b.messages.length - 1]?.from === "student" ? 1 : 0
+                if (aWait !== bWait) return bWait - aWait
+                return (b.updatedAt || "").localeCompare(a.updatedAt || "")
+              })
+              .map(t => {
+                const waiting = t.status === "open" && t.messages[t.messages.length - 1]?.from === "student"
+                return (
+                  <Card key={t.id} className={`bg-white dark:bg-gray-900 border ${waiting ? "border-sky-300 dark:border-sky-800" : "border-gray-200 dark:border-gray-800"}`}>
+                    <CardContent className="p-5 space-y-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-bold text-lg text-gray-900 dark:text-white">{t.studentName}</h3>
+                        <Badge className={t.status === "closed" ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" : waiting ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300" : "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"}>
+                          {t.status === "closed" ? "مغلق 🔒" : waiting ? "بانتظار ردك" : "تم الرد — مفتوح للطالب"}
+                        </Badge>
+                        <span className="text-xs text-gray-400">
+                          {gradeName(t.gradeId || "")}{t.groupId ? ` — ${groupName(t.groupId)}` : ""}
+                        </span>
+                      </div>
+
+                      {/* الرسائل */}
+                      <div className="space-y-2">
+                        {t.messages.map((m, i) => (
+                          <div key={i} className={`rounded-xl px-4 py-3 border text-sm ${
+                            m.from === "student"
+                              ? "bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800"
+                              : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
+                          }`}>
+                            <p className="font-bold text-xs mb-1 flex items-center gap-1.5">
+                              {m.from === "student" ? <Users className="w-3.5 h-3.5" /> : <Reply className="w-3.5 h-3.5" />}
+                              {m.from === "student" ? "الطالب" : "المعلم"}
+                              <span className="font-normal text-gray-400">
+                                {new Date(m.at).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" })}
+                              </span>
+                            </p>
+                            <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{m.text}</p>
+                          </div>
+                        ))}
+                      </div>
+
+                      {t.status === "open" && (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setReplyTarget(t)
+                              setReplyText("")
+                            }}
+                            className={`text-white ${waiting ? "bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700" : "bg-gray-500 hover:bg-gray-600"}`}
+                          >
+                            <Reply className="w-4 h-4" />
+                            <span>{waiting ? "الرد على الاستفسار" : "إضافة رد آخر"}</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const res = teacherCloseInquiry(t.id)
+                              if (res.ok) { toast.success(res.message || "تم"); refresh() } else toast.error(res.error || "تعذر الإغلاق")
+                            }}
+                            className="border-gray-400 text-gray-600"
+                          >
+                            <Lock className="w-4 h-4" />
+                            <span>إغلاق الاستفسار</span>
+                          </Button>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                )
+              })
+          )}
+        </div>
+      )}
+
+      {/* حوار الرد على الاستفسار */}
+      <Dialog open={!!replyTarget} onOpenChange={open => !open && setReplyTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>رد على استفسار «{replyTarget?.studentName}»</DialogTitle>
+            <DialogDescription>
+              بعد الرد يبقى الاستفسار مفتوحاً ليستطيع الطالب الرد مرة أخرى — أو أغلقه من زر الإغلاق
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-3">
+            <Label>نص الرد</Label>
+            <textarea
+              value={replyText}
+              onChange={e => setReplyText(e.target.value)}
+              rows={4}
+              placeholder="اكتب ردك على استفسار الطالب..."
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReplyTarget(null)}>إلغاء</Button>
+            <Button
+              className="bg-gradient-to-r from-sky-500 to-blue-600 text-white"
+              onClick={() => {
+                if (!replyTarget) return
+                const res = teacherReplyInquiry(replyTarget.id, replyText)
+                if (res.ok) {
+                  toast.success(res.message || "تم إرسال الرد")
+                  setReplyTarget(null)
+                  refresh()
+                } else {
+                  toast.error(res.error || "تعذر إرسال الرد")
+                }
+              }}
+            >
+              <Reply className="w-4 h-4" />
+              <span>إرسال الرد</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* حوار الرفض مع سبب */}
       <Dialog open={!!rejectTarget} onOpenChange={open => !open && setRejectTarget(null)}>

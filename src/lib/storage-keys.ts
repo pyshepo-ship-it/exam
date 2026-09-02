@@ -20,4 +20,5 @@ export const STORAGE_KEYS = {
   GROUP_TRANSFER_REQUESTS: "groupTransferRequests",
   STUDENT_HISTORY: "studentHistory",
   STUDENT_ACCOUNTS: "studentAccounts",
+  INQUIRIES: "inquiries",
 } as const

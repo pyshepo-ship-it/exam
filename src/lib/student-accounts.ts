@@ -89,23 +89,42 @@ export async function sha256Hex(input: string): Promise<string> {
 const norm = (s: string) => (s || "").trim().replace(/\s+/g, " ").toLowerCase()
 const digits = (s: string) => (s || "").replace(/\D/g, "")
 
-export const isValidEmail = (email: string): boolean =>
-  /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test((email || "").trim())
+/** تحويل الأرقام العربية-الهندية إلى لاتينية قبل أي تحقق (٠١٢ → 012) */
+export const normalizeDigits = (s: string): string =>
+  (s || "")
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
 
+/** أرقام فقط بعد التوحيد — ترفض الحروف والعربية والمسافات */
 export const isValidPhone = (phone: string): boolean => {
-  const d = digits(phone)
-  return d.length >= 10 && d.length <= 15
+  const d = normalizeDigits(phone).replace(/[\s-]/g, "")
+  return /^[0-9]{10,15}$/.test(d)
+}
+
+/** بريد ASCII صارم — يرفض العربية وأي حروف غير لاتينية أو مسافات */
+export const isValidEmail = (email: string): boolean =>
+  /^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}$/.test((email || "").trim())
+
+/** الاسم: حروف فقط (أي لغة) ومسافات — بلا أرقام أو رموز غريبة */
+export const isValidStudentName = (name: string): boolean => {
+  const n = (name || "").trim()
+  return n.length >= 5 && !/\d/.test(n) && !/[<>{}\[\]\\/^$#@*+=|~`"]/.test(n)
 }
 
 export interface RegisterInput {
   name: string
   phone: string
+  /** هاتف ولي الأمر — إجباري */
+  guardianPhone: string
   email: string
   password: string
   confirmPassword: string
   gradeId: string
   groupId: string
 }
+
+/** منع التسجيل أكثر من مرة خلال يومين (48 ساعة) لنفس الهاتف/البريد */
+const REGISTRATION_COOLDOWN_MS = 48 * 60 * 60 * 1000
 
 export type RegisterResult =
   | { ok: true; message: string }
@@ -120,12 +139,14 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
   }
   const name = (input.name || "").trim()
-  const phone = (input.phone || "").trim()
+  const phone = normalizeDigits((input.phone || "")).replace(/[\s-]/g, "")
+  const guardianPhone = normalizeDigits((input.guardianPhone || "")).replace(/[\s-]/g, "")
   const email = (input.email || "").trim().toLowerCase()
 
-  if (name.length < 5) return { ok: false, error: "يرجى إدخال الاسم كاملاً (ثلاثي يُفضَّل)" }
-  if (!isValidPhone(phone)) return { ok: false, error: "رقم الهاتف غير صحيح — أدخل رقماً صحيحاً" }
-  if (!isValidEmail(email)) return { ok: false, error: "البريد الإلكتروني غير صحيح" }
+  if (!isValidStudentName(name)) return { ok: false, error: "يرجى كتابة الاسم كاملاً بالحروف فقط (ثلاثي يُفضَّل، بدون أرقام)" }
+  if (!isValidPhone(phone)) return { ok: false, error: "رقم الهاتف غير صحيح — أرقام فقط بدون حروف (10-15 رقماً)" }
+  if (!isValidPhone(guardianPhone)) return { ok: false, error: "هاتف ولي الأمر إجباري — أرقام فقط بدون حروف (10-15 رقماً)" }
+  if (!isValidEmail(email)) return { ok: false, error: "البريد الإلكتروني غير صحيح — حروف إنجليزية وأرقام فقط بدون مسافات أو حروف عربية" }
   if (!input.gradeId || !input.groupId) return { ok: false, error: "يرجى اختيار الصف والمجموعة" }
   if (input.password.length < 6) return { ok: false, error: "كلمة المرور يجب أن تكون 6 أحرف على الأقل" }
   if (input.password !== input.confirmPassword) return { ok: false, error: "كلمة المرور وتأكيدها غير متطابقين" }
@@ -137,21 +158,24 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     return { ok: false, error: "المجموعة المختارة لا تنتمي للصف المختار" }
   }
 
-  // لا تكرار لنفس البريد (بانتظار / مقبول)
-  const existing = getRegistrationRequests().find(r => norm(r.email) === norm(email) && r.status !== "rejected")
-  if (existing) {
-    if (existing.status === "approved") {
-      return { ok: false, error: "هذا البريد مسجَّل بالفعل — يمكنك تسجيل الدخول مباشرة" }
-    }
-    return { ok: false, error: "لديك طلب تسجيل قيد المراجعة بنفس البريد — انتظر موافقة المعلم" }
+  // البريد فريد نهائياً: أي طلب سابق (بانتظار/مقبول/مرفوض) أو حساب قائم يمنع إعادة استخدام البريد
+  const allRequests = getRegistrationRequests()
+  const emailTaken = allRequests.some(r => norm(r.email) === norm(email)) ||
+    getStudentAccounts().some(a => norm(a.email) === norm(email))
+  if (emailTaken) {
+    const approved = allRequests.find(r => norm(r.email) === norm(email) && r.status === "approved")
+    if (approved) return { ok: false, error: "هذا البريد مسجَّل بالفعل — يمكنك تسجيل الدخول مباشرة" }
+    return { ok: false, error: "هذا البريد مستخدم في طلب سابق ولا يمكن تكراره — استخدم بريداً آخر أو تواصل مع المعلم" }
   }
 
-  // منع تكرار نفس الطالب بنفس الرقم (طلب سابق قيد المراجعة)
-  const dupPhone = getRegistrationRequests().find(
-    r => digits(r.phone) === digits(phone) && r.status === "pending"
+  // منع التسجيل أكثر من مرة خلال يومين (48 ساعة) بنفس الهاتف — ولي الأمر يمكن أن يكون هاتفه مكرراً بعد المهلة
+  const cooldownCut = Date.now() - REGISTRATION_COOLDOWN_MS
+  const phoneCooldown = allRequests.find(
+    r => digits(normalizeDigits(r.phone)) === digits(phone) && new Date(r.createdAt || 0).getTime() > cooldownCut
   )
-  if (dupPhone) {
-    return { ok: false, error: "يوجد طلب تسجيل قيد المراجعة بنفس رقم الهاتف — انتظر موافقة المعلم" }
+  if (phoneCooldown) {
+    const hoursLeft = Math.max(1, Math.ceil((REGISTRATION_COOLDOWN_MS - (Date.now() - new Date(phoneCooldown.createdAt || 0).getTime())) / 3600000))
+    return { ok: false, error: `تم التسجيل بهذا الرقم حديثاً — انتظر موافقة المعلم، ويمكن إعادة التقديم بعد ~${hoursLeft} ساعة` }
   }
 
   const passwordHash = await sha256Hex(input.password)
@@ -159,6 +183,7 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     id: `reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name,
     phone,
+    guardianPhone,
     email,
     passwordHash,
     gradeId: input.gradeId,
@@ -182,26 +207,72 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
 // ------------------------------------------------------------
 
 const PORTAL_SESSION_KEY = "studentPortalSession"
+/** كوكي مرآة الجلسة — يتيح للسيرفر (Middleware) معرفة أن الزائر طالب */
+const PORTAL_SESSION_COOKIE = "studentPortalSession"
+/** مدة صلاحية جلسة الطالب: 30 يوماً ثم يُطلب الدخول من جديد */
+const PORTAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface PortalSession {
   email: string
   studentId: string
   name: string
+  /** لحظة إنشاء الجلسة (ms) */
+  iat: number
+  /** لحظة انتهاء الجلسة (ms) — بعدها يُطلب تسجيل الدخول مجدداً */
+  exp: number
 }
 
-export function getPortalSession(): PortalSession | null {
-  if (typeof window === "undefined") return null
+/** قراءة كوكي بالاسم (قيم بسيطة base64) */
+function readSessionCookie(): PortalSession | null {
+  if (typeof document === "undefined") return null
+  const match = document.cookie.split("; ").find(c => c.startsWith(`${PORTAL_SESSION_COOKIE}=`))
+  if (!match) return null
   try {
-    const raw = localStorage.getItem(PORTAL_SESSION_KEY)
-    return raw ? (JSON.parse(raw) as PortalSession) : null
+    const json = decodeURIComponent(escape(atob(decodeURIComponent(match.split("=").slice(1).join("=")))))
+    return JSON.parse(json) as PortalSession
   } catch {
     return null
   }
 }
 
+function writeSessionCookie(session: PortalSession | null): void {
+  if (typeof document === "undefined") return
+  if (!session) {
+    document.cookie = `${PORTAL_SESSION_COOKIE}=; path=/; max-age=0; SameSite=Lax`
+    return
+  }
+  try {
+    const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(session))))
+    const maxAge = Math.max(0, Math.floor((session.exp - Date.now()) / 1000))
+    document.cookie = `${PORTAL_SESSION_COOKIE}=${encodeURIComponent(b64)}; path=/; max-age=${maxAge}; SameSite=Lax`
+  } catch { /* تجاهل */ }
+}
+
+/** الجلسة الحالية — تُقرأ من الكوكي أو localStorage ويُرفض ما انتهت صلاحيته */
+export function getPortalSession(): PortalSession | null {
+  if (typeof window === "undefined") return null
+  let session: PortalSession | null = null
+  try {
+    const raw = localStorage.getItem(PORTAL_SESSION_KEY)
+    session = raw ? (JSON.parse(raw) as PortalSession) : null
+  } catch {
+    session = null
+  }
+  if (!session) session = readSessionCookie()
+  if (!session) return null
+  // جلسة قديمة الشكل (قبل إضافة الصلاحية) أو منتهية → تُلغى
+  if (!session.exp || Date.now() >= session.exp) {
+    portalLogout()
+    return null
+  }
+  return session
+}
+
 export function portalLogout(): void {
   if (typeof window === "undefined") return
   localStorage.removeItem(PORTAL_SESSION_KEY)
+  writeSessionCookie(null)
+  try { sessionStorage.removeItem(PORTAL_SESSION_KEY) } catch { /* تجاهل */ }
 }
 
 export type LoginResult =
@@ -248,9 +319,17 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
   }
 
-  const session: PortalSession = { email: mail, studentId, name: student.name }
+  const now = Date.now()
+  const session: PortalSession = {
+    email: mail,
+    studentId,
+    name: student.name,
+    iat: now,
+    exp: now + PORTAL_SESSION_TTL_MS,
+  }
   if (typeof window !== "undefined") {
     localStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify(session))
+    writeSessionCookie(session)
   }
   return { ok: true, session }
 }

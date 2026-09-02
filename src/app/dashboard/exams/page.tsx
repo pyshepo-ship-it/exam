@@ -18,6 +18,8 @@ import {
   Link2,
   Globe,
   Printer,
+ClipboardList,
+Timer,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,6 +68,8 @@ import {
   renderCompleteParts,
   getUnderlinedWords,
 } from "@/lib/exam-templates"
+import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
+import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
 import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
 import { ScienceIcon } from "@/components/exam/science-ornaments"
 
@@ -76,6 +80,10 @@ export default function ExamsPage() {
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [editingExam, setEditingExam] = useState<Exam | null>(null)
   const [previewExam, setPreviewExam] = useState<Exam | null>(null)
+  const [resultsExam, setResultsExam] = useState<Exam | null>(null)
+  const [overrideTarget, setOverrideTarget] = useState<{ attemptId: string; name: string; current: number; total: number } | null>(null)
+  const [overrideScore, setOverrideScore] = useState("")
+  const [overrideReason, setOverrideReason] = useState("")
   const [expandedQuestions, setExpandedQuestions] = useState<string[]>([])
 
   const [examForm, setExamForm] = useState({
@@ -95,6 +103,11 @@ export default function ExamsPage() {
     allowOnline: false,
     autoHonorBoard: false,
     honorMinPercent: 100,
+    availabilityMode: "always" as 'always' | 'scheduled',
+    availableFrom: "",
+    availableUntil: "",
+    targetGroupIds: [] as string[],
+    answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
   useEffect(() => {
@@ -104,6 +117,29 @@ export default function ExamsPage() {
 
   // مجموعات الصف المختار فقط — لا تظهر مجموعات صف آخر أبداً
   const groupsOfSelectedGrade = getGroupsOfGrade(grades, examForm.gradeId)
+
+  // محاولات اختبار النتائج المفتوح (من التخزين المباشر لتتبع التعديلات فوراً)
+  const resultsAttempts = resultsExam ? getExamAttempts().filter(a => a.examId === resultsExam.id) : []
+
+  const applyOverride = () => {
+    if (!overrideTarget || !resultsExam) return
+    const score = parseFloat(overrideScore)
+    if (isNaN(score) || score < 0 || score > overrideTarget.total) {
+      toast.error(`أدخل درجة بين 0 و ${overrideTarget.total}`)
+      return
+    }
+    const all = getExamAttempts()
+    const updated = all.map(a =>
+      a.id === overrideTarget.attemptId
+        ? { ...a, manualOverride: { score, reason: overrideReason.trim() || undefined, at: new Date().toISOString() } }
+        : a
+    )
+    saveExamAttempts(updated)
+    toast.success(`تم تعديل درجة ${overrideTarget.name} إلى ${score} — تظهر في تقريره فوراً`)
+    setOverrideTarget(null)
+    setOverrideScore("")
+    setOverrideReason("")
+  }
 
   const toggleQuestion = (questionId: string) => {
     setExpandedQuestions(prev =>
@@ -409,6 +445,11 @@ export default function ExamsPage() {
     allowOnline: false,
     autoHonorBoard: false,
     honorMinPercent: 100,
+    availabilityMode: "always" as 'always' | 'scheduled',
+    availableFrom: "",
+    availableUntil: "",
+    targetGroupIds: [] as string[],
+    answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
   const openCreateDialog = (exam?: Exam) => {
@@ -431,6 +472,11 @@ export default function ExamsPage() {
         allowOnline: !!exam.allowOnline,
         autoHonorBoard: !!exam.autoHonorBoard,
         honorMinPercent: exam.honorMinPercent ?? 100,
+        availabilityMode: exam.availabilityMode || "always",
+        availableFrom: (exam.availableFrom || "").slice(0, 16),
+        availableUntil: (exam.availableUntil || "").slice(0, 16),
+        targetGroupIds: exam.targetGroupIds || [],
+        answerVisibility: exam.answerVisibility || "never",
       })
     } else {
       setEditingExam(null)
@@ -464,6 +510,13 @@ export default function ExamsPage() {
       allowOnline: examForm.allowOnline,
       autoHonorBoard: examForm.autoHonorBoard,
       honorMinPercent: examForm.honorMinPercent,
+      availabilityMode: examForm.allowOnline ? examForm.availabilityMode : undefined,
+      availableFrom: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableFrom
+        ? new Date(examForm.availableFrom).toISOString() : undefined,
+      availableUntil: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableUntil
+        ? new Date(examForm.availableUntil).toISOString() : undefined,
+      targetGroupIds: examForm.allowOnline ? examForm.targetGroupIds : undefined,
+      answerVisibility: examForm.allowOnline ? examForm.answerVisibility : undefined,
       createdAt: editingExam?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -623,12 +676,37 @@ export default function ExamsPage() {
                           منشور للطلاب
                         </Badge>
                       )}
+                      {(() => {
+                        const av = examAvailability(exam)
+                        if (!exam.allowOnline) return null
+                        return av.open ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300">
+                            <Timer className="w-3 h-3 ml-1" />
+                            متاح الآن
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                            <Timer className="w-3 h-3 ml-1" />
+                            مغلق الآن
+                          </Badge>
+                        )
+                      })()}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="flex-1">
                         <Eye className="w-4 h-4" />
                         <span>معاينة</span>
                       </Button>
+                      {exam.allowOnline && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="نتائج الطلاب وتعديل الدرجات يدوياً"
+                          onClick={() => setResultsExam(exam)}
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                        </Button>
+                      )}
                       {exam.allowOnline && (
                         <Button
                           variant="outline"
@@ -897,6 +975,120 @@ export default function ExamsPage() {
                     </div>
                   </div>
                 </label>
+              )}
+
+              {examForm.allowOnline && (
+                <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-4">
+                  {/* الإتاحة الزمنية */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">إتاحة الاختبار</p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {([
+                        { key: 'always' as const, label: 'مفتوح دائماً' },
+                        { key: 'scheduled' as const, label: 'فترة محددة' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setExamForm(prev => ({ ...prev, availabilityMode: opt.key }))}
+                          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                            examForm.availabilityMode === opt.key
+                              ? 'bg-indigo-600 text-white shadow'
+                              : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {examForm.availabilityMode === 'scheduled' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">يُفتح في</Label>
+                          <Input
+                            type="datetime-local"
+                            value={examForm.availableFrom}
+                            onChange={(e) => setExamForm(prev => ({ ...prev, availableFrom: e.target.value }))}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">يُغلق في</Label>
+                          <Input
+                            type="datetime-local"
+                            value={examForm.availableUntil}
+                            onChange={(e) => setExamForm(prev => ({ ...prev, availableUntil: e.target.value }))}
+                            className="mt-1"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* المجموعات المستهدفة */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">المجموعات المستهدفة</p>
+                    <p className="text-xs text-gray-500 mb-2">اتركها فارغة ليظهر الاختبار لكل مجموعات الصف — العزل تام: لا يراه طالب من صف آخر إطلاقاً</p>
+                    <div className="flex flex-wrap gap-2">
+                      {groupsOfSelectedGrade.map(g => {
+                        const active = examForm.targetGroupIds.includes(g.id)
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setExamForm(prev => ({
+                              ...prev,
+                              targetGroupIds: active
+                                ? prev.targetGroupIds.filter(id => id !== g.id)
+                                : [...prev.targetGroupIds, g.id],
+                            }))}
+                            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                              active
+                                ? 'bg-emerald-600 text-white shadow'
+                                : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                            }`}
+                          >
+                            {active ? '✓ ' : ''}{g.name}
+                          </button>
+                        )
+                      })}
+                      {groupsOfSelectedGrade.length === 0 && (
+                        <p className="text-xs text-amber-600">اختر الصف أولاً لعرض مجموعاته</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* إظهار الإجابة الصحيحة */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">إظهار الإجابة الصحيحة للطالب</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        { key: 'never' as const, label: 'مغلقة نهائياً', desc: 'لا يرى الطالب الإجابات أبداً' },
+                        { key: 'afterEach' as const, label: 'بعد الإجابة على السؤال', desc: 'يظهر الصحيح/الخطأ فوراً' },
+                        { key: 'atEnd' as const, label: 'في نهاية الاختبار', desc: 'مراجعة كاملة بعد التسليم' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setExamForm(prev => ({ ...prev, answerVisibility: opt.key }))}
+                          title={opt.desc}
+                          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                            examForm.answerVisibility === opt.key
+                              ? 'bg-purple-600 text-white shadow'
+                              : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      {examForm.answerVisibility === 'never' && 'الأكثر أماناً — لا يمكن للطالب معرفة الإجابات بأي شكل'}
+                      {examForm.answerVisibility === 'afterEach' && 'تنبيه: الإجابات الصحيحة تكون ظاهرة أثناء الاختبار نفسه'}
+                      {examForm.answerVisibility === 'atEnd' && 'آمن نسبياً — المراجعة تظهر بعد تسليم الاختبار فقط'}
+                    </p>
+                  </div>
+                </div>
               )}
             </section>
 
@@ -1503,6 +1695,109 @@ export default function ExamsPage() {
             >
               <Download className="w-4 h-4" />
               <span>تحميل PDF</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== نتائج الاختبار: قائمة المحاولات + التعديل اليدوي للدرجات ===== */}
+      <Dialog open={!!resultsExam} onOpenChange={(o) => !o && setResultsExam(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <ClipboardList className="w-6 h-6 text-indigo-600" />
+              نتائج: {resultsExam?.title}
+            </DialogTitle>
+            <DialogDescription>
+              اضغط «تعديل الدرجة» إذا شعرت أن التصحيح الآلي لم يكن عادلاً — الدرجة المعدلة تظهر للطالب وفي تقريره فوراً
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            {resultsAttempts.length === 0 ? (
+              <p className="text-center text-gray-500 py-8">لا توجد محاولات بعد — تظهر هنا فور أداء الطلاب للاختبار</p>
+            ) : (
+              resultsAttempts.slice().reverse().map(a => {
+                const finalScore = effectiveAttemptScore(a)
+                const overridden = !!a.manualOverride
+                return (
+                  <div key={a.id} className={`rounded-xl border p-3 ${overridden ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20" : "border-gray-200 dark:border-gray-800"}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">
+                          {a.studentName}
+                          {overridden && (
+                            <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {a.submittedAt ? new Date(a.submittedAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : ""}
+                          {a.durationSeconds ? ` — مدة ${Math.round(a.durationSeconds / 60)} دقيقة` : ""}
+                        </p>
+                        {overridden && a.manualOverride?.reason && (
+                          <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
+                          {finalScore} / {a.totalMarks || 0}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setOverrideTarget({ attemptId: a.id, name: a.studentName, current: finalScore, total: a.totalMarks || 0 })
+                            setOverrideScore(String(finalScore))
+                            setOverrideReason(a.manualOverride?.reason || "")
+                          }}
+                        >
+                          تعديل الدرجة
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== حوار تعديل درجة محاولة ===== */}
+      <Dialog open={!!overrideTarget} onOpenChange={(o) => !o && setOverrideTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تعديل درجة «{overrideTarget?.name}»</DialogTitle>
+            <DialogDescription>
+              الدرجة الآلية كانت {overrideTarget?.current} من {overrideTarget?.total} — أدخل الدرجة التي تراها عادلة
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label>الدرجة الجديدة (من {overrideTarget?.total})</Label>
+              <Input
+                type="number"
+                min={0}
+                max={overrideTarget?.total || 0}
+                value={overrideScore}
+                onChange={e => setOverrideScore(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label>سبب التعديل (اختياري — يظهر في تقرير الطالب)</Label>
+              <Input
+                value={overrideReason}
+                onChange={e => setOverrideReason(e.target.value)}
+                placeholder="مثال: الإجابة صحيحة معنوياً واختلفت في الصياغة"
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOverrideTarget(null)}>إلغاء</Button>
+            <Button onClick={applyOverride} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white">
+              حفظ الدرجة المعدلة
             </Button>
           </DialogFooter>
         </DialogContent>

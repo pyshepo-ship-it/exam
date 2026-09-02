@@ -94,7 +94,7 @@ export default function AnnouncementsPage() {
   // ---- Dialogs ----
   const [announcementDialogOpen, setAnnouncementDialogOpen] = useState(false)
   const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null)
-  const [announcementForm, setAnnouncementForm] = useState({ title: "", body: "" })
+  const [announcementForm, setAnnouncementForm] = useState({ title: "", body: "", targetGradeIds: [] as string[] })
 
   const [honorDialogOpen, setHonorDialogOpen] = useState(false)
   const [honorForm, setHonorForm] = useState({
@@ -158,10 +158,10 @@ export default function AnnouncementsPage() {
   const openAnnouncementDialog = (a?: Announcement) => {
     if (a) {
       setEditingAnnouncement(a)
-      setAnnouncementForm({ title: a.title, body: a.body })
+      setAnnouncementForm({ title: a.title, body: a.body, targetGradeIds: a.targetGradeIds || [] })
     } else {
       setEditingAnnouncement(null)
-      setAnnouncementForm({ title: "", body: "" })
+      setAnnouncementForm({ title: "", body: "", targetGradeIds: [] })
     }
     setAnnouncementDialogOpen(true)
   }
@@ -175,7 +175,7 @@ export default function AnnouncementsPage() {
     if (editingAnnouncement) {
       updated = announcements.map(a =>
         a.id === editingAnnouncement.id
-          ? { ...a, title: announcementForm.title.trim(), body: announcementForm.body.trim() }
+          ? { ...a, title: announcementForm.title.trim(), body: announcementForm.body.trim(), targetGradeIds: announcementForm.targetGradeIds }
           : a
       )
       toast.success("تم تحديث الإعلان بنجاح")
@@ -186,6 +186,7 @@ export default function AnnouncementsPage() {
           id: Date.now().toString(),
           title: announcementForm.title.trim(),
           body: announcementForm.body.trim(),
+          targetGradeIds: announcementForm.targetGradeIds,
           pinned: false,
           createdAt: new Date().toISOString(),
         },
@@ -758,7 +759,7 @@ export default function AnnouncementsPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingAnnouncement ? "تعديل الإعلان" : "إعلان جديد"}</DialogTitle>
-            <DialogDescription>سيظهر هذا الإعلان على الصفحة الرئيسية للموقع</DialogDescription>
+            <DialogDescription>سيظهر على الصفحة الرئيسية وفي بوابة كل طالب حسب الصفوف المستهدفة</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
@@ -779,6 +780,39 @@ export default function AnnouncementsPage() {
                 rows={4}
                 className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               />
+            </div>
+            <div>
+              <Label>الصفوف المستهدفة</Label>
+              <p className="text-xs text-gray-500 mb-2">
+                اتركها فارغة ليظهر للجميع (عام) — أو اختر صفاً أو أكثر: سؤال الصف السادس يظهر لطلاب الصف السادس فقط ولا يظهر للباقي بأي شكل
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {grades.map(g => {
+                  const active = announcementForm.targetGradeIds.includes(g.id)
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm(prev => ({
+                          ...prev,
+                          targetGradeIds: active
+                            ? prev.targetGradeIds.filter(id => id !== g.id)
+                            : [...prev.targetGradeIds, g.id],
+                        }))
+                      }
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                        active
+                          ? "bg-indigo-600 text-white shadow"
+                          : "bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
+                      }`}
+                    >
+                      {active ? "✓ " : ""}{g.name}
+                    </button>
+                  )
+                })}
+                {grades.length === 0 && <p className="text-xs text-amber-600">لا توجد صفوف — أضف صفوفاً أولاً للاستهداف</p>}
+              </div>
             </div>
           </div>
           <DialogFooter>

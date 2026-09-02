@@ -65,6 +65,7 @@ const DB_TABLES = [
   "group_transfer_requests",
   "student_history",
   "student_accounts",
+  "inquiries",
 ] as const;
 
 function nil<T>(v: T | null | undefined): T | undefined {
@@ -205,6 +206,11 @@ export const toExamRow = (e: any) => ({
     allowOnline: !!e.allowOnline,
     autoHonorBoard: !!e.autoHonorBoard,
     honorMinPercent: e.honorMinPercent ?? 100,
+    availabilityMode: e.availabilityMode || "always",
+    availableFrom: e.availableFrom || null,
+    availableUntil: e.availableUntil || null,
+    targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
+    answerVisibility: e.answerVisibility || "never",
   },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
@@ -232,6 +238,11 @@ export const fromExamRow = (row: any) => {
     allowOnline: wrapped ? !!q.allowOnline : false,
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
     honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
+    availabilityMode: wrapped ? (q.availabilityMode || "always") : "always",
+    availableFrom: wrapped && q.availableFrom ? q.availableFrom : undefined,
+    availableUntil: wrapped && q.availableUntil ? q.availableUntil : undefined,
+    targetGroupIds: wrapped && Array.isArray(q.targetGroupIds) ? q.targetGroupIds : [],
+    answerVisibility: wrapped ? (q.answerVisibility || "never") : "never",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -288,6 +299,8 @@ const toAnnouncementRow = (a: any) => ({
   title: a.title,
   body: a.body,
   pinned: !!a.pinned,
+  // الصفوف المستهدفة — null = إعلان عام للجميع
+  target_grade_ids: Array.isArray(a.targetGradeIds) && a.targetGradeIds.length > 0 ? a.targetGradeIds : null,
   created_at: a.createdAt,
 });
 
@@ -296,6 +309,7 @@ const fromAnnouncementRow = (row: any) => ({
   title: row.title,
   body: row.body,
   pinned: row.pinned,
+  targetGradeIds: Array.isArray(row.target_grade_ids) ? row.target_grade_ids : [],
   createdAt: row.created_at,
 });
 
@@ -389,6 +403,7 @@ export const toRegistrationRequestRow = (r: any) => ({
   id: r.id,
   name: r.name,
   phone: r.phone,
+  guardian_phone: r.guardianPhone || null,
   email: r.email,
   password_hash: r.passwordHash || "",
   grade_id: r.gradeId,
@@ -723,6 +738,70 @@ export function pushStudentHistory(rows: any[]) {
 export function pushStudentAccounts(rows: any[]) {
   return pushRows("student_accounts", rows.map(toStudentAccountRow));
 }
+
+// ============================================================
+// الاستفسارات — سؤال واحد من الطالب ورد المعلم عليه
+// ============================================================
+export const toInquiryRow = (t: any) => ({
+  id: t.id,
+  student_id: t.studentId,
+  student_name: t.studentName || "",
+  grade_id: t.gradeId || null,
+  group_id: t.groupId || null,
+  messages: Array.isArray(t.messages) ? t.messages : [],
+  status: t.status || "open",
+  created_at: t.createdAt || new Date().toISOString(),
+  updated_at: t.updatedAt || t.createdAt || new Date().toISOString(),
+});
+
+export const fromInquiryRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  studentName: row.student_name,
+  gradeId: nil(row.grade_id),
+  groupId: nil(row.group_id),
+  messages: Array.isArray(row.messages) ? row.messages : [],
+  status: row.status || "open",
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+export function pushInquiries(rows: any[]) {
+  return pushRows("inquiries", rows.map(toInquiryRow));
+}
+
+/** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
+export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
+  const sb = getSupabase()
+  if (!sb) return localRows<any>(STORAGE_KEYS.INQUIRIES)
+  try {
+    const { data, error } = await sb.from("inquiries").select("*").eq("student_id", studentId)
+    if (error) {
+      console.warn("fetchStudentInquiries:", error)
+      return localRows<any>(STORAGE_KEYS.INQUIRIES)
+    }
+    return (data as any[] || []).map(fromInquiryRow)
+  } catch (e) {
+    console.warn("fetchStudentInquiries:", e)
+    return localRows<any>(STORAGE_KEYS.INQUIRIES)
+  }
+}
+
+/** الطالب يرسل استفساراً جديداً — حفظ محلي أولاً ثم إدراج في Supabase */
+export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const local = localRows<any>(STORAGE_KEYS.INQUIRIES)
+    localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify([...local, thread]))
+  } catch { /* تجاهل */ }
+  const sb = getSupabase()
+  if (!sb) return { ok: true }
+  const { error } = await sb.from("inquiries").insert(toInquiryRow(thread))
+  if (error) {
+    console.warn("submitInquiryThread:", error)
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
 const toAttemptRow = (a: any) => ({
   id: a.id,
   exam_id: a.examId,
@@ -736,6 +815,7 @@ const toAttemptRow = (a: any) => ({
   started_at: a.startedAt || new Date().toISOString(),
   submitted_at: a.submittedAt || new Date().toISOString(),
   duration_seconds: a.durationSeconds ?? 0,
+  manual_override: a.manualOverride ? { score: a.manualOverride.score, reason: a.manualOverride.reason || null, at: a.manualOverride.at } : null,
 });
 
 const fromAttemptRow = (row: any) => ({
@@ -751,6 +831,9 @@ const fromAttemptRow = (row: any) => ({
   startedAt: row.started_at,
   submittedAt: row.submitted_at,
   durationSeconds: Number(row.duration_seconds) || 0,
+  manualOverride: row.manual_override && typeof row.manual_override === "object"
+    ? { score: Number(row.manual_override.score) || 0, reason: row.manual_override.reason || undefined, at: row.manual_override.at || "" }
+    : undefined,
 });
 
 export function pushExamAttempts(rows: any[]) {

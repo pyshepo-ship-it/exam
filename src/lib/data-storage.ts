@@ -57,6 +57,8 @@ export interface RegistrationRequest {
   id: string
   name: string
   phone: string
+  /** هاتف ولي الأمر (إجباري عند التسجيل) */
+  guardianPhone: string
   email: string
   /** بصمة كلمة المرور SHA-256 (لا تُخزَّن كلمة المرور نفسها أبداً) */
   passwordHash: string
@@ -155,6 +157,16 @@ export interface Exam {
   autoHonorBoard?: boolean
   /** الحد الأدنى للنسبة المئوية للترشيح (100 = الدرجة الكاملة) */
   honorMinPercent?: number
+  /** إتاحة الاختبار للطلاب: دائماً مفتوح أو خلال فترة يحددها المعلم */
+  availabilityMode?: 'always' | 'scheduled'
+  /** بداية الإتاحة (ISO) — عند الوضع المجدول */
+  availableFrom?: string
+  /** نهاية الإتاحة (ISO) — عند الوضع المجدول */
+  availableUntil?: string
+  /** المجموعات المستهدفة من الاختبار — فارغ = كل مجموعات الصف */
+  targetGroupIds?: string[]
+  /** إظهار الإجابة الصحيحة للطالب: لا أبداً / بعد كل سؤال / في نهاية الاختبار */
+  answerVisibility?: 'never' | 'afterEach' | 'atEnd'
   createdAt: string
   updatedAt: string
 }
@@ -249,6 +261,12 @@ export interface ExamAttempt {
   startedAt: string
   submittedAt: string
   durationSeconds: number
+  /** تعديل يدوي من المعلم لتقدير الدرجة إذا شعر أن التصحيح الآلي غير عادل */
+  manualOverride?: {
+    score: number
+    reason?: string
+    at: string
+  }
 }
 
 // ---- الإعلانات ولوحة الشرف والملفات والروابط ----
@@ -258,7 +276,29 @@ export interface Announcement {
   title: string
   body: string
   pinned: boolean
+  /** الصفوف المستهدفة — فارغ = إعلان عام للجميع */
+  targetGradeIds?: string[]
   createdAt: string
+}
+
+/** رسالة داخل استفسار طالب (ليست محادثة مفتوحة — رسالة واحدة ورد عليها) */
+export interface InquiryMessage {
+  from: 'student' | 'teacher'
+  text: string
+  at: string
+}
+
+/** استفسار طالب: يرسل استفساراً واحداً ويرد المعلم، ويبقى مفتوحاً للرد التالي أو يُغلق */
+export interface InquiryThread {
+  id: string
+  studentId: string
+  studentName: string
+  gradeId?: string
+  groupId?: string
+  messages: InquiryMessage[]
+  status: 'open' | 'closed'
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Honoree {
@@ -344,6 +384,7 @@ import {
   pushGroupTransferRequests,
   pushStudentHistory,
   pushStudentAccounts,
+  pushInquiries,
 } from "./supabase/sync"
 
 // Helper functions
@@ -489,6 +530,13 @@ export const addStudentHistoryEvent = (event: Omit<StudentHistoryEvent, 'id' | '
 
 // حسابات بوابة الطلاب
 export const getStudentAccounts = (): StudentAccount[] => getFromStorage<StudentAccount>(STORAGE_KEYS.STUDENT_ACCOUNTS)
+
+// ---------- الاستفسارات ----------
+export const getInquiries = (): InquiryThread[] => getFromStorage<InquiryThread>(STORAGE_KEYS.INQUIRIES)
+export const saveInquiries = (items: InquiryThread[]): void => {
+  saveToStorage(STORAGE_KEYS.INQUIRIES, items)
+  queuePush(() => pushInquiries(items))
+}
 export const saveStudentAccounts = (items: StudentAccount[]): void => {
   saveToStorage(STORAGE_KEYS.STUDENT_ACCOUNTS, items)
   queuePush(() => pushStudentAccounts(items))

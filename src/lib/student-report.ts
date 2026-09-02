@@ -39,6 +39,7 @@ import {
 import { getTeacherName, getTeacherSignatureLine } from "./branding"
 import { formatTime12 } from "./utils"
 import { paginateBlocks } from "./schedule-print"
+import { effectiveAttemptScore } from "./portal-content"
 
 export type StudentReportType = "comprehensive" | "grades" | "payments" | "attendance" | "history"
 
@@ -243,15 +244,16 @@ function gradesBlocks(report: StudentReport): Block[] {
     `)
   }
   for (const a of report.examAttempts) {
-    const pct = a.totalMarks > 0 ? Math.round((a.score / a.totalMarks) * 100) : 0
-    weightedScore += a.score
+    const finalScore = effectiveAttemptScore(a)
+    const pct = a.totalMarks > 0 ? Math.round((finalScore / a.totalMarks) * 100) : 0
+    weightedScore += finalScore
     weightedMax += a.totalMarks
     rows.push(`
       <tr>
         <td style="${TD}">${esc(dateLabel(a.submittedAt))}</td>
-        <td style="${TD}text-align:right;font-weight:700;">اختبار إلكتروني</td>
+        <td style="${TD}text-align:right;font-weight:700;">اختبار إلكتروني${a.manualOverride ? " <span style=\"background:#f3e8ff;color:#7e22ce;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">درجة معدلة يدوياً</span>" : ""}</td>
         <td style="${TD}">اختبار إلكتروني</td>
-        <td style="${TD}white-space:nowrap;font-weight:800;">${a.score} / ${a.totalMarks}</td>
+        <td style="${TD}white-space:nowrap;font-weight:800;">${finalScore} / ${a.totalMarks}${a.manualOverride ? ` <span style=\"color:#9ca3af;font-size:10.5px;font-weight:600;\">(الآلي: ${a.score})</span>` : ""}</td>
         <td style="${TD}font-weight:800;color:${pct >= 85 ? "#047857" : pct >= 50 ? "#a16207" : "#b91c1c"};">${pct}%</td>
       </tr>
     `)
@@ -302,19 +304,69 @@ function paymentsBlocks(report: StudentReport): Block[] {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
       <span style="background:#fefce8;border:1px solid #fde68a;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#a16207;">إجمالي الاستحقاقات: ${esc(money(report.totalDue))}</span>
       <span style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#047857;">إجمالي المدفوع: ${esc(money(report.totalPaid))}</span>
-      <span style="background:${report.balance > 0 ? "#fef2f2" : "#ecfdf5"};border:1px solid ${report.balance > 0 ? "#fecaca" : "#a7f3d0"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${report.balance > 0 ? "#b91c1c" : "#047857"};">الرصيد: ${esc(money(report.balance))}</span>
+      <span style="background:${report.balance > 0 ? "#fef2f2" : "#ecfdf5"};border:1px solid ${report.balance > 0 ? "#fecaca" : "#a7f3d0"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${report.balance > 0 ? "#b91c1c" : "#047857"};">الرصيد المتبقي: ${esc(money(report.balance))}</span>
     </div>
   `
 
-  if (payRows.length === 0) return [{ html: summary + `<div style="color:#9ca3af;font-size:12.5px;">لا توجد دفعات مسجلة بعد.</div>` }]
+  // كشف المطابقة الشهرية: استحقاق/مدفوع/متبقي + تاريخ آخر تحصيل — يوضح لولي الأمر
+  // مثال: استحقاق 150 ودُفع 100 والباقي 50 حُصّل لاحقاً في يوم آخر
+  const monthlyRows = report.dues
+    .slice()
+    .sort((a, b) => (a.year - b.year) || (a.month - b.month))
+    .map(d => {
+      const monthPayments = report.payments.filter(p => p.month === d.month && p.year === d.year)
+      const paidForMonth = monthPayments.reduce((s, p) => s + p.amount, 0)
+      const remaining = d.amount - paidForMonth
+      const lastDate = monthPayments.map(p => p.paymentDate).sort().pop()
+      const status =
+        remaining <= 0
+          ? `<span style="color:#047857;font-weight:800;">مسدد بالكامل ✓</span>`
+          : paidForMonth > 0
+          ? `<span style="color:#a16207;font-weight:800;">جزئي — متبقي ${esc(money(remaining))}</span>`
+          : `<span style="color:#b91c1c;font-weight:800;">غير مدفوع</span>`
+      return `
+      <tr>
+        <td style="${TD}">${d.month}/${d.year}</td>
+        <td style="${TD}white-space:nowrap;">${esc(money(d.amount))}</td>
+        <td style="${TD}white-space:nowrap;font-weight:800;color:#047857;">${esc(money(paidForMonth))}</td>
+        <td style="${TD}">${status}</td>
+        <td style="${TD}">${lastDate ? esc(dateLabel(lastDate)) : "—"}</td>
+      </tr>`
+    })
 
-  const chunks: string[][] = []
+  const duesTable = monthlyRows.length
+    ? `
+      <table style="${TABLE}margin-bottom:14px;">
+        <tr style="background:#047857;color:#ffffff;">
+          <th style="${TH}">الشهر</th>
+          <th style="${TH}">الاستحقاق</th>
+          <th style="${TH}">المدفوع</th>
+          <th style="${TH}">الحالة</th>
+          <th style="${TH}">آخر تحصيل</th>
+        </tr>
+        ${monthlyRows.join("")}
+      </table>`
+    : ""
+
+  const blocks: Block[] = []
+  if (duesTable || payRows.length > 0) {
+    blocks.push({ html: sectionTitle("💰 كشف الحساب الشهري") + summary + (duesTable || `<div style="color:#9ca3af;font-size:12.5px;">لا توجد مستحقات مسجلة.</div>`) })
+  }
+
+  const payChunks: string[][] = []
   const CHUNK = 16
-  for (let i = 0; i < payRows.length; i += CHUNK) chunks.push(payRows.slice(i, i + CHUNK))
+  for (let i = 0; i < payRows.length; i += CHUNK) payChunks.push(payRows.slice(i, i + CHUNK))
 
-  return chunks.map((chunk, ci) => ({
-    html: `
-      ${ci === 0 ? sectionTitle("💰 المدفوعات والأرصدة") + summary : ""}
+  if (payChunks.length === 0) {
+    if (!duesTable) return [{ html: summary + `<div style="color:#9ca3af;font-size:12.5px;">لا توجد دفعات مسجلة بعد.</div>` }]
+    return blocks
+  }
+
+  return [
+    ...blocks,
+    ...payChunks.map((chunk, ci) => ({
+      html: `
+      ${ci === 0 ? sectionTitle("🧾 سجل الدفعات") : ""}
       <table style="${TABLE}margin-bottom:14px;">
         <tr style="background:#6366f1;color:#ffffff;">
           <th style="${TH}">تاريخ الدفع</th>
@@ -325,7 +377,8 @@ function paymentsBlocks(report: StudentReport): Block[] {
         ${chunk.join("")}
       </table>
     `,
-  }))
+    })),
+  ]
 }
 
 function attendanceBlocks(report: StudentReport): Block[] {

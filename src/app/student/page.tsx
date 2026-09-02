@@ -22,6 +22,10 @@ import {
   Home,
   Send,
   Lock,
+  Megaphone,
+  PlayCircle,
+  LockIcon,
+  MessageCircleQuestion,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -40,6 +44,16 @@ import {
   requestGroupTransfer,
   areStudentReportsEnabled,
 } from "@/lib/student-accounts"
+import { sendStudentInquiry, canStudentSendInquiry } from "@/lib/inquiries"
+import {
+  announcementsForGrade,
+  isExamForStudent,
+  examAvailability,
+  effectiveAttemptScore,
+  markAnnouncementsSeen,
+  lastAnnouncementsSeenAt,
+} from "@/lib/portal-content"
+import type { Announcement, Exam, InquiryThread } from "@/lib/data-storage"
 import {
   collectStudentReport,
   reportFromPortalData,
@@ -48,8 +62,8 @@ import {
   StudentReport,
   StudentReportType,
 } from "@/lib/student-report"
-import { getGrades, getStudents } from "@/lib/data-storage"
-import { fetchPublicData, fetchStudentPortalData } from "@/lib/supabase/sync"
+import { getGrades, getStudents, getAnnouncements, getExams, getInquiries } from "@/lib/data-storage"
+import { fetchPublicData, fetchStudentPortalData, fetchStudentInquiries } from "@/lib/supabase/sync"
 import { HtmlPrintDialog } from "@/components/html-print-dialog"
 import { formatTime12 } from "@/lib/utils"
 
@@ -68,6 +82,11 @@ export default function StudentPortalPage() {
   const [reportsEnabled, setReportsEnabled] = useState(true)
   const [transferTarget, setTransferTarget] = useState("")
   const [transferBusy, setTransferBusy] = useState(false)
+  const [portalAnnouncements, setPortalAnnouncements] = useState<Announcement[]>([])
+  const [portalExams, setPortalExams] = useState<Exam[]>([])
+  const [inquiries, setInquiries] = useState<InquiryThread[]>([])
+  const [inquiryText, setInquiryText] = useState("")
+  const [inquiryBusy, setInquiryBusy] = useState(false)
 
   // تحميل بيانات الطالب: من Supabase (المصدر الحقيقي) أو من المرآة المحلية
   useEffect(() => {
@@ -94,9 +113,17 @@ export default function StudentPortalPage() {
                 .map(g => ({ id: g.id, name: g.name, days: g.days || [], startTime: g.startTime || "", endTime: g.endTime || "" }))
             )
           }
+          // إعلانات صفه فقط + اختبارات صفه/مجموعته فقط (عزل تام)
+          setPortalAnnouncements(announcementsForGrade(publicData.announcements as any, portalData.student.gradeId))
+          setPortalExams(
+            (publicData.exams as any[]).filter(e => isExamForStudent(e, portalData.student.gradeId, portalData.student.groupId))
+          )
         } else {
           toast.error("تعذر تحميل بياناتك — حاول تحديث الصفحة")
         }
+        const inq = await fetchStudentInquiries(s.studentId)
+        setInquiries(inq as any)
+        markAnnouncementsSeen()
       } else {
         // وضع محلي
         const student = getStudents().find(x => x.id === s.studentId)
@@ -110,6 +137,11 @@ export default function StudentPortalPage() {
         setGradeGroups(
           (grade?.groups || []).map(g => ({ id: g.id, name: g.name, days: g.days || [], startTime: g.startTime || "", endTime: g.endTime || "" }))
         )
+        // وضع محلي: نفس العزل (إعلانات صفه + اختباراته فقط)
+        setPortalAnnouncements(announcementsForGrade(getAnnouncements(), student.gradeId))
+        setPortalExams(getExams().filter(e => isExamForStudent(e, student.gradeId, student.groupId)))
+        setInquiries(getInquiries().filter(t => t.studentId === student.id))
+        markAnnouncementsSeen()
       }
       setMounted(true)
     }
@@ -130,7 +162,22 @@ export default function StudentPortalPage() {
       toast.success(res.message, { duration: 6000 })
       setTransferTarget("")
     } else {
-      toast.error(res.error)
+      toast.error(res.error || "تعذر الإرسال")
+    }
+  }
+
+  const handleSendInquiry = async () => {
+    if (!session) return
+    setInquiryBusy(true)
+    const res = await sendStudentInquiry(session.studentId, inquiryText)
+    setInquiryBusy(false)
+    if (res.ok) {
+      toast.success(res.message || "تم الإرسال", { duration: 6000 })
+      setInquiryText("")
+      // تحديث الاستفسارات من التخزين (الإرسال يحفظ محلياً + Supabase)
+      setInquiries(getInquiries().filter(t => t.studentId === session.studentId))
+    } else {
+      toast.error(res.error || "تعذر الإرسال")
     }
   }
 
@@ -201,6 +248,88 @@ export default function StudentPortalPage() {
                     {report.groupDays.join("، ")}
                   </span>
                 </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* الإعلانات والأسئلة المهمة — صفه فقط */}
+        {portalAnnouncements.length > 0 && (
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+            <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-sm">
+              <CardContent className="p-5 space-y-3">
+                <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <Megaphone className="w-5 h-5 text-amber-500" />
+                  إعلانات وأسئلة مهمة
+                </h3>
+                {portalAnnouncements.map(a => {
+                  const isNew = a.createdAt > lastAnnouncementsSeenAt()
+                  return (
+                    <div key={a.id} className={`rounded-xl px-4 py-3 border ${
+                      isNew ? "border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20" : "border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60"
+                    }`}>
+                      <p className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-2 flex-wrap">
+                        {a.title}
+                        {isNew && <Badge className="bg-red-500 text-white text-[10px]">جديد</Badge>}
+                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300 whitespace-pre-wrap mt-1">{a.body}</p>
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        {new Date(a.createdAt).toLocaleDateString("ar-EG", { dateStyle: "long" })}
+                      </p>
+                    </div>
+                  )
+                })}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* اختباراتي — اختبارات صفه/مجموعته فقط وفي إتاحتها */}
+        {portalExams.length > 0 && (
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
+            <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-sm">
+              <CardContent className="p-5 space-y-3">
+                <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <PlayCircle className="w-5 h-5 text-rose-500" />
+                  اختباراتي
+                </h3>
+                {portalExams.map(e => {
+                  const av = examAvailability(e)
+                  const myAttempts = (report?.examAttempts || []).filter(a => a.examId === e.id)
+                  const best = myAttempts.length
+                    ? Math.max(...myAttempts.map(a => effectiveAttemptScore(a)))
+                    : null
+                  return (
+                    <div key={e.id} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-gray-900 dark:text-white">{e.title}</p>
+                          <p className="text-xs text-gray-400">
+                            {e.duration ? `${e.duration} دقيقة` : ""} {e.totalMarks ? ` • ${e.totalMarks} درجة` : ""}
+                            {best !== null && ` • نتيجتك: ${best}${e.totalMarks ? ` / ${e.totalMarks}` : ""}`}
+                          </p>
+                          {myAttempts.some(a => a.manualOverride) && (
+                            <p className="text-[11px] text-purple-600 mt-0.5">توجد درجة معدلة يدوياً من المعلم</p>
+                          )}
+                        </div>
+                        {av.open ? (
+                          <Link href={`/exam/${e.id}`}>
+                            <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white">
+                              <PlayCircle className="w-4 h-4" />
+                              <span>{myAttempts.length > 0 ? "إعادة الاختبار" : "ابدأ الاختبار"}</span>
+                            </Button>
+                          </Link>
+                        ) : (
+                          <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                            <LockIcon className="w-4 h-4" />
+                            مغلق الآن
+                          </span>
+                        )}
+                      </div>
+                      {!av.open && av.reason && <p className="text-xs text-gray-400 mt-1">{av.reason}</p>}
+                    </div>
+                  )
+                })}
               </CardContent>
             </Card>
           </motion.div>
@@ -306,6 +435,25 @@ export default function StudentPortalPage() {
                       <span className="bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800 rounded-full px-3 py-1.5">المدفوع: {money(report.totalPaid)}</span>
                       <span className={`border rounded-full px-3 py-1.5 ${report.balance > 0 ? "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800" : "bg-green-50 text-green-700 border-green-200"}`}>الرصيد: {money(report.balance)}</span>
                     </div>
+                    {/* كشف المستحقات الشهرية — يوضح لولي الأمر ما دُفع وما تبقى */}
+                    {report.dues && report.dues.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-bold text-gray-500 mb-2">المستحقات الشهرية</p>
+                        <div className="space-y-1.5">
+                          {report.dues.slice().sort((a, b) => (a.year - b.year) || (a.month - b.month)).map(d => (
+                            <div key={d.id} className="flex items-center justify-between bg-white dark:bg-gray-900 rounded-lg px-3 py-2 border border-gray-100 dark:border-gray-800 text-xs">
+                              <span className="text-gray-600 dark:text-gray-300">{MONTHS[d.month - 1]} {d.year}</span>
+                              <span className="flex items-center gap-2">
+                                <span className="font-bold text-gray-800 dark:text-gray-100">{money(d.amount)}</span>
+                                <Badge className={d.status === "paid" ? "bg-green-100 text-green-700" : d.status === "partial" ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}>
+                                  {d.status === "paid" ? "مدفوع" : d.status === "partial" ? "مدفوع جزئياً" : "مستحق"}
+                                </Badge>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {report.payments.length === 0 ? (
                       <p className="text-sm text-gray-400 py-4 text-center">لا توجد دفعات مسجلة بعد</p>
                     ) : (
@@ -442,6 +590,67 @@ export default function StudentPortalPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* الاستفسارات — رسالة واحدة ورد المعلم */}
+        <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-sm">
+          <CardContent className="p-5 space-y-3">
+            <p className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <MessageCircleQuestion className="w-5 h-5 text-sky-500" />
+              استفسار للمعلم
+            </p>
+
+            {(() => {
+              const thread = inquiries.find(t => t.status === "open") || inquiries[inquiries.length - 1]
+              const state = canStudentSendInquiry(session.studentId)
+              return (
+                <>
+                  {thread && (
+                    <div className="space-y-2">
+                      {thread.messages.map((m, i) => (
+                        <div key={i} className={`rounded-xl px-4 py-3 border text-sm ${
+                          m.from === "student"
+                            ? "bg-sky-50 dark:bg-sky-950/30 border-sky-200 dark:border-sky-800"
+                            : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
+                        }`}>
+                          <p className="font-bold text-xs mb-1">
+                            {m.from === "student" ? "أنت" : "المعلم"}
+                            <span className="font-normal text-gray-400"> — {new Date(m.at).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" })}</span>
+                          </p>
+                          <p className="text-gray-700 dark:text-gray-200 whitespace-pre-wrap">{m.text}</p>
+                        </div>
+                      ))}
+                      {thread.status === "closed" && (
+                        <p className="text-xs text-gray-400 flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> أُغلق هذا الاستفسار — يمكنك فتح استفسار جديد</p>
+                      )}
+                    </div>
+                  )}
+
+                  {state.allowed ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={inquiryText}
+                        onChange={e => setInquiryText(e.target.value)}
+                        rows={3}
+                        placeholder={thread && thread.status === "open" ? "اكتب ردك أو استفسارك التالي..." : "اكتب استفسارك للمعلم (رسالة واحدة يرد عليها)"}
+                        className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      />
+                      <Button
+                        onClick={handleSendInquiry}
+                        disabled={inquiryBusy || inquiryText.trim().length < 5}
+                        className="bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 text-white"
+                      >
+                        <Send className="w-4 h-4" />
+                        <span>{inquiryBusy ? "جاري الإرسال..." : thread && thread.status === "open" ? "إرسال الرد" : "إرسال الاستفسار"}</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-amber-600 font-bold">{state.reason}</p>
+                  )}
+                </>
+              )
+            })()}
+          </CardContent>
+        </Card>
 
         <div className="text-center pb-8">
           <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-indigo-600">
