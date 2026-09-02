@@ -65,7 +65,7 @@ export function ScienceIcon({
 
 /**
  * زخارف علمية ملوّنة حول كتلة السؤال — تتغير حسب الصف
- * (ميكروسكوب / دورق / ذرة / نبات / شمس ...)
+ * مُرتبة بحيث لا تتداخل مع درجة السؤال في أعلى اليسار ولا مع رأس السؤال
  */
 export function QuestionOrnaments({
   gradeName,
@@ -81,34 +81,37 @@ export function QuestionOrnaments({
 
   return (
     <div className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+      {/* الرمز الأول: في أسفل اليسار بعيداً عن رأس السؤال ودرجته */}
       <ScienceIcon
         kind={a}
-        size={28}
-        className="absolute top-2 left-3 opacity-40"
+        size={22}
+        className="absolute bottom-1.5 left-2.5 opacity-25"
       />
+      {/* الرمز الثاني: في أسفل المنتصف بخفوت ليزين الإطار */}
       <ScienceIcon
         kind={b}
-        size={22}
-        className="absolute bottom-2 right-3 opacity-35"
+        size={18}
+        className="absolute bottom-2 left-1/3 opacity-20"
       />
+      {/* الرمز الثالث: في منتصف الجانب الأيمن بخفوت */}
       <ScienceIcon
         kind={c}
         size={18}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-10"
+        className="absolute top-1/2 right-1.5 -translate-y-1/2 opacity-15"
       />
     </div>
   )
 }
 
-/** إطار زخرفي لصفحة الامتحان (زوايا) */
+/** إطار زخرفي لصفحة الامتحان (زوايا الصفحة) */
 export function PaperCornerOrnaments({ gradeName }: { gradeName: string }) {
   const set = getOrnamentsForGrade(gradeName)
   return (
     <div className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      <ScienceIcon kind={set[0]} size={36} className="absolute top-3 right-3 opacity-50" />
-      <ScienceIcon kind={set[1]} size={32} className="absolute top-3 left-3 opacity-45" />
-      <ScienceIcon kind={set[2]} size={30} className="absolute bottom-3 right-4 opacity-40" />
-      <ScienceIcon kind={set[3]} size={28} className="absolute bottom-3 left-4 opacity-40" />
+      <ScienceIcon kind={set[0]} size={32} className="absolute top-2.5 right-2.5 opacity-40" />
+      <ScienceIcon kind={set[1]} size={28} className="absolute top-2.5 left-2.5 opacity-35" />
+      <ScienceIcon kind={set[2]} size={26} className="absolute bottom-2.5 right-3 opacity-30" />
+      <ScienceIcon kind={set[3]} size={24} className="absolute bottom-2.5 left-3 opacity-30" />
     </div>
   )
 }

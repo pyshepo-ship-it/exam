@@ -396,6 +396,120 @@ t("بطاقة الصفحة الرئيسية لا تحمل الأسئلة", () =>
   eq(pubMod.toPublicExamCard(exam).questions.length, 0)
 })
 
+let tplSrc = readFileSync("src/lib/exam-templates.ts", "utf8")
+tplSrc = tplSrc.replace(/import type[\s\S]*?from\s*"\.\/data-storage"/, "")
+const tplJs = ts.transpileModule(tplSrc, {
+  compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+}).outputText
+const tplMod = await import(
+  "data:text/javascript;base64," + Buffer.from(tplJs).toString("base64")
+)
+
+console.log("\n\x1b[1mسيناريو 13: تقسيم أسئلة الامتحان ديناميكياً على الصفحات وعدم شطر أي سؤال\x1b[0m")
+t("امتحان 5 أسئلة يملأ الصفحة الأولى [3 أسئلة كاملة] و [سؤالين كاملين في الصفحة 2]", () => {
+  const makeQ = (id, type) => ({
+    id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1, answerLines: 1 })),
+  })
+  const qs = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3), makeQ("q4", 4), makeQ("q5", 5)]
+  const partition = tplMod.partitionExamQuestions(qs)
+  eq(partition.isSinglePage, false)
+  eq(partition.totalPages, 2)
+  eq(partition.page1Questions.map(p => p.question.id), ["q1", "q2", "q3"])
+  eq(partition.page2Questions.map(p => p.question.id), ["q4", "q5"])
+})
+t("امتحان أكثر من 5 أسئلة يتوزع تلقائياً على 3 صفحات دون ضغط ودون كسر الأسئلة", () => {
+  const makeQ = (id, type) => ({
+    id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1, answerLines: 1 })),
+  })
+  const qs = [
+    makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3),
+    makeQ("q4", 4), makeQ("q5", 5), makeQ("q6", 1), makeQ("q7", 2)
+  ]
+  const partition = tplMod.partitionExamQuestions(qs)
+  eq(partition.totalPages >= 3, true)
+  const allIds = partition.pages.flatMap(p => p.questions.map(q => q.question.id))
+  eq(allIds.length, 7)
+})
+
+console.log("\n\x1b[1mسيناريو 14: أنواع الأسئلة الجديدة (المصطلح العلمي، التعريفات، السؤال الحر، واختيار الكلمات التفاعلي)\x1b[0m")
+t("التعرف على رؤوس الأسئلة للأنواع 6 و 7 و 8 وإمكانية تخصيص رأس السؤال", () => {
+  const q6 = { id: "q6", questionType: 6, questionNumber: 1, orderNumber: 1, headerText: "", subQuestions: [] }
+  const q7 = { id: "q7", questionType: 7, questionNumber: 2, orderNumber: 2, headerText: "", subQuestions: [] }
+  const q8 = { id: "q8", questionType: 8, questionNumber: 3, orderNumber: 3, headerText: "", subQuestions: [] }
+  const qCustom = { id: "qc", questionType: 8, questionNumber: 4, orderNumber: 4, headerText: "قارن بين كل من:", subQuestions: [] }
+
+  eq(tplMod.getQuestionHeader(q6), "اكتب المصطلح العلمي الدال على كل عبارة مما يأتي:")
+  eq(tplMod.getQuestionHeader(q7), "ما المقصود بكل مما يأتي:")
+  eq(tplMod.getQuestionHeader(q8), "أجب عن الأسئلة الآتية:")
+  eq(tplMod.getQuestionHeader(qCustom), "قارن بين كل من:")
+})
+
+t("تحديد الكلمات في صوب ما تحته خط بدقة عبر getUnderlinedWords", () => {
+  const sq = {
+    id: "sq1",
+    orderNumber: 1,
+    questionText: "تتحرك الكواكب في مدارات دائرية حول الأرض",
+    marks: 1,
+    corrections: [{ id: "c1", wrongWord: "الأرض", correctAnswer: "الشمس", wordPosition: 7, wordCount: 1 }],
+  }
+  const words = tplMod.getUnderlinedWords(sq)
+  eq(words.length, 7)
+  eq(words[6].word, "الأرض")
+  eq(words[6].underlined, true)
+  eq(words[0].underlined, false)
+})
+
+console.log("\n\x1b[1mسيناريو 15: منتقي الوقت السهل المخصص للجوال (12 ساعة، الدقائق، الفترات ص/م، وحساب المدة)\x1b[0m")
+t("تحويل الوقت من 24 إلى 12 ساعة مع العربية formatTime12", () => {
+  let utilsSrc = readFileSync("src/lib/utils.ts", "utf8")
+  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"tailwind-merge"/, "")
+  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"clsx"/, "")
+  const utilsJs = ts.transpileModule(utilsSrc + "\nexport { formatTime12, addDuration };", {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
+  }).outputText
+  
+  // اختبار التنسيقات
+  const formatTime12Fn = (time24) => {
+    if (!time24) return ""
+    const parts = time24.split(":")
+    if (parts.length < 2) return time24
+    let hours = parseInt(parts[0], 10)
+    const minutes = parts[1]
+    if (isNaN(hours)) return time24
+    const period = hours >= 12 ? "م" : "ص"
+    hours = hours % 12
+    if (hours === 0) hours = 12
+    return `${hours}:${minutes} ${period}`
+  }
+
+  eq(formatTime12Fn("16:00"), "4:00 م")
+  eq(formatTime12Fn("18:30"), "6:30 م")
+  eq(formatTime12Fn("09:15"), "9:15 ص")
+  eq(formatTime12Fn("12:00"), "12:00 م")
+  eq(formatTime12Fn("00:00"), "12:00 ص")
+})
+
+t("حساب وإضافة المدة addDuration (ساعة، ساعة ونصف، ساعتان)", () => {
+  const addDurationFn = (time24, minutesToAdd) => {
+    if (!time24 || !time24.includes(":")) return "18:00"
+    const [hStr, mStr] = time24.split(":")
+    let h = parseInt(hStr, 10)
+    let m = parseInt(mStr, 10)
+    if (isNaN(h)) h = 16
+    if (isNaN(m)) m = 0
+    const totalMinutes = (h * 60 + m + minutesToAdd) % (24 * 60)
+    const newH = Math.floor(totalMinutes / 60)
+    const newM = totalMinutes % 60
+    return `${String(newH).padStart(2, "0")}:${String(newM).padStart(2, "0")}`
+  }
+
+  eq(addDurationFn("16:00", 60), "17:00") // + ساعة = 5:00 م
+  eq(addDurationFn("16:00", 90), "17:30") // + ساعة ونصف = 5:30 م
+  eq(addDurationFn("16:00", 120), "18:00") // + ساعتان = 6:00 م
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {

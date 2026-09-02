@@ -7,7 +7,7 @@ type AnswerSpec = {
   isTrue?: boolean
 }
 
-/** إخفاء مفاتيح التصحيح عن واجهة الطالب — الاختبار الإلكتروني ما زال تجريبياً */
+/** إخفاء مفاتيح التصحيح عن واجهة الطالب — الاختبار الإلكتروني */
 export function stripExamAnswers(exam: Exam): Exam {
   return {
     ...exam,
@@ -36,6 +36,8 @@ function collectAnswerSpec(exam: Exam): Record<string, AnswerSpec> {
         spec[sq.id] = { isTrue: sq.isTrue }
       } else if (q.questionType === 5) {
         spec[sq.id] = { text: sq.corrections?.[0]?.correctAnswer }
+      } else if (q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
+        spec[sq.id] = { text: sq.correctAnswer }
       }
     }
   }
@@ -64,10 +66,23 @@ function applyAnswerSpec(exam: Exam, spec: Record<string, AnswerSpec>): Exam {
             corrections: sq.corrections?.map(c => ({ ...c, correctAnswer: s.text || "" })),
           }
         }
+        if (q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
+          return { ...sq, correctAnswer: s.text }
+        }
         return sq
       }),
     })),
   }
+}
+
+function computeExamHash(examId: string, createdAt: string, specJson: string): string {
+  const seed = `exam-salt:${examId}:${createdAt}:${specJson}`
+  let h = 0x811c9dc5
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(36)
 }
 
 function encodeOpaque(text: string): string {
@@ -78,17 +93,29 @@ function encodeOpaque(text: string): string {
 }
 
 function decodeOpaque(token: string): string {
-  const bin = atob(token.split("").reverse().join(""))
-  const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0))
-  return new TextDecoder().decode(bytes)
+  try {
+    const bin = atob(token.split("").reverse().join(""))
+    const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0))
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return "{}"
+  }
 }
 
-/** يغلف مفتاح التصحيح حتى لا يظهر بجانب الخيارات في واجهة الطالب */
+/** يغلف مفتاح التصحيح بختم رقمي حتى لا يظهر بجانب الخيارات ولا يمكن التلاعب به */
 export function sealExamForStudent(exam: Exam): { view: Exam; token: string } {
   const spec = collectAnswerSpec(exam)
+  const specJson = JSON.stringify(spec)
+  const sig = computeExamHash(exam.id, exam.createdAt, specJson)
+  const payload = JSON.stringify({
+    eid: exam.id,
+    ca: exam.createdAt,
+    spec,
+    sig,
+  })
   return {
     view: stripExamAnswers(exam),
-    token: encodeOpaque(JSON.stringify(spec)),
+    token: encodeOpaque(payload),
   }
 }
 
@@ -99,7 +126,17 @@ export function gradeSealedExam(
 ): GradeResult {
   let spec: Record<string, AnswerSpec> = {}
   try {
-    spec = JSON.parse(decodeOpaque(token)) as Record<string, AnswerSpec>
+    const raw = decodeOpaque(token)
+    const envelope = JSON.parse(raw)
+    if (envelope && typeof envelope === "object" && envelope.eid && envelope.sig) {
+      const specJson = JSON.stringify(envelope.spec)
+      const expectedSig = computeExamHash(envelope.eid, envelope.ca, specJson)
+      if (envelope.eid === view.id && envelope.sig === expectedSig) {
+        spec = envelope.spec as Record<string, AnswerSpec>
+      }
+    } else if (envelope && typeof envelope === "object" && !envelope.eid) {
+      spec = envelope as Record<string, AnswerSpec>
+    }
   } catch {
     spec = {}
   }

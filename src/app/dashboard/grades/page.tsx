@@ -40,6 +40,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
 import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear } from "@/lib/data-storage"
 import SampleDataBanner from "@/components/sample-data-banner"
+import { TimePicker } from "@/components/time-picker"
+import { formatTime12, addDuration } from "@/lib/utils"
 
 // Days of week
 const DAYS = [
@@ -82,8 +84,8 @@ export default function GradesPage() {
   const [groupForm, setGroupForm] = useState({
     name: "",
     days: [] as string[],
-    startTime: "",
-    endTime: "",
+    startTime: "16:00",
+    endTime: "18:00",
     monthlyFee: 0,
   })
 
@@ -190,8 +192,8 @@ export default function GradesPage() {
       setGroupForm({
         name: "",
         days: [],
-        startTime: "",
-        endTime: "",
+        startTime: "16:00",
+        endTime: "18:00",
         monthlyFee: 0,
       })
     }
@@ -399,7 +401,7 @@ export default function GradesPage() {
                             </p>
                             <p className="text-gray-500 truncate">{group.name}</p>
                             <p className="text-indigo-600 dark:text-indigo-400 font-medium mt-1">
-                              {group.startTime} - {group.endTime}
+                              {formatTime12(group.startTime)} - {formatTime12(group.endTime)}
                             </p>
                             <p className="text-gray-500 mt-1">
                               {group.studentsCount} طالب • {group.monthlyFee} ج.م
@@ -551,9 +553,9 @@ export default function GradesPage() {
                                       </div>
                                     </TableCell>
                                     <TableCell className="text-gray-600 dark:text-gray-400">
-                                      <div className="flex items-center gap-1">
-                                        <Clock className="w-4 h-4" />
-                                        {group.startTime} - {group.endTime}
+                                      <div className="flex items-center gap-1 font-medium">
+                                        <Clock className="w-4 h-4 text-indigo-500" />
+                                        {formatTime12(group.startTime)} - {formatTime12(group.endTime)}
                                       </div>
                                     </TableCell>
                                     <TableCell className="text-gray-900 dark:text-white font-semibold">
@@ -714,26 +716,57 @@ export default function GradesPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="startTime">وقت البداية *</Label>
-                <Input
-                  id="startTime"
-                  type="time"
-                  value={groupForm.startTime}
-                  onChange={(e) => setGroupForm(prev => ({ ...prev, startTime: e.target.value }))}
-                  className="mt-1"
+            <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <TimePicker
+                  label="وقت البداية"
+                  value={groupForm.startTime || "16:00"}
+                  onChange={(val) => {
+                    setGroupForm(prev => {
+                      const currentStart = prev.startTime || "16:00"
+                      const currentEnd = prev.endTime || "18:00"
+                      // تحديث تلقائي لوقت النهاية ليحافظ على الفارق إذا رغب المعلم
+                      return {
+                        ...prev,
+                        startTime: val,
+                        endTime: currentEnd ? currentEnd : addDuration(val, 120),
+                      }
+                    })
+                  }}
+                  required
                 />
-              </div>
-              <div>
-                <Label htmlFor="endTime">وقت النهاية *</Label>
-                <Input
-                  id="endTime"
-                  type="time"
-                  value={groupForm.endTime}
-                  onChange={(e) => setGroupForm(prev => ({ ...prev, endTime: e.target.value }))}
-                  className="mt-1"
-                />
+                <div className="space-y-1.5">
+                  <TimePicker
+                    label="وقت النهاية"
+                    value={groupForm.endTime || "18:00"}
+                    onChange={(val) => setGroupForm(prev => ({ ...prev, endTime: val }))}
+                    required
+                  />
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] text-gray-500 font-medium">مدة الحصة:</span>
+                    <button
+                      type="button"
+                      onClick={() => setGroupForm(prev => ({ ...prev, endTime: addDuration(prev.startTime || "16:00", 60) }))}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors border border-indigo-200 dark:border-indigo-800 cursor-pointer"
+                    >
+                      ساعة
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGroupForm(prev => ({ ...prev, endTime: addDuration(prev.startTime || "16:00", 90) }))}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors border border-indigo-200 dark:border-indigo-800 cursor-pointer"
+                    >
+                      ساعة ونصف
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGroupForm(prev => ({ ...prev, endTime: addDuration(prev.startTime || "16:00", 120) }))}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors border border-indigo-200 dark:border-indigo-800 cursor-pointer"
+                    >
+                      ساعتان
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
