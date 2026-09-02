@@ -75,7 +75,7 @@ import {
   saveSetting,
   YearArchive,
 } from "@/lib/data-storage"
-import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, type ConnectionCheck } from "@/lib/supabase/sync"
+import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, diagnoseSync, type ConnectionCheck, type SyncReport } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -149,6 +149,27 @@ export default function SettingsPage() {
     } else {
       toast.error("تعذر الاتصال بـ Supabase. تأكد من المتغيرات البيئية واتصال الإنترنت.")
     }
+  }
+
+  // تشخيص دقيق: يحدد أي سجل يفشل ولماذا
+  const [report, setReport] = useState<SyncReport | null>(null)
+  const [diagnosing, setDiagnosing] = useState(false)
+
+  const handleDiagnose = async () => {
+    setDiagnosing(true)
+    setReport(null)
+    try {
+      const res = await diagnoseSync()
+      setReport(res)
+      const failed = res.tables.reduce((n, t) => n + t.failures.length, 0)
+      if (failed === 0) toast.success("التشخيص: لا توجد أخطاء — كل البيانات محفوظة")
+      else toast.error(`التشخيص: ${failed} سجل فشل — التفاصيل بالأسفل`)
+      await runConnectionCheck(true)
+      refreshData()
+    } catch (e: any) {
+      toast.error(`تعذر إجراء التشخيص: ${e?.message || e}`)
+    }
+    setDiagnosing(false)
   }
 
   // رفع بيانات الجهاز إلى Supabase بالترتيب الصحيح (حل أخطاء 409)
@@ -723,6 +744,15 @@ export default function SettingsPage() {
                         <RotateCcw className={`w-4 h-4 ${checking ? "animate-spin" : ""}`} />
                         <span>إعادة الفحص</span>
                       </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleDiagnose}
+                        disabled={diagnosing}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                      >
+                        <Shield className={`w-4 h-4 ${diagnosing ? "animate-pulse" : ""}`} />
+                        <span>{diagnosing ? "جاري التشخيص..." : "تشخيص دقيق"}</span>
+                      </Button>
                     </div>
                   </div>
 
@@ -749,6 +779,84 @@ export default function SettingsPage() {
                       <p className="text-xs text-gray-500">
                         هذا الملف يمنح صلاحيات الجداول لأدوار Supabase فقط — لا يمسح ولا يعدّل أي بيانات.
                       </p>
+                    </div>
+                  )}
+
+                  {report && (
+                    <div className="rounded-lg bg-white dark:bg-gray-900 border border-indigo-300 dark:border-indigo-800 p-4 space-y-3 text-sm">
+                      <p className="font-bold text-indigo-700 dark:text-indigo-400">نتيجة التشخيص الدقيق</p>
+
+                      <div className="text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+                        <p>
+                          الجلسة:{" "}
+                          {report.authenticated ? (
+                            <span className="text-green-600 font-semibold">
+                              مسجّل الدخول ({report.userEmail}) — الدور: {report.role}
+                            </span>
+                          ) : (
+                            <span className="text-red-600 font-semibold">
+                              غير مسجّل — الكتابة سترفض
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <ul className="space-y-1">
+                        {report.summary.map((line, i) => (
+                          <li key={i} className="text-gray-800 dark:text-gray-200 break-words">
+                            {line}
+                          </li>
+                        ))}
+                      </ul>
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-gray-500">
+                              <th className="text-right py-1">الجدول</th>
+                              <th className="text-center py-1">محلي</th>
+                              <th className="text-center py-1">نجح رفعه</th>
+                              <th className="text-center py-1">في القاعدة</th>
+                              <th className="text-center py-1">فشل</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {report.tables.map((t) => (
+                              <tr key={t.table} className="border-t border-gray-200/60 dark:border-gray-800">
+                                <td className="py-1 font-medium">{t.table}</td>
+                                <td className="py-1 text-center">{t.localCount}</td>
+                                <td className="py-1 text-center text-green-600">{t.pushed}</td>
+                                <td className="py-1 text-center font-semibold">{t.remoteCount}</td>
+                                <td className={`py-1 text-center ${t.failures.length ? "text-red-600 font-bold" : "text-gray-400"}`}>
+                                  {t.failures.length}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {report.tables.some((t) => t.failures.length > 0) && (
+                        <div className="space-y-2">
+                          <p className="font-semibold text-red-700 dark:text-red-400">السجلات الفاشلة:</p>
+                          {report.tables.flatMap((t) =>
+                            t.failures.map((f, i) => (
+                              <div
+                                key={`${t.table}-${f.id}-${i}`}
+                                className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded p-2 text-xs"
+                              >
+                                <p className="font-bold text-red-800 dark:text-red-300">
+                                  [{t.table}] {f.label}
+                                </p>
+                                <p className="text-gray-700 dark:text-gray-300 break-words mt-0.5">
+                                  {f.code ? `(${f.code}) ` : ""}
+                                  {f.message}
+                                </p>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 

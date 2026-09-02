@@ -115,8 +115,8 @@ export const toStudentRow = (s: any) => ({
   group_id: s.groupId || null,
   status: s.status,
   notes: s.notes || null,
-  created_at: s.createdAt,
-  updated_at: s.updatedAt,
+  created_at: s.createdAt || new Date().toISOString(),
+  updated_at: s.updatedAt || s.createdAt || new Date().toISOString(),
 });
 
 export const fromStudentRow = (row: any) => ({
@@ -138,8 +138,8 @@ const toDueRow = (d: any) => ({
   month: d.month,
   year: d.year,
   amount: d.amount,
-  status: d.status,
-  created_at: d.createdAt,
+  status: d.status || "pending",
+  created_at: d.createdAt || new Date().toISOString(),
 });
 
 const fromDueRow = (row: any) => ({
@@ -162,7 +162,7 @@ const toPaymentRow = (p: any) => ({
   month: p.month,
   year: p.year,
   notes: p.notes || null,
-  created_at: p.createdAt,
+  created_at: p.createdAt || new Date().toISOString(),
 });
 
 const fromPaymentRow = (row: any) => ({
@@ -181,15 +181,17 @@ export const toExamRow = (e: any) => ({
   id: e.id,
   grade_id: e.gradeId || null,
   group_id: e.groupId || null,
-  title: e.title,
+  title: e.title || "اختبار",
   month: e.month ?? null,
   unit: e.unit || null,
-  academic_year: e.academicYear,
+  // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
+  academic_year: e.academicYear || "",
   duration: e.duration ?? null,
   total_marks: e.totalMarks ?? null,
   questions: e.questions || [],
-  created_at: e.createdAt,
-  updated_at: e.updatedAt,
+  // created_at / updated_at أعمدة NOT NULL أيضاً
+  created_at: e.createdAt || new Date().toISOString(),
+  updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
 });
 
 export const fromExamRow = (row: any) => ({
@@ -214,7 +216,7 @@ const toSessionRow = (s: any) => ({
   start_time: s.startTime || "",
   end_time: s.endTime || "",
   notes: s.notes || null,
-  created_at: s.createdAt,
+  created_at: s.createdAt || new Date().toISOString(),
 });
 
 const fromSessionRow = (row: any) => ({
@@ -234,7 +236,7 @@ const toAttendanceRow = (a: any) => ({
   status: a.status,
   late_minutes: a.lateMinutes ?? null,
   notes: a.notes || null,
-  created_at: a.createdAt,
+  created_at: a.createdAt || new Date().toISOString(),
 });
 
 const fromAttendanceRow = (row: any) => ({
@@ -1126,4 +1128,224 @@ export async function forcePushAll(): Promise<{ ok: boolean; error?: string }> {
   } catch (err) {
     return { ok: false, error: explainSupabaseError(err) };
   }
+}
+
+
+// ============================================================
+// تشخيص دقيق: يفحص كل جدول وكل سجل ويحدد سبب الفشل بالضبط
+// ============================================================
+
+export interface RowFailure {
+  id: string
+  label: string
+  code?: string
+  message: string
+  /** الحقل/المرجع المسبب للمشكلة إن أمكن تحديده */
+  cause?: string
+}
+
+export interface TableReport {
+  table: string
+  localCount: number
+  remoteCount: number
+  pushed: number
+  failures: RowFailure[]
+  error?: string
+}
+
+export interface SyncReport {
+  authenticated: boolean
+  userEmail: string | null
+  role: string | null
+  tables: TableReport[]
+  summary: string[]
+}
+
+/**
+ * يرفع كل جدول سجلاً سجلاً عند فشل الدفعة، ليحدد بدقة
+ * أي سجل يفشل ولماذا (بدل رسالة 409 غامضة).
+ */
+export async function diagnoseSync(): Promise<SyncReport> {
+  const report: SyncReport = {
+    authenticated: false,
+    userEmail: null,
+    role: null,
+    tables: [],
+    summary: [],
+  }
+
+  const sb = getSupabase()
+  if (!sb) {
+    report.summary.push("Supabase غير مُعدّ في هذا الموقع.")
+    return report
+  }
+
+  // 1) الجلسة والدور
+  const { data: sessionData } = await sb.auth.getSession()
+  const session = sessionData?.session ?? null
+  report.authenticated = Boolean(session)
+  report.userEmail = session?.user?.email ?? null
+  if (session?.access_token) {
+    try {
+      report.role = JSON.parse(atob(session.access_token.split(".")[1]))?.role ?? null
+    } catch {
+      report.role = null
+    }
+  } else {
+    report.role = "anon"
+  }
+  if (!report.authenticated) {
+    report.summary.push("⚠️ لا توجد جلسة دخول — الكتابة سترفض. سجّل الدخول مجدداً.")
+  }
+
+  // 2) المراجع المتاحة محلياً (لكشف المراجع المعلّقة)
+  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES)
+  const gradeIds = new Set(grades.map((g) => g.id))
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)))
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((r) => r.id))
+  const dueIds = new Set(localRows<any>(STORAGE_KEYS.DUES).map((r) => r.id))
+  const sessionIds = new Set(localRows<any>(STORAGE_KEYS.SESSIONS).map((r) => r.id))
+
+  // 3) تعريف الجداول بترتيب التبعيات
+  const specs: {
+    table: string
+    key: string
+    rows: () => any[]
+    map: (r: any) => any
+    label: (r: any) => string
+    refs?: (r: any) => { field: string; value: any; pool: Set<string> }[]
+  }[] = [
+    {
+      table: "grades", key: STORAGE_KEYS.GRADES,
+      rows: () => grades, map: toGradeRow,
+      label: (r) => r.name || r.id,
+    },
+    {
+      table: "groups", key: STORAGE_KEYS.GRADES,
+      rows: () => grades.flatMap((g) => g.groups.map((gr) => ({ ...gr, __grade: g }))),
+      map: (gr) => toGroupRows(gr.__grade).find((x: any) => x.id === gr.id),
+      label: (r) => r.name || r.id,
+      refs: (r) => [{ field: "grade_id", value: r.__grade?.id, pool: gradeIds }],
+    },
+    {
+      table: "students", key: STORAGE_KEYS.STUDENTS,
+      rows: () => localRows<any>(STORAGE_KEYS.STUDENTS), map: toStudentRow,
+      label: (r) => r.name || r.id,
+      refs: (r) => [
+        { field: "grade_id", value: r.gradeId, pool: gradeIds },
+        { field: "group_id", value: r.groupId, pool: groupIds },
+      ],
+    },
+    {
+      table: "dues", key: STORAGE_KEYS.DUES,
+      rows: () => localRows<any>(STORAGE_KEYS.DUES), map: (r) => toDueRow(r),
+      label: (r) => `استحقاق ${r.month}/${r.year}`,
+      refs: (r) => [
+        { field: "student_id", value: r.studentId, pool: studentIds },
+        { field: "group_id", value: r.groupId, pool: groupIds },
+      ],
+    },
+    {
+      table: "payments", key: STORAGE_KEYS.PAYMENTS,
+      rows: () => localRows<any>(STORAGE_KEYS.PAYMENTS), map: (r) => toPaymentRow(r),
+      label: (r) => `دفعة ${r.amount}`,
+      refs: (r) => [
+        { field: "student_id", value: r.studentId, pool: studentIds },
+        { field: "due_id", value: r.dueId, pool: dueIds },
+      ],
+    },
+    {
+      table: "exams", key: STORAGE_KEYS.EXAMS,
+      rows: () => localRows<any>(STORAGE_KEYS.EXAMS), map: toExamRow,
+      label: (r) => r.title || r.id,
+      refs: (r) => [
+        { field: "grade_id", value: r.gradeId, pool: gradeIds },
+        { field: "group_id", value: r.groupId, pool: groupIds },
+      ],
+    },
+    {
+      table: "sessions", key: STORAGE_KEYS.SESSIONS,
+      rows: () => localRows<any>(STORAGE_KEYS.SESSIONS), map: (r) => toSessionRow(r),
+      label: (r) => `حصة ${r.sessionDate}`,
+      refs: (r) => [{ field: "group_id", value: r.groupId, pool: groupIds }],
+    },
+    {
+      table: "attendance", key: STORAGE_KEYS.ATTENDANCE,
+      rows: () => localRows<any>(STORAGE_KEYS.ATTENDANCE), map: (r) => toAttendanceRow(r),
+      label: (r) => `حضور ${r.studentId}`,
+      refs: (r) => [
+        { field: "session_id", value: r.sessionId, pool: sessionIds },
+        { field: "student_id", value: r.studentId, pool: studentIds },
+      ],
+    },
+  ]
+
+  for (const spec of specs) {
+    const localList = spec.rows()
+    const tr: TableReport = {
+      table: spec.table,
+      localCount: localList.length,
+      remoteCount: 0,
+      pushed: 0,
+      failures: [],
+    }
+
+    // كشف المراجع المعلّقة محلياً قبل حتى محاولة الرفع
+    for (const r of localList) {
+      for (const ref of spec.refs?.(r) ?? []) {
+        if (ref.value && !ref.pool.has(ref.value)) {
+          tr.failures.push({
+            id: r.id,
+            label: spec.label(r),
+            code: "ORPHAN",
+            message: `المرجع ${ref.field} يشير إلى سجل غير موجود (${ref.value})`,
+            cause: ref.field,
+          })
+        }
+      }
+    }
+
+    // محاولة رفع كل سجل على حدة لمعرفة الفاشل بالضبط
+    for (const r of localList) {
+      const row = spec.map(r)
+      if (!row) continue
+      const { error } = await sb.from(spec.table).upsert([row], { onConflict: "id" })
+      if (error) {
+        tr.failures.push({
+          id: r.id,
+          label: spec.label(r),
+          code: error.code,
+          message: [error.message, error.details, error.hint].filter(Boolean).join(" | "),
+          cause: /Key \((\w+)\)/.exec(error.details || "")?.[1],
+        })
+      } else {
+        tr.pushed++
+      }
+    }
+
+    const { count } = await sb.from(spec.table).select("id", { count: "exact", head: true })
+    tr.remoteCount = count ?? 0
+
+    report.tables.push(tr)
+  }
+
+  // 4) الخلاصة
+  for (const t of report.tables) {
+    if (t.failures.length === 0 && t.localCount === t.remoteCount) continue
+    if (t.failures.length > 0) {
+      const f = t.failures[0]
+      report.summary.push(
+        `❌ ${t.table}: فشل ${t.failures.length} من ${t.localCount} — "${f.label}": ${f.message}`
+      )
+    } else if (t.localCount !== t.remoteCount) {
+      report.summary.push(
+        `⚠️ ${t.table}: ${t.localCount} محلياً مقابل ${t.remoteCount} في القاعدة.`
+      )
+    }
+  }
+  if (report.summary.length === 0) {
+    report.summary.push("✅ كل الجداول متطابقة — كل البيانات محفوظة في قاعدة البيانات.")
+  }
+
+  return report
 }
