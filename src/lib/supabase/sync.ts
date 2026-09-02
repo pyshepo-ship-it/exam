@@ -357,7 +357,7 @@ function warnSyncError(err: unknown) {
     warnedOnce = true;
     import("react-hot-toast")
       .then(({ toast }) =>
-        toast.error("تعذر المزامنة مع Supabase حالياً — بياناتك محفوظة وسنحاول المزامنة تلقائياً")
+        toast.error(`تعذر الحفظ في قاعدة البيانات: ${explainSupabaseError(err)}`, { duration: 8000 })
       )
       .catch(() => {});
   }
@@ -817,9 +817,40 @@ export async function checkSupabaseConnection(): Promise<ConnectionCheck> {
       emitSyncStatus()
     }
   } catch (err: any) {
-    result.error = err?.message || String(err)
+    result.error = explainSupabaseError(err)
   }
 
   result.latencyMs = Date.now() - started
   return result
+}
+
+/** ترجمة أخطاء Supabase الشائعة إلى رسالة عربية واضحة مع خطوة الإصلاح */
+export function explainSupabaseError(err: any): string {
+  const raw = err?.message || String(err ?? "")
+  const code = err?.code || ""
+
+  if (/permission denied/i.test(raw) || code === "42501") {
+    return (
+      "صلاحيات قاعدة البيانات ناقصة (permission denied). " +
+      "الحل: افتح Supabase ← SQL Editor وشغّل ملف supabase/migrations/004_fix_permissions.sql ثم أعد الفحص."
+    )
+  }
+  if (/does not exist/i.test(raw) || code === "42P01") {
+    return (
+      "أحد الجداول غير موجود في قاعدة البيانات. " +
+      "الحل: شغّل ملف supabase/schema.sql في Supabase ← SQL Editor."
+    )
+  }
+  if (/row-level security|violates row-level/i.test(raw) || code === "42501") {
+    return (
+      "سياسة الحماية (RLS) تمنع الكتابة. تأكد من تسجيل الدخول، ثم شغّل supabase/schema.sql مجدداً."
+    )
+  }
+  if (/JWT|not authenticated|invalid token|session/i.test(raw)) {
+    return "انتهت جلسة الدخول. سجّل الخروج ثم سجّل الدخول مرة أخرى."
+  }
+  if (/fetch|network|Failed to fetch/i.test(raw)) {
+    return "تعذّر الوصول إلى Supabase — تحقق من اتصال الإنترنت أو رابط المشروع."
+  }
+  return raw
 }

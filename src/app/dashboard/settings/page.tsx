@@ -707,6 +707,30 @@ export default function SettingsPage() {
                     </Button>
                   </div>
 
+                  {conn && !conn.ok && /permission denied|صلاحيات/i.test(conn.error || "") && (
+                    <div className="rounded-lg bg-white dark:bg-gray-900 border border-red-300 dark:border-red-800 p-4 text-sm space-y-2">
+                      <p className="font-bold text-red-700 dark:text-red-400">
+                        كيف تُصلح هذا الخطأ (دقيقة واحدة):
+                      </p>
+                      <ol className="list-decimal pr-5 space-y-1 text-gray-700 dark:text-gray-300">
+                        <li>افتح لوحة تحكم Supabase الخاصة بمشروعك.</li>
+                        <li>من القائمة الجانبية اختر <span className="font-semibold">SQL Editor</span> ثم <span className="font-semibold">New query</span>.</li>
+                        <li>
+                          الصق محتوى الملف{" "}
+                          <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs">
+                            supabase/migrations/004_fix_permissions.sql
+                          </code>{" "}
+                          الموجود في المشروع.
+                        </li>
+                        <li>اضغط <span className="font-semibold">Run</span>.</li>
+                        <li>ارجع هنا واضغط <span className="font-semibold">إعادة الفحص</span>.</li>
+                      </ol>
+                      <p className="text-xs text-gray-500">
+                        هذا الملف يمنح صلاحيات الجداول لأدوار Supabase فقط — لا يمسح ولا يعدّل أي بيانات.
+                      </p>
+                    </div>
+                  )}
+
                   {conn?.ok && (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">

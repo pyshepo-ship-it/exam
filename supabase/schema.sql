@@ -269,6 +269,23 @@ DROP POLICY IF EXISTS "public read app_settings" ON app_settings;
 CREATE POLICY "public read app_settings" ON app_settings FOR SELECT TO anon, authenticated USING (true);
 
 -- ============================================================
+-- 3.4) صلاحيات الجداول (GRANT) — مهم جداً
+--      بدون هذه الأوامر قد يظهر خطأ "permission denied for table ..."
+--      حتى لو كانت سياسات RLS صحيحة، لأن الصلاحية تُفحص قبل RLS.
+-- ============================================================
+GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO anon;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL PRIVILEGES ON TABLES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT SELECT ON TABLES TO anon;
+
+-- ============================================================
 -- 4) اكتمل!
 --    لا توجد أي أوامر حذف بيانات في هذا الملف.
 --    جاهز لإعادة التشغيل في أي وقت دون أي مخاطرة.
