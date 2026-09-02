@@ -11,7 +11,8 @@ import {
   ClipboardCheck,
   CheckCircle,
   AlertCircle,
-  TrendingUp
+  TrendingUp,
+  Megaphone
 } from "lucide-react"
 import Link from "next/link"
 import {
@@ -21,8 +22,8 @@ import {
   getPayments,
   getExams,
   getAttendance,
-  initializeSampleData,
 } from "@/lib/data-storage"
+import SampleDataBanner from "@/components/sample-data-banner"
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({
@@ -36,9 +37,7 @@ export default function DashboardPage() {
     totalGrades: 0,
   })
 
-  useEffect(() => {
-    initializeSampleData()
-
+  const loadStats = () => {
     const grades = getGrades()
     const students = getStudents()
     const dues = getDues()
@@ -63,6 +62,10 @@ export default function DashboardPage() {
       attendanceRate,
       totalGrades: grades.length,
     })
+  }
+
+  useEffect(() => {
+    loadStats()
   }, [])
 
   const statsCards = [
@@ -93,6 +96,13 @@ export default function DashboardPage() {
   ]
 
   const quickActions = [
+    {
+      label: "الإعلانات ولوحة الشرف",
+      description: "إعلانات، متميزين الشهر، ملفات وروابط",
+      icon: Megaphone,
+      href: "/dashboard/announcements",
+      color: "from-amber-500 to-orange-600",
+    },
     {
       label: "إضافة طالب",
       description: "تسجيل طالب جديد في النظام",
@@ -142,6 +152,9 @@ export default function DashboardPage() {
         <div className="absolute top-0 left-0 w-64 h-64 bg-white/10 rounded-full -translate-x-1/2 -translate-y-1/2" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-white/5 rounded-full translate-x-1/3 translate-y-1/2" />
       </motion.div>
+
+      {/* تنبيه البيانات التجريبية */}
+      <SampleDataBanner onRemoved={loadStats} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

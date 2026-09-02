@@ -32,6 +32,7 @@ import {
   Student,
   Session,
   Attendance,
+  getAllGroups,
   getGrades,
   getStudents,
   getSessions,
@@ -68,7 +69,8 @@ export default function AttendancePage() {
     setAttendance(getAttendance())
   }, [])
 
-  const availableGroups = grades.find(g => g.id === selectedGrade)?.groups || []
+  // كل المجموعات في جميع الصفوف (مع اسم الصف)
+  const allGroups = getAllGroups(grades)
   const groupStudents = students.filter(s => s.groupId === selectedGroup && s.status === 'active')
   const currentSession = sessions.find(s => s.id === selectedSession)
   
@@ -253,16 +255,19 @@ export default function AttendancePage() {
               value={selectedGroup} 
               onValueChange={(val) => {
                 setSelectedGroup(val)
+                const group = allGroups.find(g => g.id === val)
+                if (group) setSelectedGrade(group.gradeId)
                 setSelectedSession("")
               }}
-              disabled={!selectedGrade}
             >
               <SelectTrigger className="mt-1">
                 <SelectValue placeholder="اختر المجموعة" />
               </SelectTrigger>
               <SelectContent>
-                {availableGroups.map(group => (
-                  <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                {allGroups.map(group => (
+                  <SelectItem key={group.id} value={group.id}>
+                    {group.gradeName} - {group.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -331,7 +336,7 @@ export default function AttendancePage() {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${
+                  className={`flex flex-col gap-3 p-4 rounded-xl border transition-colors sm:flex-row sm:items-center sm:justify-between ${
                     studentAttendance?.status === 'present' 
                       ? 'bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-900' 
                       : studentAttendance?.status === 'absent'
@@ -451,7 +456,7 @@ export default function AttendancePage() {
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-md w-full shadow-2xl"
+            className="bg-white dark:bg-gray-900 rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[90vh] overflow-y-auto shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4">

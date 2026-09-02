@@ -38,7 +38,8 @@ import {
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
-import { Grade, Group, getGrades, saveGrades, getStudents, initializeSampleData } from "@/lib/data-storage"
+import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear } from "@/lib/data-storage"
+import SampleDataBanner from "@/components/sample-data-banner"
 
 // Days of week
 const DAYS = [
@@ -75,7 +76,7 @@ export default function GradesPage() {
   
   const [gradeForm, setGradeForm] = useState({
     name: "",
-    academicYear: "2025-2026",
+    academicYear: getStoredAcademicYear(),
   })
   
   const [groupForm, setGroupForm] = useState({
@@ -88,7 +89,6 @@ export default function GradesPage() {
 
   // Load data
   useEffect(() => {
-    initializeSampleData()
     setGrades(getGrades())
   }, [])
 
@@ -129,7 +129,7 @@ export default function GradesPage() {
       })
     } else {
       setEditingGrade(null)
-      setGradeForm({ name: "", academicYear: "2025-2026" })
+      setGradeForm({ name: "", academicYear: getStoredAcademicYear() })
     }
     setGradeDialogOpen(true)
   }
@@ -313,6 +313,9 @@ export default function GradesPage() {
           </Button>
         </div>
       </motion.div>
+
+      {/* تنبيه البيانات التجريبية */}
+      <SampleDataBanner onRemoved={() => setGrades(getGrades())} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -646,7 +649,7 @@ export default function GradesPage() {
               <Label htmlFor="academicYear">العام الدراسي *</Label>
               <Input
                 id="academicYear"
-                placeholder="مثال: 2025-2026"
+                placeholder="مثال: 2026-2027"
                 value={gradeForm.academicYear}
                 onChange={(e) => setGradeForm(prev => ({ ...prev, academicYear: e.target.value }))}
                 className="mt-1"

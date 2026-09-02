@@ -42,9 +42,11 @@ import {
   Exam,
   Question,
   SubQuestion,
+  getAllGroups,
   getGrades,
   getExams,
   saveExams,
+  getStoredAcademicYear,
 } from "@/lib/data-storage"
 
 const MONTHS = [
@@ -52,19 +54,45 @@ const MONTHS = [
   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
 ]
 
+// أنواع الأسئلة الرئيسية (رأس السؤال يُكتب تلقائياً حسب النوع)
 const QUESTION_TYPES = [
-  { id: 1, label: "اختر الإجابة الصحيحة", desc: "سؤال متعدد الخيارات" },
-  { id: 2, label: "أكمل", desc: "إكمال الجمل الناقصة" },
-  { id: 3, label: "صح أو خطأ", desc: "ضع علامة صح أو خطأ" },
-  { id: 4, label: "علل / بم تفسر / اذكر أهمية", desc: "أسئلة التعليل والتفسير" },
-  { id: 5, label: "صحح ما تحته خط", desc: "تصحيح الكلمات الخاطئة" },
+  { id: 1, label: "اختر الإجابة الصحيحة", desc: "جمل فرعية، لكل منها 4 خيارات (أ، ب، ج، د) مع تحديد الإجابة الصحيحة" },
+  { id: 2, label: "أكمل", desc: "جمل مقسومة لجزأين والفراغ في المنتصف أو في النهاية" },
+  { id: 3, label: "صح أو خطأ", desc: "جمل يضع الطالب أمامها (صح) أو (خطأ)" },
+  { id: 4, label: "علل / بم تفسر / اذكر أهمية", desc: "جمل مع سطر أو سطرين من النقاط لكتابة الإجابة" },
+  { id: 5, label: "صحح ما تحته خط", desc: "جمل مع تحديد عدد الكلمات تحتها خط وخط النقاط للإجابة" },
 ]
 
-const SUBTYPE_4 = [
-  { id: "علل", label: "علل لما يأتي" },
-  { id: "بم تفسر", label: "بم تفسر" },
-  { id: "اذكر أهمية", label: "اذكر أهمية" },
+// أزرار إضافة السؤال (النوع 4 مقسم لثلاثة أنواع فرعية)
+const QUESTION_BUTTONS: { type: 1 | 2 | 3 | 4 | 5; label: string; reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية" }[] = [
+  { type: 1, label: "اختر الإجابة الصحيحة" },
+  { type: 2, label: "أكمل" },
+  { type: 3, label: "صح أو خطأ" },
+  { type: 4, label: "علل لما يأتي", reasoningType: "علل" },
+  { type: 4, label: "بم تفسر", reasoningType: "بم تفسر" },
+  { type: 4, label: "اذكر أهمية", reasoningType: "اذكر أهمية" },
+  { type: 5, label: "صحح ما تحته خط" },
 ]
+
+const ARABIC_ORDINALS = ["الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"]
+
+const DOTS_LINE = "................................................................"
+
+// رأس السؤال يُكتب تلقائياً حسب النوع (النص المخصص القديم له الأولوية)
+const getQuestionHeader = (q: Question): string => {
+  if (q.headerText && q.headerText.trim()) return q.headerText
+  switch (q.questionType) {
+    case 1: return "اختر الإجابة الصحيحة"
+    case 2: return "أكمل"
+    case 3: return "ضع علامة (صح) أو (خطأ)"
+    case 4:
+      if (q.reasoningType === "بم تفسر") return "بم تفسر:"
+      if (q.reasoningType === "اذكر أهمية") return "اذكر أهمية:"
+      return "علل لما يأتي:"
+    case 5: return "صحح ما تحته خط"
+    default: return ""
+  }
+}
 
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
@@ -82,7 +110,7 @@ export default function ExamsPage() {
     title: "",
     month: new Date().getMonth() + 1,
     unit: "",
-    academicYear: "2025-2026",
+    academicYear: getStoredAcademicYear(),
     duration: 60,
     totalMarks: 0,
     questions: [] as Question[],
@@ -93,8 +121,8 @@ export default function ExamsPage() {
     setExams(getExams())
   }, [])
 
-  // Available groups
-  const availableGroups = grades.find(g => g.id === examForm.gradeId)?.groups || []
+  // كل المجموعات في جميع الصفوف (مع اسم الصف)
+  const allGroups = getAllGroups(grades)
 
   // Toggle question expansion
   const toggleQuestion = (questionId: string) => {
@@ -105,35 +133,49 @@ export default function ExamsPage() {
     )
   }
 
-  // Add new question
-  const addQuestion = (type: 1 | 2 | 3 | 4 | 5) => {
+  // إنشاء سؤال فرعي فارغ حسب النوع
+  const makeSubQuestion = (type: 1 | 2 | 3 | 4 | 5, index: number): SubQuestion => {
+    const id = `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`
+    const sub: SubQuestion = {
+      id,
+      orderNumber: index + 1,
+      questionText: "",
+      marks: 1,
+    }
+    if (type === 1) {
+      sub.choices = [
+        { id: "1", choiceKey: "أ", choiceText: "", isCorrect: false },
+        { id: "2", choiceKey: "ب", choiceText: "", isCorrect: false },
+        { id: "3", choiceKey: "ج", choiceText: "", isCorrect: false },
+        { id: "4", choiceKey: "د", choiceText: "", isCorrect: false },
+      ]
+    } else if (type === 2) {
+      // جملة أولى + جملة ثانية، والفراغ في المنتصف (between) أو في النهاية (after)
+      sub.parts = [
+        { id: `${id}-p1`, partOrder: 1, partText: "", blankPosition: "between" },
+        { id: `${id}-p2`, partOrder: 2, partText: "", blankPosition: "between" },
+      ]
+    } else if (type === 5) {
+      sub.corrections = [
+        { id: `${id}-c1`, wrongWord: "", correctAnswer: "", wordPosition: 1, wordCount: 1 },
+      ]
+    } else if (type === 4) {
+      sub.answerLines = 2
+    }
+    return sub
+  }
+
+  // Add new question (4 أسئلة فرعية جاهزة)
+  const addQuestion = (type: 1 | 2 | 3 | 4 | 5, reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية") => {
     const questionNumber = examForm.questions.length + 1
     const newQuestion: Question = {
-      id: Date.now().toString(),
+      id: Date.now().toString() + "-" + Math.random().toString(36).slice(2, 6),
       questionType: type,
       questionNumber,
       orderNumber: questionNumber,
       headerText: "",
-      subQuestions: [
-        {
-          id: Date.now().toString() + "-1",
-          orderNumber: 1,
-          questionText: "",
-          marks: 1,
-          choices: type === 1 ? [
-            { id: "1", choiceKey: "أ", choiceText: "", isCorrect: false },
-            { id: "2", choiceKey: "ب", choiceText: "", isCorrect: false },
-            { id: "3", choiceKey: "ج", choiceText: "", isCorrect: false },
-            { id: "4", choiceKey: "د", choiceText: "", isCorrect: false },
-          ] : undefined,
-          parts: type === 2 ? [
-            { id: "1", partOrder: 1, partText: "", blankPosition: "after" },
-          ] : undefined,
-          corrections: type === 5 ? [
-            { id: "1", wrongWord: "", correctAnswer: "", wordPosition: 0 },
-          ] : undefined,
-        },
-      ],
+      reasoningType: type === 4 ? reasoningType || "علل" : undefined,
+      subQuestions: [0, 1, 2, 3].map(i => makeSubQuestion(type, i)),
     }
 
     setExamForm(prev => ({
@@ -143,12 +185,12 @@ export default function ExamsPage() {
     setExpandedQuestions(prev => [...prev, newQuestion.id])
   }
 
-  // Update question header
-  const updateQuestionHeader = (questionId: string, text: string) => {
+  // Update reasoning type (type 4)
+  const updateReasoningType = (questionId: string, value: string) => {
     setExamForm(prev => ({
       ...prev,
       questions: prev.questions.map(q =>
-        q.id === questionId ? { ...q, headerText: text } : q
+        q.id === questionId ? { ...q, reasoningType: value as Question["reasoningType"] } : q
       ),
     }))
   }
@@ -159,25 +201,9 @@ export default function ExamsPage() {
       ...prev,
       questions: prev.questions.map(q => {
         if (q.id === questionId) {
-          const newSubQuestion: SubQuestion = {
-            id: Date.now().toString(),
-            orderNumber: q.subQuestions.length + 1,
-            questionText: "",
-            marks: 1,
-            choices: q.questionType === 1 ? [
-              { id: "1", choiceKey: "أ", choiceText: "", isCorrect: false },
-              { id: "2", choiceKey: "ب", choiceText: "", isCorrect: false },
-              { id: "3", choiceKey: "ج", choiceText: "", isCorrect: false },
-              { id: "4", choiceKey: "د", choiceText: "", isCorrect: false },
-            ] : undefined,
-            parts: q.questionType === 2 ? [
-              { id: "1", partOrder: 1, partText: "", blankPosition: "after" },
-            ] : undefined,
-            corrections: q.questionType === 5 ? [
-              { id: "1", wrongWord: "", correctAnswer: "", wordPosition: 0 },
-            ] : undefined,
-          }
-          return { ...q, subQuestions: [...q.subQuestions, newSubQuestion] }
+          const newSub = makeSubQuestion(q.questionType, q.subQuestions.length)
+          newSub.orderNumber = q.subQuestions.length + 1
+          return { ...q, subQuestions: [...q.subQuestions, newSub] }
         }
         return q
       }),
@@ -202,8 +228,8 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update choice
-  const updateChoice = (questionId: string, subQuestionId: string, choiceId: string, field: string, value: any) => {
+  // Update choice text
+  const updateChoice = (questionId: string, subQuestionId: string, choiceId: string, text: string) => {
     setExamForm(prev => ({
       ...prev,
       questions: prev.questions.map(q => {
@@ -214,9 +240,7 @@ export default function ExamsPage() {
               if (sq.id === subQuestionId && sq.choices) {
                 return {
                   ...sq,
-                  choices: sq.choices.map(c =>
-                    c.id === choiceId ? { ...c, [field]: value } : c
-                  ),
+                  choices: sq.choices.map(c => (c.id === choiceId ? { ...c, choiceText: text } : c)),
                 }
               }
               return sq
@@ -228,8 +252,8 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update part
-  const updatePart = (questionId: string, subQuestionId: string, partId: string, field: string, value: any) => {
+  // Set the correct choice
+  const setCorrectChoice = (questionId: string, subQuestionId: string, choiceId: string) => {
     setExamForm(prev => ({
       ...prev,
       questions: prev.questions.map(q => {
@@ -237,12 +261,10 @@ export default function ExamsPage() {
           return {
             ...q,
             subQuestions: q.subQuestions.map(sq => {
-              if (sq.id === subQuestionId && sq.parts) {
+              if (sq.id === subQuestionId && sq.choices) {
                 return {
                   ...sq,
-                  parts: sq.parts.map(p =>
-                    p.id === partId ? { ...p, [field]: value } : p
-                  ),
+                  choices: sq.choices.map(c => ({ ...c, isCorrect: c.id === choiceId })),
                 }
               }
               return sq
@@ -254,8 +276,8 @@ export default function ExamsPage() {
     }))
   }
 
-  // Add part
-  const addPart = (questionId: string, subQuestionId: string) => {
+  // Update part text (type 2) — يضيف الجزء تلقائياً إن لم يوجد (بيانات قديمة)
+  const updatePartText = (questionId: string, subQuestionId: string, partOrder: number, text: string) => {
     setExamForm(prev => ({
       ...prev,
       questions: prev.questions.map(q => {
@@ -264,14 +286,65 @@ export default function ExamsPage() {
             ...q,
             subQuestions: q.subQuestions.map(sq => {
               if (sq.id === subQuestionId && sq.parts) {
+                const exists = sq.parts.some(p => p.partOrder === partOrder)
                 return {
                   ...sq,
-                  parts: [...sq.parts, {
-                    id: Date.now().toString(),
-                    partOrder: sq.parts.length + 1,
-                    partText: "",
-                    blankPosition: "after",
-                  }],
+                  parts: exists
+                    ? sq.parts.map(p => (p.partOrder === partOrder ? { ...p, partText: text } : p))
+                    : [...sq.parts, {
+                        id: `${sq.id}-p${partOrder}`,
+                        partOrder,
+                        partText: text,
+                        blankPosition: "between" as const,
+                      }],
+                }
+              }
+              return sq
+            }),
+          }
+        }
+        return q
+      }),
+    }))
+  }
+
+  // Update blank position (type 2): between | after
+  const updateBlankPosition = (questionId: string, subQuestionId: string, position: "between" | "after") => {
+    setExamForm(prev => ({
+      ...prev,
+      questions: prev.questions.map(q => {
+        if (q.id === questionId) {
+          return {
+            ...q,
+            subQuestions: q.subQuestions.map(sq => {
+              if (sq.id === subQuestionId && sq.parts && sq.parts.length >= 2) {
+                return {
+                  ...sq,
+                  parts: sq.parts.map((p, i) => (i === 1 ? { ...p, blankPosition: position } : p)),
+                }
+              }
+              return sq
+            }),
+          }
+        }
+        return q
+      }),
+    }))
+  }
+
+  // Update correction fields (type 5)
+  const updateCorrection = (questionId: string, subQuestionId: string, field: "wordPosition" | "wordCount", value: number) => {
+    setExamForm(prev => ({
+      ...prev,
+      questions: prev.questions.map(q => {
+        if (q.id === questionId) {
+          return {
+            ...q,
+            subQuestions: q.subQuestions.map(sq => {
+              if (sq.id === subQuestionId && sq.corrections) {
+                return {
+                  ...sq,
+                  corrections: sq.corrections.map(c => ({ ...c, [field]: value })),
                 }
               }
               return sq
@@ -334,7 +407,7 @@ export default function ExamsPage() {
         title: "",
         month: new Date().getMonth() + 1,
         unit: "",
-        academicYear: "2025-2026",
+        academicYear: getStoredAcademicYear(),
         duration: 60,
         totalMarks: 0,
         questions: [],
@@ -405,6 +478,61 @@ export default function ExamsPage() {
     return 'الكل'
   }
 
+  // ---- معاينة: نوع 2 (أكمل) ----
+  const renderComplete = (sq: SubQuestion) => {
+    const parts = sq.parts || []
+    const blank = <span className="tracking-wide text-gray-500">....................</span>
+    if (parts.length >= 2) {
+      const p1 = parts[0].partText
+      const p2 = parts[1].partText
+      const atEnd = parts[1].blankPosition === "after"
+      if (atEnd) {
+        return (
+          <>
+            {p1} {p2} <span className="tracking-wide text-gray-500">....................</span>
+          </>
+        )
+      }
+      return (
+        <>
+          {p1} <span className="tracking-wide text-gray-500">....................</span> {p2}
+        </>
+      )
+    }
+    // بيانات قديمة: أجزاء مفصولة بفراغات
+    return parts.map((part, i) => (
+      <span key={part.id}>
+        {part.partText}
+        {i < parts.length - 1 && " .................... "}
+      </span>
+    ))
+  }
+
+  // ---- معاينة: نوع 5 (صحح ما تحته خط) ----
+  const renderCorrectionSentence = (sq: SubQuestion) => {
+    const words = sq.questionText.split(/\s+/).filter(Boolean)
+    if (words.length === 0) return null
+    const corr = sq.corrections?.[0]
+    const start = corr && corr.wordPosition > 0 ? corr.wordPosition - 1 : 0
+    const count = corr?.wordCount && corr.wordCount > 0 ? corr.wordCount : 1
+    return words.map((w, i) => (
+      <span
+        key={i}
+        className={
+          i >= start && i < start + count
+            ? "underline decoration-2 underline-offset-4"
+            : undefined
+        }
+      >
+        {w}
+        {i < words.length - 1 && " "}
+      </span>
+    ))
+  }
+
+  // عدد إجمالي الأسئلة الفرعية
+  const totalSubQuestions = examForm.questions.reduce((s, q) => s + q.subQuestions.length, 0)
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -438,9 +566,9 @@ export default function ExamsPage() {
         className="bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30 border border-indigo-200 dark:border-indigo-900 rounded-2xl p-6"
       >
         <h3 className="font-bold text-gray-900 dark:text-white mb-4">
-          أنواع الأسئلة المتاحة (5 أنواع)
+          أنواع الأسئلة (رأس كل سؤال يُكتب تلقائياً حسب النوع)
         </h3>
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {QUESTION_TYPES.map((type) => (
             <div
               key={type.id}
@@ -561,7 +689,7 @@ export default function ExamsPage() {
               {editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}
             </DialogTitle>
             <DialogDescription>
-              قم بملء بيانات الاختبار وإضافة الأسئلة
+              اختر الصف والمجموعة والشهر ثم أضف الأسئلة، والأسئلة الفرعية تحت كل رأس سؤال
             </DialogDescription>
           </DialogHeader>
 
@@ -587,16 +715,29 @@ export default function ExamsPage() {
               <div>
                 <Label>المجموعة (اختياري)</Label>
                 <Select 
-                  value={examForm.groupId} 
-                  onValueChange={(val) => setExamForm(prev => ({ ...prev, groupId: val }))}
+                  value={examForm.groupId || "all"} 
+                  onValueChange={(val) => {
+                    if (val === "all") {
+                      setExamForm(prev => ({ ...prev, groupId: "" }))
+                    } else {
+                      const group = allGroups.find(g => g.id === val)
+                      setExamForm(prev => ({
+                        ...prev,
+                        gradeId: group ? group.gradeId : prev.gradeId,
+                        groupId: val,
+                      }))
+                    }
+                  }}
                 >
                   <SelectTrigger className="mt-1">
                     <SelectValue placeholder="كل المجموعات" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">كل المجموعات</SelectItem>
-                    {availableGroups.map(group => (
-                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                    <SelectItem value="all">كل المجموعات (للصف كله)</SelectItem>
+                    {allGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.gradeName} - {group.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -605,13 +746,13 @@ export default function ExamsPage() {
                 <Label htmlFor="examTitle">عنوان الاختبار *</Label>
                 <Input
                   id="examTitle"
-                  placeholder="مثال: اختبار شهر أغسطس"
+                  placeholder="مثال: اختبار شهر سبتمبر"
                   value={examForm.title}
                   onChange={(e) => setExamForm(prev => ({ ...prev, title: e.target.value }))}
                   className="mt-1"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
                   <Label>الشهر</Label>
                   <Select 
@@ -653,18 +794,18 @@ export default function ExamsPage() {
 
             {/* Add Question Buttons */}
             <div>
-              <Label>إضافة سؤال</Label>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mt-2">
-                {QUESTION_TYPES.map(type => (
+              <Label>إضافة سؤال رئيسي (رأس السؤال يُكتب تلقائياً)</Label>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                {QUESTION_BUTTONS.map((btn, i) => (
                   <Button
-                    key={type.id}
+                    key={i}
                     variant="outline"
                     size="sm"
-                    onClick={() => addQuestion(type.id as 1 | 2 | 3 | 4 | 5)}
+                    onClick={() => addQuestion(btn.type, btn.reasoningType)}
                     className="text-xs"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>النوع {type.id}</span>
+                    <span>{btn.label}</span>
                   </Button>
                 ))}
               </div>
@@ -672,19 +813,19 @@ export default function ExamsPage() {
 
             {/* Questions List */}
             <div className="space-y-4">
-              {examForm.questions.map((question) => (
+              {examForm.questions.map((question, qIndex) => (
                 <Card key={question.id} className="border-gray-200 dark:border-gray-800">
                   <CardHeader 
                     className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors py-3"
                     onClick={() => toggleQuestion(question.id)}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 flex-wrap">
                         <Badge className="bg-gradient-to-br from-indigo-500 to-purple-600">
-                          السؤال {question.questionNumber}
+                          السؤال {ARABIC_ORDINALS[qIndex] || qIndex + 1}
                         </Badge>
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                          {QUESTION_TYPES.find(t => t.id === question.questionType)?.label}
+                        <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                          {getQuestionHeader(question)}
                         </span>
                         <span className="text-xs text-gray-500">
                           ({question.subQuestions.length} سؤال فرعي)
@@ -713,30 +854,33 @@ export default function ExamsPage() {
 
                   {expandedQuestions.includes(question.id) && (
                     <CardContent className="space-y-4 pt-0">
-                      {/* Question Header */}
-                      <div>
-                        <Label>رأس السؤال (نص السؤال الرئيسي)</Label>
-                        <Input
-                          placeholder={
-                            question.questionType === 1 ? "السؤال الأول: اختر الإجابة الصحيحة" :
-                            question.questionType === 2 ? "السؤال الثاني: أكمل ما يأتي" :
-                            question.questionType === 3 ? "السؤال الثالث: ضع علامة (صح) أو (خطأ)" :
-                            question.questionType === 4 ? "السؤال الرابع: علل لما يأتي" :
-                            "السؤال الخامس: صحح ما تحته خط"
-                          }
-                          value={question.headerText}
-                          onChange={(e) => updateQuestionHeader(question.id, e.target.value)}
-                          className="mt-1"
-                        />
-                      </div>
+                      {/* Type 4: reasoning type selector */}
+                      {question.questionType === 4 && (
+                        <div className="flex items-center gap-3">
+                          <Label className="shrink-0">نوع السؤال:</Label>
+                          <Select
+                            value={question.reasoningType || "علل"}
+                            onValueChange={(val) => updateReasoningType(question.id, val)}
+                          >
+                            <SelectTrigger className="w-44">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="علل">علل لما يأتي</SelectItem>
+                              <SelectItem value="بم تفسر">بم تفسر</SelectItem>
+                              <SelectItem value="اذكر أهمية">اذكر أهمية</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
 
                       {/* Sub Questions */}
                       <div className="space-y-3">
                         {question.subQuestions.map((sq, index) => (
-                          <div key={sq.id} className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-3">
+                          <div key={sq.id} className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-3 bg-gray-50/50 dark:bg-gray-800/30">
                             <div className="flex items-center justify-between">
                               <Badge variant="outline" className="text-xs">
-                                {index + 1})
+                                السؤال الفرعي {index + 1}
                               </Badge>
                               {question.subQuestions.length > 1 && (
                                 <Button
@@ -750,82 +894,181 @@ export default function ExamsPage() {
                               )}
                             </div>
 
-                            {/* Question Text */}
-                            <div>
-                              <Label className="text-xs">نص السؤال</Label>
-                              <Input
-                                placeholder={
-                                  question.questionType === 4 ? "مثال: علل: شروق الشمس من الشرق" :
-                                  question.questionType === 5 ? "مثال: الشمس تشرق من الغرب" :
-                                  "أدخل نص السؤال"
-                                }
-                                value={sq.questionText}
-                                onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                className="mt-1"
-                              />
-                            </div>
-
-                            {/* Type 1: Choices */}
-                            {question.questionType === 1 && sq.choices && (
-                              <div className="grid grid-cols-2 gap-2">
-                                {sq.choices.map((choice) => (
-                                  <div key={choice.id} className="flex items-center gap-2">
-                                    <span className="text-sm font-bold text-gray-500 w-4">{choice.choiceKey})</span>
-                                    <Input
-                                      placeholder={`الخيار ${choice.choiceKey}`}
-                                      value={choice.choiceText}
-                                      onChange={(e) => updateChoice(question.id, sq.id, choice.id, "choiceText", e.target.value)}
-                                      className="h-8 text-sm"
-                                    />
-                                  </div>
-                                ))}
-                              </div>
+                            {/* ===== Type 1: اختر الإجابة الصحيحة ===== */}
+                            {question.questionType === 1 && (
+                              <>
+                                <div>
+                                  <Label className="text-xs">نص السؤال</Label>
+                                  <Input
+                                    placeholder="مثال: القمر يدور حول"
+                                    value={sq.questionText}
+                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                    className="mt-1"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {sq.choices?.map((choice) => (
+                                    <div key={choice.id} className="flex items-center gap-2">
+                                      <span className="text-sm font-bold text-gray-500 w-4 shrink-0">{choice.choiceKey} -</span>
+                                      <Input
+                                        placeholder={`الخيار ${choice.choiceKey}`}
+                                        value={choice.choiceText}
+                                        onChange={(e) => updateChoice(question.id, sq.id, choice.id, e.target.value)}
+                                        className="h-8 text-sm"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-xs shrink-0">الإجابة الصحيحة:</Label>
+                                  <Select
+                                    value={sq.choices?.find(c => c.isCorrect)?.id || ""}
+                                    onValueChange={(val) => setCorrectChoice(question.id, sq.id, val)}
+                                  >
+                                    <SelectTrigger className="w-56 h-8">
+                                      <SelectValue placeholder="حدد الإجابة الصحيحة" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {sq.choices?.map(c => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                          {c.choiceKey} - {c.choiceText || `الخيار ${c.choiceKey}`}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </>
                             )}
 
-                            {/* Type 2: Parts */}
+                            {/* ===== Type 2: أكمل ===== */}
                             {question.questionType === 2 && sq.parts && (
-                              <div className="space-y-2">
-                                {sq.parts.map((part) => (
-                                  <div key={part.id} className="flex items-center gap-2">
+                              <>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  <div>
+                                    <Label className="text-xs">الجملة الأولى</Label>
                                     <Input
-                                      placeholder={`الجزء ${part.partOrder}`}
-                                      value={part.partText}
-                                      onChange={(e) => updatePart(question.id, sq.id, part.id, "partText", e.target.value)}
-                                      className="h-8 text-sm"
+                                      placeholder="مثال: القمر يدور حول"
+                                      value={sq.parts[0]?.partText || ""}
+                                      onChange={(e) => updatePartText(question.id, sq.id, 1, e.target.value)}
+                                      className="mt-1 h-8 text-sm"
                                     />
-                                    <span className="text-red-500 font-bold">___</span>
                                   </div>
-                                ))}
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => addPart(question.id, sq.id)}
-                                  className="text-xs"
-                                >
-                                  <Plus className="w-3 h-3" />
-                                  إضافة جزء
-                                </Button>
+                                  <div>
+                                    <Label className="text-xs">الجملة الثانية</Label>
+                                    <Input
+                                      placeholder="مثال: الأرض"
+                                      value={sq.parts[1]?.partText || ""}
+                                      onChange={(e) => updatePartText(question.id, sq.id, 2, e.target.value)}
+                                      className="mt-1 h-8 text-sm"
+                                    />
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-xs shrink-0">موضع الفراغ:</Label>
+                                  <Select
+                                    value={sq.parts[1]?.blankPosition || "between"}
+                                    onValueChange={(val) => updateBlankPosition(question.id, sq.id, val as "between" | "after")}
+                                  >
+                                    <SelectTrigger className="w-56 h-8">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="between">في منتصف الجملتين</SelectItem>
+                                      <SelectItem value="after">في نهاية الجملة</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                {/* معاينة مصغرة */}
+                                <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
+                                  {renderComplete(sq)}
+                                </p>
+                              </>
+                            )}
+
+                            {/* ===== Type 3: صح أو خطأ ===== */}
+                            {question.questionType === 3 && (
+                              <div>
+                                <Label className="text-xs">نص العبارة (سيُضاف (   ) في نهايتها تلقائياً)</Label>
+                                <Input
+                                  placeholder="مثال: القمر يدور حول الأرض"
+                                  value={sq.questionText}
+                                  onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                  className="mt-1"
+                                />
                               </div>
                             )}
 
-                            {/* Type 5: Corrections */}
-                            {question.questionType === 5 && sq.corrections && (
-                              <div className="grid grid-cols-2 gap-2">
+                            {/* ===== Type 4: علل / بم تفسر / اذكر أهمية ===== */}
+                            {question.questionType === 4 && (
+                              <>
                                 <div>
-                                  <Label className="text-xs">الكلمة الخطأ</Label>
+                                  <Label className="text-xs">نص العبارة</Label>
                                   <Input
-                                    placeholder="الكلمة التي تحتها خط"
-                                    className="h-8 text-sm mt-1"
+                                    placeholder="مثال: الشروق يكون من الشرق"
+                                    value={sq.questionText}
+                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                    className="mt-1"
                                   />
                                 </div>
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-xs shrink-0">أسطر الإجابة:</Label>
+                                  <Select
+                                    value={(sq.answerLines || 2).toString()}
+                                    onValueChange={(val) => updateSubQuestion(question.id, sq.id, "answerLines", parseInt(val))}
+                                  >
+                                    <SelectTrigger className="w-32 h-8">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="1">سطر واحد</SelectItem>
+                                      <SelectItem value="2">سطران</SelectItem>
+                                      <SelectItem value="3">ثلاثة أسطر</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </>
+                            )}
+
+                            {/* ===== Type 5: صحح ما تحته خط ===== */}
+                            {question.questionType === 5 && (
+                              <>
                                 <div>
-                                  <Label className="text-xs">التصحيح</Label>
+                                  <Label className="text-xs">نص الجملة</Label>
                                   <Input
-                                    placeholder="الإجابة الصحيحة"
-                                    className="h-8 text-sm mt-1"
+                                    placeholder="مثال: الشمس تشرق من الغرب"
+                                    value={sq.questionText}
+                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                    className="mt-1"
                                   />
                                 </div>
-                              </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <Label className="text-xs">الخط يبدأ من كلمة رقم</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={sq.corrections?.[0]?.wordPosition || 1}
+                                      onChange={(e) => updateCorrection(question.id, sq.id, "wordPosition", parseInt(e.target.value) || 1)}
+                                      className="mt-1 h-8 text-sm"
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label className="text-xs">عدد الكلمات تحتها خط</Label>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={sq.corrections?.[0]?.wordCount || 1}
+                                      onChange={(e) => updateCorrection(question.id, sq.id, "wordCount", parseInt(e.target.value) || 1)}
+                                      className="mt-1 h-8 text-sm"
+                                    />
+                                  </div>
+                                </div>
+                                {sq.questionText && (
+                                  <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
+                                    {renderCorrectionSentence(sq)}
+                                  </p>
+                                )}
+                              </>
                             )}
                           </div>
                         ))}
@@ -837,7 +1080,7 @@ export default function ExamsPage() {
                           className="w-full"
                         >
                           <Plus className="w-4 h-4" />
-                          <span>إضافة سؤال فرعي</span>
+                          <span>إضافة سؤال فرعي ({question.subQuestions.length})</span>
                         </Button>
                       </div>
                     </CardContent>
@@ -850,8 +1093,14 @@ export default function ExamsPage() {
               <div className="text-center py-8 text-gray-500 dark:text-gray-400">
                 <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
                 <p>لم تتم إضافة أي أسئلة بعد</p>
-                <p className="text-xs">اختر نوع السؤال من الأزرار أعلاه</p>
+                <p className="text-xs mt-1">اختر نوع السؤال من الأزرار أعلاه وسيتم تجهيز 4 أسئلة فرعية تحت رأسه</p>
               </div>
+            )}
+
+            {examForm.questions.length > 0 && (
+              <p className="text-xs text-gray-400 text-center">
+                إجمالي الأسئلة: {examForm.questions.length} سؤال رئيسي • {totalSubQuestions} سؤال فرعي
+              </p>
             )}
           </div>
 
@@ -876,78 +1125,85 @@ export default function ExamsPage() {
             <DialogTitle>معاينة الاختبار</DialogTitle>
           </DialogHeader>
           {previewExam && (
-            <div id="exam-preview-content" className="py-4 space-y-6 bg-white dark:bg-gray-900 p-6 rounded-lg">
+            <div id="exam-preview-content" className="py-4 space-y-6 bg-white text-gray-900 p-6 rounded-lg">
               {/* Exam Header */}
-              <div className="text-center border-b border-gray-300 dark:border-gray-700 pb-4">
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+              <div className="text-center border-b border-gray-300 pb-4">
+                <h2 className="text-2xl font-bold">
                   {previewExam.title}
                 </h2>
-                <p className="text-gray-600 dark:text-gray-400 mt-1">
+                <p className="text-gray-600 mt-1">
                   {getGradeName(previewExam.gradeId)}
+                  {previewExam.groupId && ` - ${getGroupName(previewExam.groupId)}`}
                   {previewExam.unit && ` - الوحدة ${previewExam.unit}`}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  المدة: {previewExam.duration} دقيقة
+                  العام الدراسي: {previewExam.academicYear} • المدة: {previewExam.duration} دقيقة
                 </p>
               </div>
 
               {/* Questions */}
-              <div className="space-y-6">
-                {previewExam.questions.map((question) => (
+              <div className="space-y-7">
+                {previewExam.questions.map((question, qi) => (
                   <div key={question.id} className="space-y-3">
-                    <h3 className="font-bold text-gray-900 dark:text-white text-lg">
-                      {question.headerText || `${QUESTION_TYPES.find(t => t.id === question.questionType)?.label}`}
+                    <h3 className="font-bold text-lg">
+                      السؤال {ARABIC_ORDINALS[qi] || qi + 1}: {getQuestionHeader(question)}
                     </h3>
 
-                    <div className="space-y-3 pr-4">
+                    <div className="space-y-4 pr-5">
                       {question.subQuestions.map((sq, index) => (
-                        <div key={sq.id} className="space-y-2">
-                          <p className="text-gray-800 dark:text-gray-200">
-                            <span className="font-bold">{index + 1})</span> {sq.questionText}
-                          </p>
-
-                          {/* Type 1: Choices */}
-                          {question.questionType === 1 && sq.choices && (
-                            <div className="flex flex-wrap gap-4 pr-4">
-                              {sq.choices.map(choice => (
-                                <span key={choice.id} className="text-gray-700 dark:text-gray-300">
-                                  {choice.choiceKey}) {choice.choiceText}
-                                </span>
-                              ))}
+                        <div key={sq.id}>
+                          {/* Type 1 */}
+                          {question.questionType === 1 && (
+                            <div className="space-y-1">
+                              <p>
+                                <span className="font-bold">{index + 1} -</span> {sq.questionText}
+                              </p>
+                              <div className="flex flex-wrap gap-x-8 gap-y-1 pr-6">
+                                {sq.choices?.map(choice => (
+                                  <span key={choice.id}>
+                                    {choice.choiceKey} - {choice.choiceText}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
                           )}
 
-                          {/* Type 2: Parts */}
-                          {question.questionType === 2 && sq.parts && (
-                            <p className="text-gray-700 dark:text-gray-300 pr-4">
-                              {sq.parts.map((part, i) => (
-                                <span key={part.id}>
-                                  {part.partText}
-                                  {i < sq.parts!.length - 1 && <span className="text-red-500 font-bold mx-1">___</span>}
-                                </span>
-                              ))}
+                          {/* Type 2 */}
+                          {question.questionType === 2 && (
+                            <p>
+                              <span className="font-bold">{index + 1} -</span> {renderComplete(sq)}
                             </p>
                           )}
 
-                          {/* Type 3: True/False */}
+                          {/* Type 3 */}
                           {question.questionType === 3 && (
-                            <p className="text-gray-700 dark:text-gray-300 pr-4">
-                              (    )
+                            <p>
+                              <span className="font-bold">{index + 1} -</span> {sq.questionText}{" "}
+                              <span className="text-gray-500">(    )</span>
                             </p>
                           )}
 
-                          {/* Type 4: Reasoning */}
+                          {/* Type 4 */}
                           {question.questionType === 4 && (
-                            <div className="pr-4 space-y-1">
-                              <div className="border-b border-dotted border-gray-400 w-full h-6"></div>
-                              <div className="border-b border-dotted border-gray-400 w-full h-6"></div>
+                            <div className="space-y-2">
+                              <p>
+                                <span className="font-bold">{index + 1} -</span> {sq.questionText}
+                              </p>
+                              {Array.from({ length: sq.answerLines || 2 }).map((_, li) => (
+                                <p key={li} className="pr-6 text-gray-400 tracking-wider">
+                                  {DOTS_LINE}
+                                </p>
+                              ))}
                             </div>
                           )}
 
-                          {/* Type 5: Correction */}
+                          {/* Type 5 */}
                           {question.questionType === 5 && (
-                            <div className="pr-4 space-y-1">
-                              <p className="text-gray-700 dark:text-gray-300">التصحيح: ........................</p>
+                            <div className="space-y-2">
+                              <p>
+                                <span className="font-bold">{index + 1} -</span> {renderCorrectionSentence(sq)}
+                              </p>
+                              <p className="pr-6 text-gray-400 tracking-wider">{DOTS_LINE}</p>
                             </div>
                           )}
                         </div>
@@ -974,7 +1230,7 @@ export default function ExamsPage() {
                   toast.error('حدث خطأ أثناء التصدير')
                 }
               }}
-              className="bg-gradient-to-r from-blue-500 to-indigo-600"
+              className="bg-gradient-to-r from-purple-500 to-pink-600"
             >
               <Download className="w-4 h-4" />
               <span>تحميل PDF</span>
