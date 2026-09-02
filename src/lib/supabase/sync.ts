@@ -1530,10 +1530,17 @@ export function explainSupabaseError(err: any): string {
       "الحل: شغّل ملف supabase/migrations/005_fix_id_types.sql في Supabase ← SQL Editor."
     )
   }
+  if (/new row violates row-level security/i.test(raw)) {
+    return (
+      "سياسة الحماية (RLS) لا تسمح بهذا الإدراج — سياسة إدراج الزوار ناقصة على هذا الجدول. " +
+      "الحل: شغّل supabase/migrations/012_anon_submit_fix.sql ثم أعد المحاولة."
+    )
+  }
   if (/permission denied/i.test(raw) || code === "42501") {
     return (
-      "صلاحيات قاعدة البيانات ناقصة (permission denied). " +
-      "الحل: افتح Supabase ← SQL Editor وشغّل ملف supabase/migrations/004_fix_permissions.sql ثم أعد الفحص."
+      "صلاحيات الجداول ناقصة للزوار/المدرس. " +
+      "الحل: شغّل supabase/migrations/012_anon_submit_fix.sql (يشمل ويحل محل 004 القديم) ثم أعد المحاولة. " +
+      "وإن استمر الخطأ: سجّل الخروج ثم الدخول من جديد."
     )
   }
   if (/does not exist/i.test(raw) || code === "42P01") {
@@ -1542,9 +1549,9 @@ export function explainSupabaseError(err: any): string {
       "الحل: شغّل ملف supabase/schema.sql في Supabase ← SQL Editor."
     )
   }
-  if (/row-level security|violates row-level/i.test(raw) || code === "42501") {
+  if (/row-level security|violates row-level/i.test(raw)) {
     return (
-      "سياسة الحماية (RLS) تمنع الكتابة. تأكد من تسجيل الدخول، ثم شغّل supabase/schema.sql مجدداً."
+      "سياسة الحماية (RLS) تمنع الكتابة. تأكد من تسجيل الدخول، ثم شغّل supabase/migrations/012_anon_submit_fix.sql."
     )
   }
   if (/JWT|not authenticated|invalid token|session/i.test(raw)) {

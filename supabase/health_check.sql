@@ -138,6 +138,37 @@ FROM tables t CROSS JOIN roles r
 ORDER BY 1, r.ord;
 
 -- ============================================================
+-- 5-ب) جداول التقديم: هل يستطيع الطالب (زائر) الإرسال فعلاً؟
+--      (هذا مسار «تعذر إرسال الطلب» بالتحديد)
+-- ============================================================
+WITH submit_tables AS (
+  VALUES
+    ('registration_requests',   'طلبات التسجيل'),
+    ('group_transfer_requests', 'طلبات النقل'),
+    ('inquiries',               'الاستفسارات'),
+    ('exam_attempts',           'محاولات الاختبارات'),
+    ('honorees',                'ترشيح لوحة الشرف')
+)
+SELECT
+  s.t2 AS "جدول التقديم",
+  CASE WHEN has_table_privilege('anon', 'public.' || s.t1, 'INSERT')
+       THEN 'مفتوح ✅' ELSE 'مقفول ❌' END AS "صلاحية GRANT للزائر",
+  CASE WHEN EXISTS (
+         SELECT 1 FROM pg_policies p
+         WHERE p.schemaname='public' AND p.tablename = s.t1
+           AND p.cmd='INSERT' AND 'anon' = ANY(p.roles))
+       THEN 'موجودة ✅' ELSE 'ناقصة ❌' END AS "سياسة RLS للإدراج",
+  CASE WHEN has_table_privilege('anon', 'public.' || s.t1, 'INSERT')
+        AND EXISTS (
+         SELECT 1 FROM pg_policies p
+         WHERE p.schemaname='public' AND p.tablename = s.t1
+           AND p.cmd='INSERT' AND 'anon' = ANY(p.roles))
+       THEN 'الإرسال يعمل ✅'
+       ELSE 'ممنوع ❌ — نفّذ 012_anon_submit_fix.sql' END AS "النتيجة"
+FROM submit_tables s
+ORDER BY 1;
+
+-- ============================================================
 -- 6) عدّاد محاولات الاختبار (لازم لحد المحاولات عبر الأجهزة)
 -- ============================================================
 SELECT
