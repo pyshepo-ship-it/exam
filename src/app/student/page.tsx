@@ -31,6 +31,7 @@ import {
   CheckCircle2,
   XCircle,
   Hourglass,
+  Eye,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -63,6 +64,7 @@ import {
   fetchStudentInquiries,
 } from "@/lib/supabase/sync"
 import type { Announcement, Exam, InquiryThread, Honoree } from "@/lib/data-storage"
+import { ExamReviewDialog } from "@/components/exam-review-dialog"
 import {
   reportFromPortalData,
   buildStudentReportPagesHtml,
@@ -113,6 +115,8 @@ export default function StudentPortalPage() {
   const [inquiries, setInquiries] = useState<InquiryThread[]>([])
   // عدّادات المحاولات السحابية (عبر الأجهزة) لاختبارات ذات حد
   const [remoteAttempts, setRemoteAttempts] = useState<Record<string, number>>({})
+  // مراجعة اختبار (بعد أن يفتحها المعلم للجميع)
+  const [reviewExam, setReviewExam] = useState<Exam | null>(null)
   const [inquiryText, setInquiryText] = useState("")
   const [inquiryBusy, setInquiryBusy] = useState(false)
 
@@ -513,40 +517,76 @@ export default function StudentPortalPage() {
                       const best = myAttempts.length
                         ? Math.max(...myAttempts.map(a => effectiveAttemptScore(a)))
                         : null
+                      const bestPct = best !== null && e.totalMarks ? Math.round((best / e.totalMarks) * 100) : null
+                      const scoreTone =
+                        bestPct === null ? "" : bestPct >= 85 ? "bg-green-500" : bestPct >= 50 ? "bg-amber-500" : "bg-red-500"
                       return (
-                        <div key={e.id} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3">
+                        <div key={e.id} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3 space-y-2.5">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="min-w-0">
                               <p className="font-bold text-sm text-gray-900 dark:text-white">{e.title}</p>
                               <p className="text-xs text-gray-400">
                                 {e.duration ? `${e.duration} دقيقة` : ""} {e.totalMarks ? ` • ${e.totalMarks} درجة` : ""}
-                                {best !== null && ` • نتيجتك: ${best}${e.totalMarks ? ` / ${e.totalMarks}` : ""}`}
                                 {at.max > 0 && ` • المحاولات: ${at.used}/${at.max}`}
                               </p>
                               {myAttempts.some(a => a.manualOverride) && (
                                 <p className="text-[11px] text-purple-600 mt-0.5">توجد درجة معدلة يدوياً من المعلم</p>
                               )}
                             </div>
-                            {!av.open ? (
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600 shrink-0">
-                                <Lock className="w-4 h-4" />
-                                مغلق الآن
-                              </span>
-                            ) : !at.allowed ? (
-                              <span className="flex items-center gap-1.5 text-xs font-bold text-red-600 shrink-0">
-                                <Lock className="w-4 h-4" />
-                                استُنفدت محاولاتك ({at.used}/{at.max})
-                              </span>
-                            ) : (
-                              <Link href={`/exam/${e.id}`}>
-                                <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white shrink-0">
-                                  <PlayCircle className="w-4 h-4" />
-                                  <span>{myAttempts.length > 0 ? `إعادة (${at.remaining} متبقية)` : "ابدأ الاختبار"}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {!av.open ? (
+                                <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                                  <Lock className="w-4 h-4" />
+                                  مغلق الآن
+                                </span>
+                              ) : !at.allowed ? (
+                                <span className="flex items-center gap-1.5 text-xs font-bold text-red-600">
+                                  <Lock className="w-4 h-4" />
+                                  استُنفدت محاولاتك ({at.used}/{at.max})
+                                </span>
+                              ) : (
+                                <Link href={`/exam/${e.id}`}>
+                                  <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white">
+                                    <PlayCircle className="w-4 h-4" />
+                                    <span>{myAttempts.length > 0 ? `إعادة (${at.remaining} متبقية)` : "ابدأ الاختبار"}</span>
+                                  </Button>
+                                </Link>
+                              )}
+                              {e.reviewOpen && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-indigo-300 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                                  onClick={() => setReviewExam(e)}
+                                  title="مراجعة الاختبار ودرجتك"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                  <span>مراجعة</span>
                                 </Button>
-                              </Link>
-                            )}
+                              )}
+                            </div>
                           </div>
-                          {!av.open && av.reason && <p className="text-xs text-gray-400 mt-1">{av.reason}</p>}
+
+                          {/* الدرجة — شريط بارز واضح */}
+                          {best !== null && (
+                            <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5">
+                              <span className={`shrink-0 rounded-lg ${scoreTone} text-white px-3 py-1.5 text-lg font-black leading-none`} dir="ltr">
+                                {best}<span className="text-xs font-bold opacity-80"> / {e.totalMarks || "—"}</span>
+                              </span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-extrabold text-gray-900 dark:text-white">
+                                  درجتك في هذا الاختبار
+                                  {bestPct !== null && ` — ${bestPct}%`}
+                                </p>
+                                <p className="text-[11px] text-gray-400">
+                                  {myAttempts.length > 1 ? `أفضل نتيجة من ${myAttempts.length} محاولات` : "نتيجتك النهائية"}
+                                  {e.reviewOpen && " • المراجعة مفتوحة — اضغط «مراجعة» لرؤية إجاباتك"}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {!av.open && av.reason && <p className="text-xs text-gray-400">{av.reason}</p>}
                         </div>
                       )
                     })
@@ -932,6 +972,17 @@ export default function StudentPortalPage() {
         description="نسخة رسمية موجهة لولي الأمر — بالتوقيع واسم المعلم"
         accentClass="text-emerald-600"
       />
+
+      {/* مراجعة اختبار — بعد فتح المعلم للمراجعة للجميع */}
+      {reviewExam && (
+        <ExamReviewDialog
+          open={!!reviewExam}
+          onOpenChange={v => { if (!v) setReviewExam(null) }}
+          exam={reviewExam}
+          attempts={(report?.examAttempts || []).filter(a => a.examId === reviewExam.id)}
+          studentName={session?.name || ""}
+        />
+      )}
     </div>
   )
 }

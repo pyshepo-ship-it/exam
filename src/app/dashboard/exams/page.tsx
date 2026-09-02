@@ -94,6 +94,7 @@ export default function ExamsPage() {
     availableUntil: "",
     targetGroupIds: [] as string[],
     maxAttempts: "0",
+    reviewOpen: false,
   })
   const [overrideTarget, setOverrideTarget] = useState<{ attemptId: string; name: string; current: number; total: number } | null>(null)
   const [overrideScore, setOverrideScore] = useState("")
@@ -138,6 +139,7 @@ export default function ExamsPage() {
       availabilityMode: exam.availabilityMode || "always",
       availableFrom: (exam.availableFrom || "").slice(0, 16),
       availableUntil: (exam.availableUntil || "").slice(0, 16),
+      reviewOpen: !!exam.reviewOpen,
       targetGroupIds: exam.targetGroupIds || [],
       maxAttempts: String(exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0),
     })
@@ -158,6 +160,7 @@ export default function ExamsPage() {
               ? new Date(panelForm.availableUntil).toISOString() : undefined,
             targetGroupIds: panelForm.allowOnline ? panelForm.targetGroupIds : undefined,
             maxAttempts: maxN > 0 ? maxN : undefined,
+            reviewOpen: panelForm.reviewOpen,
             updatedAt: new Date().toISOString(),
           }
         : e
@@ -1910,6 +1913,22 @@ export default function ExamsPage() {
                   </p>
                 </div>
                 <Switch checked={panelForm.allowOnline} onCheckedChange={v => setPanelForm(prev => ({ ...prev, allowOnline: v }))} />
+              </div>
+
+              {/* فتح المراجعة للجميع — مرحلة ما بعد الاختبار */}
+              <div className="flex items-center justify-between gap-3 rounded-xl border-2 border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3">
+                <div>
+                  <p className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5">
+                    <Eye className="w-4 h-4 text-amber-600" />
+                    تم الامتحان — فتح المراجعة للجميع
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {panelForm.reviewOpen
+                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم والأجوبة الصحيحة ودرجاتهم في أي وقت"
+                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار"}
+                  </p>
+                </div>
+                <Switch checked={panelForm.reviewOpen} onCheckedChange={v => setPanelForm(prev => ({ ...prev, reviewOpen: v }))} />
               </div>
 
               {panelForm.allowOnline && (

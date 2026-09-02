@@ -173,6 +173,8 @@ export interface Exam {
   maxAttempts?: number
   /** إظهار الإجابة الصحيحة للطالب: لا أبداً / بعد كل سؤال / في نهاية الاختبار */
   answerVisibility?: 'never' | 'afterEach' | 'atEnd'
+  /** المراجعة مفتوحة للجميع — بعد امتحان جميع الطلاب: يرى الطالب أسئلة الاختبار وأجوبته والأجوبة الصحيحة ودرجته في أي وقت */
+  reviewOpen?: boolean
   createdAt: string
   updatedAt: string
 }

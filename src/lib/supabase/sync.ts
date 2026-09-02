@@ -216,6 +216,7 @@ export const toExamRow = (e: any) => ({
     targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
     answerVisibility: e.answerVisibility || "never",
     maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
+    reviewOpen: !!e.reviewOpen,
   },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
@@ -248,6 +249,7 @@ export const fromExamRow = (row: any) => {
     availableUntil: wrapped && q.availableUntil ? q.availableUntil : undefined,
     targetGroupIds: wrapped && Array.isArray(q.targetGroupIds) ? q.targetGroupIds : [],
     answerVisibility: wrapped ? (q.answerVisibility || "never") : "never",
+    reviewOpen: wrapped ? !!q.reviewOpen : false,
     maxAttempts: wrapped && q.maxAttempts && q.maxAttempts > 0 ? q.maxAttempts : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
