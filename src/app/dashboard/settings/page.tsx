@@ -75,7 +75,7 @@ import {
   saveSetting,
   YearArchive,
 } from "@/lib/data-storage"
-import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, type ConnectionCheck } from "@/lib/supabase/sync"
+import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, type ConnectionCheck } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -149,6 +149,19 @@ export default function SettingsPage() {
     } else {
       toast.error("تعذر الاتصال بـ Supabase. تأكد من المتغيرات البيئية واتصال الإنترنت.")
     }
+  }
+
+  // رفع بيانات الجهاز إلى Supabase بالترتيب الصحيح (حل أخطاء 409)
+  const handleForcePush = async () => {
+    setSyncing(true)
+    const res = await forcePushAll()
+    if (res.ok) {
+      toast.success("تم رفع كل بياناتك إلى قاعدة البيانات بنجاح")
+      await runConnectionCheck(true)
+    } else {
+      toast.error(res.error || "تعذر رفع البيانات")
+    }
+    setSyncing(false)
   }
 
   // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
@@ -701,10 +714,16 @@ export default function SettingsPage() {
                         </p>
                       </div>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => runConnectionCheck()} disabled={checking}>
-                      <RotateCcw className={`w-4 h-4 ${checking ? "animate-spin" : ""}`} />
-                      <span>إعادة الفحص</span>
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={handleForcePush} disabled={syncing || checking}>
+                        <Upload className={`w-4 h-4 ${syncing ? "animate-pulse" : ""}`} />
+                        <span>رفع بياناتي الآن</span>
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => runConnectionCheck()} disabled={checking}>
+                        <RotateCcw className={`w-4 h-4 ${checking ? "animate-spin" : ""}`} />
+                        <span>إعادة الفحص</span>
+                      </Button>
+                    </div>
                   </div>
 
                   {conn && !conn.ok && /permission denied|صلاحيات|مخطط|uuid|عمود/i.test(conn.error || "") && (

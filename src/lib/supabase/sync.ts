@@ -395,10 +395,60 @@ async function pushRows(dbTable: string, remoteRows: any[]): Promise<void> {
   remoteIds[dbTable] = newIds;
 }
 
-/** جدولة مزامنة فورية (بدون انتظار — مع تنبيه عند الفشل) */
+// ------------------------------------------------------------
+// طابور تسلسلي: يمنع تسابق عمليات الحفظ
+//
+// المشكلة التي يحلها: كانت كل عملية حفظ تنطلق فوراً وبالتوازي، فقد
+// يصل حفظ الطلاب إلى الخادم قبل حفظ الصفوف التي ينتمون إليها، فيرفضه
+// Postgres بخطأ 409 (انتهاك مفتاح أجنبي). التسلسل يضمن الترتيب الصحيح.
+// ------------------------------------------------------------
+let pushChain: Promise<unknown> = Promise.resolve();
+
+/** هل الخطأ ناتج عن مفتاح أجنبي مفقود؟ (409) */
+function isForeignKeyError(err: any): boolean {
+  return (
+    err?.code === "23503" ||
+    /foreign key|violates foreign key constraint/i.test(err?.message || "")
+  );
+}
+
+/**
+ * رفع كل البيانات المحلية بالترتيب الصحيح للتبعيات:
+ * الصفوف والمجموعات ← الطلاب ← الاستحقاقات ← المدفوعات ← الحصص ← الحضور
+ */
+async function pushAllOrdered(): Promise<void> {
+  await pushGrades(localRows<GradeShape>(STORAGE_KEYS.GRADES));
+  await pushStudents(localRows(STORAGE_KEYS.STUDENTS) as any[]);
+  await pushDues(localRows(STORAGE_KEYS.DUES) as any[]);
+  await pushPayments(localRows(STORAGE_KEYS.PAYMENTS) as any[]);
+  await pushExams(localRows(STORAGE_KEYS.EXAMS) as any[]);
+  await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
+  await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
+}
+
+/** جدولة مزامنة فورية (متسلسلة — مع إعادة محاولة ذكية عند خطأ التبعيات) */
 export function queuePush(fn: () => Promise<void>) {
   if (!isSupabaseConfigured() || typeof window === "undefined") return;
-  trackPush(fn());
+
+  const task = pushChain.then(async () => {
+    try {
+      await fn();
+    } catch (err) {
+      // 409: الأب غير موجود بعد في قاعدة البيانات.
+      // نرفع كل البيانات بالترتيب الصحيح ثم نعيد المحاولة مرة واحدة.
+      if (isForeignKeyError(err)) {
+        await pushAllOrdered();
+        await fn();
+      } else {
+        throw err;
+      }
+    }
+  });
+
+  // نُبقي السلسلة حية حتى لو فشلت مهمة (حتى لا تتوقف المزامنة اللاحقة)
+  pushChain = task.catch(() => {});
+
+  trackPush(task);
 }
 
 // ============================================================
@@ -415,22 +465,74 @@ export function pushGrades(grades: GradeShape[]) {
 }
 
 export function pushStudents(rows: any[]) {
-  return pushRows("students", rows.map(toStudentRow));
+  // تنظيف المراجع المعلّقة: إن كان الصف/المجموعة محذوفاً محلياً
+  // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409)
+  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradeIds = new Set(grades.map((g) => g.id));
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
+
+  const cleaned = rows.map((s) => {
+    const row = toStudentRow(s);
+    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    return row;
+  });
+  return pushRows("students", cleaned);
 }
 export function pushDues(rows: any[]) {
-  return pushRows("dues", rows.map(toDueRow));
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
+
+  const cleaned = rows
+    .filter((d) => studentIds.has(d.studentId)) // student_id NOT NULL
+    .map((d) => {
+      const row = toDueRow(d);
+      if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+      return row;
+    });
+  return pushRows("dues", cleaned);
 }
 export function pushPayments(rows: any[]) {
-  return pushRows("payments", rows.map(toPaymentRow));
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const dueIds = new Set(localRows<any>(STORAGE_KEYS.DUES).map((d) => d.id));
+
+  const cleaned = rows
+    .filter((p) => studentIds.has(p.studentId)) // student_id NOT NULL
+    .map((p) => {
+      const row = toPaymentRow(p);
+      if (row.due_id && !dueIds.has(row.due_id)) row.due_id = null;
+      return row;
+    });
+  return pushRows("payments", cleaned);
 }
 export function pushExams(rows: any[]) {
-  return pushRows("exams", rows.map(toExamRow));
+  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradeIds = new Set(grades.map((g) => g.id));
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
+
+  const cleaned = rows.map((e) => {
+    const row = toExamRow(e);
+    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    return row;
+  });
+  return pushRows("exams", cleaned);
 }
 export function pushSessions(rows: any[]) {
-  return pushRows("sessions", rows.map(toSessionRow));
+  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
+  // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها
+  const cleaned = rows.filter((s) => groupIds.has(s.groupId)).map(toSessionRow);
+  return pushRows("sessions", cleaned);
 }
 export function pushAttendance(rows: any[]) {
-  return pushRows("attendance", rows.map(toAttendanceRow));
+  const sessionIds = new Set(localRows<any>(STORAGE_KEYS.SESSIONS).map((s) => s.id));
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const cleaned = rows
+    .filter((a) => sessionIds.has(a.sessionId) && studentIds.has(a.studentId))
+    .map(toAttendanceRow);
+  return pushRows("attendance", cleaned);
 }
 export function pushAnnouncements(rows: any[]) {
   return pushRows("announcements", rows.map(toAnnouncementRow));
@@ -839,6 +941,15 @@ export function explainSupabaseError(err: any): string {
     .join(" | ") || String(err ?? "")
   const code = err?.code || ""
 
+  if (code === "23503" || /violates foreign key constraint/i.test(raw)) {
+    return (
+      "سجل مرتبط غير موجود بعد في قاعدة البيانات (مثل طالب بلا صف). " +
+      "تتم إعادة الرفع تلقائياً بالترتيب الصحيح — إن استمر الخطأ اضغط \"مزامنة الآن\"."
+    )
+  }
+  if (code === "23505" || /duplicate key value/i.test(raw)) {
+    return "سجل مكرر في قاعدة البيانات — سيُدمج تلقائياً في المحاولة التالية."
+  }
   if (/invalid input syntax for type uuid/i.test(raw) || code === "22P02") {
     return (
       "مخطط قاعدة البيانات قديم: عمود id من نوع UUID بينما التطبيق يستخدم معرفات نصية. " +
@@ -992,4 +1103,27 @@ export async function runDiagnostics(): Promise<Diagnostics> {
   }
 
   return out
+}
+
+
+/**
+ * رفع كل بيانات الجهاز إلى Supabase بالترتيب الصحيح للتبعيات.
+ * يُستخدم من زر "رفع بياناتي الآن" لحل أخطاء 409 نهائياً.
+ */
+export async function forcePushAll(): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: "Supabase غير مُعدّ" };
+  try {
+    await pushAllOrdered();
+    await pushAnnouncements(localRows(STORAGE_KEYS.ANNOUNCEMENTS) as any[]);
+    await pushHonorees(localRows(STORAGE_KEYS.HONOREES) as any[]);
+    await pushSharedFiles(localRows(STORAGE_KEYS.SHARED_FILES) as any[]);
+    await pushImportantLinks(localRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
+    await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
+    const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
+    if (year) await pushSetting("currentAcademicYear", year);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: explainSupabaseError(err) };
+  }
 }
