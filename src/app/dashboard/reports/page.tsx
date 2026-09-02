@@ -74,6 +74,15 @@ export default function ReportsPage() {
     setAttendance(getAttendance())
   }, [])
 
+  // السنوات المتاحة في التقرير (من البيانات الفعلية + السنة الحالية)
+  const reportYears = [...new Set([
+    ...dues.map(d => d.year),
+    ...payments.map(p => p.year),
+    new Date().getFullYear(),
+  ])]
+    .filter(y => !isNaN(y))
+    .sort((a, b) => b - a)
+
   // Financial Report
   const monthDues = dues.filter(d => d.month === parseInt(selectedMonth) && d.year === parseInt(selectedYear))
   const monthPayments = payments.filter(p => p.month === parseInt(selectedMonth) && p.year === parseInt(selectedYear))
@@ -143,7 +152,7 @@ export default function ReportsPage() {
             تقارير ذكية وإحصائيات شاملة
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Select value={selectedMonth} onValueChange={setSelectedMonth}>
             <SelectTrigger className="w-32">
               <SelectValue />
@@ -161,7 +170,7 @@ export default function ReportsPage() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {[2024, 2025, 2026, 2027].map(year => (
+              {reportYears.map(year => (
                 <SelectItem key={year} value={year.toString()}>{year}</SelectItem>
               ))}
             </SelectContent>

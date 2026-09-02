@@ -54,6 +54,7 @@ import { exportToPDF } from "@/lib/pdf-utils"
 import {
   Grade,
   Student,
+  getAllGroups,
   getGrades,
   getStudents,
   saveStudents,
@@ -61,8 +62,8 @@ import {
   getStudentBalance,
   getDues,
   getPayments,
-  initializeSampleData,
 } from "@/lib/data-storage"
+import SampleDataBanner from "@/components/sample-data-banner"
 
 const MONTHS = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -93,14 +94,12 @@ export default function StudentsPage() {
 
   // Load data
   useEffect(() => {
-    initializeSampleData()
     setStudents(getStudents())
     setGrades(getGrades())
   }, [])
 
-  // Get available groups for selected grade
-  const availableGroups = grades.find(g => g.id === form.gradeId)?.groups || []
-  const filterAvailableGroups = grades.find(g => g.id === filterGrade)?.groups || []
+  // كل المجموعات في جميع الصفوف (مع اسم الصف) — حتى لا تظهر مجموعات صف واحد فقط
+  const allGroups = getAllGroups(grades)
 
   // Filter students
   const filteredStudents = students.filter(student => {
@@ -323,6 +322,12 @@ export default function StudentsPage() {
         </Button>
       </motion.div>
 
+      {/* تنبيه البيانات التجريبية */}
+      <SampleDataBanner onRemoved={() => {
+        setStudents(getStudents())
+        setGrades(getGrades())
+      }} />
+
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         {[
@@ -383,14 +388,25 @@ export default function StudentsPage() {
           </Select>
 
           {/* Filter by Group */}
-          <Select value={filterGroup} onValueChange={setFilterGroup} disabled={filterGrade === "all"}>
+          <Select
+            value={filterGroup}
+            onValueChange={(val) => {
+              setFilterGroup(val)
+              if (val !== "all") {
+                const group = allGroups.find(g => g.id === val)
+                if (group) setFilterGrade(group.gradeId)
+              }
+            }}
+          >
             <SelectTrigger>
               <SelectValue placeholder="كل المجموعات" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">كل المجموعات</SelectItem>
-              {filterAvailableGroups.map(group => (
-                <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+              {allGroups.map(group => (
+                <SelectItem key={group.id} value={group.id}>
+                  {group.gradeName} - {group.name}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -585,15 +601,23 @@ export default function StudentsPage() {
                 <Label>المجموعة *</Label>
                 <Select 
                   value={form.groupId} 
-                  onValueChange={(val) => setForm(prev => ({ ...prev, groupId: val }))}
-                  disabled={!form.gradeId}
+                  onValueChange={(val) => {
+                    const group = allGroups.find(g => g.id === val)
+                    setForm(prev => ({
+                      ...prev,
+                      gradeId: group ? group.gradeId : prev.gradeId,
+                      groupId: val,
+                    }))
+                  }}
                 >
                   <SelectTrigger className="mt-1">
                     <SelectValue placeholder="اختر المجموعة" />
                   </SelectTrigger>
                   <SelectContent>
-                    {availableGroups.map(group => (
-                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                    {allGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.gradeName} - {group.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

@@ -83,6 +83,47 @@ export default function PaymentsPage() {
     year: new Date().getFullYear(),
     notes: "",
   })
+  // اختيار الطالب على 3 خطوات: الصف → المجموعة → الاسم
+  const [payGradeId, setPayGradeId] = useState("")
+  const [payGroupId, setPayGroupId] = useState("")
+
+  // فتح نافذة التحصيل (مع أو بدون تحديد طالب مسبقاً)
+  const openPaymentDialog = (studentId?: string) => {
+    if (studentId) {
+      const student = students.find(s => s.id === studentId)
+      setPaymentForm(prev => ({
+        ...prev,
+        studentId,
+        amount: 0,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
+        notes: "",
+      }))
+      if (student) {
+        setPayGradeId(student.gradeId)
+        setPayGroupId(student.groupId)
+      }
+    } else {
+      setPaymentForm(prev => ({
+        ...prev,
+        studentId: "",
+        amount: 0,
+        month: new Date().getMonth() + 1,
+        year: new Date().getFullYear(),
+        notes: "",
+      }))
+      setPayGradeId("")
+      setPayGroupId("")
+    }
+    setPaymentDialogOpen(true)
+  }
+
+  // الصفوف المتاحة للتحصيل
+  const paymentGrades = grades
+  const paymentGroups = grades.find(g => g.id === payGradeId)?.groups || []
+  const paymentStudents = students.filter(
+    s => s.groupId === payGroupId && s.status === "active"
+  )
 
   // Monthly Due Dialog
   const [dueDialogOpen, setDueDialogOpen] = useState(false)
@@ -287,7 +328,7 @@ export default function PaymentsPage() {
             <span>استحقاق شهري</span>
           </Button>
           <Button 
-            onClick={() => setPaymentDialogOpen(true)}
+            onClick={() => openPaymentDialog()}
             className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 shadow-lg"
           >
             <Plus className="w-5 h-5" />
@@ -417,10 +458,7 @@ export default function PaymentsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => {
-                            setPaymentForm(prev => ({ ...prev, studentId: student.id }))
-                            setPaymentDialogOpen(true)
-                          }}
+                          onClick={() => openPaymentDialog(student.id)}
                           className="h-8 w-8 text-green-600 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-950"
                           title="تسجيل دفعة"
                         >
@@ -455,27 +493,69 @@ export default function PaymentsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div>
-              <Label>الطالب *</Label>
-              <Select 
-                value={paymentForm.studentId} 
-                onValueChange={(val) => setPaymentForm(prev => ({ ...prev, studentId: val }))}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="اختر الطالب" />
-                </SelectTrigger>
-                <SelectContent>
-                  {students.filter(s => s.status === 'active').map(student => {
-                    const grade = grades.find(g => g.id === student.gradeId)
-                    const group = grade?.groups.find(gr => gr.id === student.groupId)
-                    return (
-                      <SelectItem key={student.id} value={student.id}>
-                        {student.name} ({grade?.name} - {group?.name})
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
+            {/* اختيار الطالب على 3 خطوات: الصف → المجموعة → الاسم */}
+            <div className="space-y-3">
+              <div>
+                <Label>1. اختر الصف</Label>
+                <Select
+                  value={payGradeId}
+                  onValueChange={(val) => {
+                    setPayGradeId(val)
+                    setPayGroupId("")
+                    setPaymentForm(prev => ({ ...prev, studentId: "" }))
+                  }}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="اختر الصف" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentGrades.map(grade => (
+                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>2. اختر المجموعة</Label>
+                <Select
+                  value={payGroupId}
+                  onValueChange={(val) => {
+                    setPayGroupId(val)
+                    setPaymentForm(prev => ({ ...prev, studentId: "" }))
+                  }}
+                  disabled={!payGradeId}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="اختر المجموعة" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentGroups.map(group => (
+                      <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>3. اختر الطالب</Label>
+                <Select
+                  value={paymentForm.studentId}
+                  onValueChange={(val) => setPaymentForm(prev => ({ ...prev, studentId: val }))}
+                  disabled={!payGroupId}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder={payGroupId ? "اختر الطالب" : "اختر الصف والمجموعة أولاً"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {paymentStudents.length === 0 ? (
+                      <SelectItem value="no-students" disabled>لا يوجد طلاب نشطون في هذه المجموعة</SelectItem>
+                    ) : (
+                      paymentStudents.map(student => (
+                        <SelectItem key={student.id} value={student.id}>{student.name}</SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div>

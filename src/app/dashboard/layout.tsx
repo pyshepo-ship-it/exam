@@ -17,10 +17,13 @@ import {
   X,
   ClipboardCheck,
   Home,
+  Megaphone,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
+import { pullAllData } from "@/lib/supabase/sync"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -33,6 +36,7 @@ const menuItems = [
   { href: "/dashboard/exams", label: "الاختبارات", icon: FileText, color: "from-red-500 to-rose-600" },
   { href: "/dashboard/attendance", label: "الحضور والغياب", icon: ClipboardCheck, color: "from-teal-500 to-cyan-600" },
   { href: "/dashboard/reports", label: "التقارير", icon: BarChart3, color: "from-indigo-500 to-blue-600" },
+  { href: "/dashboard/announcements", label: "الإعلانات ولوحة الشرف", icon: Megaphone, color: "from-amber-500 to-orange-600" },
   { href: "/dashboard/settings", label: "الإعدادات", icon: Settings, color: "from-gray-500 to-slate-600" },
 ]
 
@@ -58,39 +62,65 @@ export default function DashboardLayout({
   }
 
   useEffect(() => {
-    setMounted(true)
+    let cancelled = false
 
-    // في الوضع المحلي (بدون Supabase) لا يوجد تسجيل دخول للتحقق منه.
-    if (!isSupabaseConfigured()) {
-      return
-    }
+    const init = async () => {
+      // في الوضع المحلي (بدون Supabase) لا يوجد تسجيل دخول للتحقق منه
+      if (!isSupabaseConfigured()) {
+        if (!cancelled) setMounted(true)
+        return
+      }
 
-    const supabase = getSupabase()
+      const supabase = getSupabase()
 
-    // Check Supabase auth
-    const getUser = async () => {
+      // Check Supabase auth
       const { data: { session } } = await supabase.auth.getSession()
-      
+      if (cancelled) return
+
       if (!session) {
         router.push("/login")
         return
       }
-      
+
       setUserEmail(session.user.email || '')
+
+      // جلب كل البيانات من Supabase (المصدر الحقيقي) قبل عرض المحتوى
+      const { ok, migrated } = await pullAllData()
+      if (cancelled) return
+
+      import("react-hot-toast")
+        .then(({ toast }) => {
+          if (migrated) {
+            toast.success("تم رفع بيانات جهازك إلى Supabase بنجاح — أصبحت متاحة من أي جهاز")
+          } else if (!ok) {
+            toast.error("تعذر الاتصال بـ Supabase حالياً — يتم عرض البيانات المحفوظة محلياً")
+          }
+        })
+        .catch(() => {})
+
+      setMounted(true)
     }
-    
-    getUser()
-    
+
+    init()
+
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!session) {
-        router.push("/login")
-      } else {
-        setUserEmail(session.user.email || '')
-      }
-    })
-    
-    return () => subscription.unsubscribe()
+    let subscription: { unsubscribe: () => void } | null = null
+    if (isSupabaseConfigured()) {
+      const supabase = getSupabase()
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!session) {
+          router.push("/login")
+        } else {
+          setUserEmail(session.user.email || '')
+        }
+      })
+      subscription = data.subscription
+    }
+
+    return () => {
+      cancelled = true
+      subscription?.unsubscribe()
+    }
   }, [router])
 
   const handleLogout = async () => {
@@ -100,6 +130,12 @@ export default function DashboardLayout({
     }
     const supabase = getSupabase()
     await supabase.auth.signOut()
+    // مسح نسخة البيانات من المتصفح بعد الخروج (الأصلية في Supabase)
+    try {
+      Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key))
+    } catch {
+      // تجاهل أخطاء التخزين المحلي
+    }
     router.push("/login")
   }
 
@@ -112,9 +148,9 @@ export default function DashboardLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex">
+    <div className="h-screen bg-gray-50 dark:bg-gray-950 flex overflow-hidden">
       {/* Sidebar - Desktop */}
-      <aside className="hidden lg:flex flex-col w-72 bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-xl">
+      <aside className="hidden lg:flex flex-col w-72 shrink-0 h-full bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 shadow-xl">
         {/* Logo */}
         <div className="p-6 border-b border-gray-200 dark:border-gray-800">
           <div className="flex items-center gap-3">
@@ -186,7 +222,7 @@ export default function DashboardLayout({
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", damping: 25 }}
-              className="fixed top-0 right-0 h-full w-80 bg-white dark:bg-gray-900 z-50 lg:hidden shadow-2xl flex flex-col"
+              className="fixed top-0 right-0 h-full w-80 max-w-[85vw] bg-white dark:bg-gray-900 z-50 lg:hidden shadow-2xl flex flex-col"
             >
               {/* Header */}
               <div className="p-6 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between">
@@ -247,7 +283,7 @@ export default function DashboardLayout({
       </AnimatePresence>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-h-screen overflow-hidden">
+      <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
         {/* Top Bar */}
         <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 px-6 py-4 lg:px-8 flex items-center justify-between sticky top-0 z-30">
           <Button

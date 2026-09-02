@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { motion } from "framer-motion"
 import { 
-  Settings, 
   User, 
   Lock, 
   Mail, 
@@ -12,15 +11,20 @@ import {
   Download,
   Upload,
   Trash2,
-  BookOpen,
   Shield,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  CalendarCheck,
+  Archive,
+  FolderOpen,
+  RotateCcw,
+  MessageCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import {
@@ -47,18 +51,46 @@ import {
   saveExams,
   saveSessions,
   saveAttendance,
+  getAnnouncements,
+  saveAnnouncements,
+  getHonorees,
+  saveHonorees,
+  getSharedFiles,
+  saveSharedFiles,
+  getImportantLinks,
+  saveImportantLinks,
+  getStoredAcademicYear,
+  saveAcademicYear,
+  getCurrentAcademicYear,
+  getNextAcademicYear,
+  suggestNextAcademicYear,
+  closeAcademicYear,
+  getYearArchives,
+  saveYearArchives,
+  deleteYearArchive,
+  restoreYearArchive,
+  getSetting,
+  saveSetting,
+  YearArchive,
 } from "@/lib/data-storage"
+import { clearAllRemote, syncAllFromLocal, pullAllData } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
-  const [backupDialogOpen, setBackupDialogOpen] = useState(false)
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
-  
+  const [closeYearDialogOpen, setCloseYearDialogOpen] = useState(false)
+  const [openYearDialogOpen, setOpenYearDialogOpen] = useState(false)
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<YearArchive | null>(null)
+
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
-  const [passwordMessage, setPasswordMessage] = useState("")
   const [userEmail, setUserEmail] = useState("")
+
+  const [academicYear, setAcademicYear] = useState<string>("")
+  const [openYearValue, setOpenYearValue] = useState<string>("")
+  const [archives, setArchives] = useState<YearArchive[]>([])
 
   const [dataStats, setDataStats] = useState({
     grades: 0,
@@ -70,6 +102,38 @@ export default function SettingsPage() {
     attendance: 0,
   })
 
+  const [supabaseConnected, setSupabaseConnected] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+
+  // بيانات التواصل (رقم واتساب في الصفحة الرئيسية)
+  const [whatsappInput, setWhatsappInput] = useState("")
+
+  // حفظ رقم واتساب التواصل
+  const saveWhatsapp = () => {
+    const digits = whatsappInput.replace(/[^\d+\- ]/g, "").trim()
+    if (!digits) {
+      saveSetting("whatsappNumber", "")
+      toast.success("تم إخفاء زر الواتساب من الصفحة الرئيسية")
+      setWhatsappInput("")
+      return
+    }
+    saveSetting("whatsappNumber", digits)
+    toast.success("تم حفظ رقم الواتساب — سيظهر في أسفل الصفحة الرئيسية")
+  }
+
+  // مزامنة يدوية مع Supabase
+  const handleManualSync = async () => {
+    setSyncing(true)
+    const { ok } = await pullAllData()
+    setSyncing(false)
+    if (ok) {
+      toast.success("تمت المزامنة مع Supabase بنجاح — هذه أحدث نسخة من البيانات")
+      refreshData()
+    } else {
+      toast.error("تعذر الاتصال بـ Supabase. تأكد من المتغيرات البيئية واتصال الإنترنت.")
+    }
+  }
+
   // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
   // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
@@ -80,7 +144,7 @@ export default function SettingsPage() {
     return supabaseRef.current
   }
 
-  useEffect(() => {
+  const refreshData = () => {
     setDataStats({
       grades: getGrades().length,
       students: getStudents().length,
@@ -90,7 +154,15 @@ export default function SettingsPage() {
       sessions: getSessions().length,
       attendance: getAttendance().length,
     })
-    
+    setAcademicYear(getStoredAcademicYear())
+    setArchives([...getYearArchives()].sort((a, b) => b.academicYear.localeCompare(a.academicYear)))
+  }
+
+  useEffect(() => {
+    refreshData()
+    setSupabaseConnected(isSupabaseConfigured())
+    setWhatsappInput(getSetting("whatsappNumber"))
+
     // Get user email from Supabase
     if (isSupabaseConfigured()) {
       const getUser = async () => {
@@ -122,8 +194,90 @@ export default function SettingsPage() {
     setCurrentPassword("")
     setNewPassword("")
     setConfirmPassword("")
-    setPasswordMessage("")
   }
+
+  // ============ إدارة العام الدراسي ============
+
+  const currentComputedYear = getCurrentAcademicYear()
+
+  // تعيين السنة الدراسية المخزنة إلى السنة الحالية محسوباً من التاريخ
+  const setToCurrentYear = () => {
+    if (currentComputedYear === academicYear) {
+      toast.success("السنة الحالية هي المختارة بالفعل")
+      return
+    }
+    saveAcademicYear(currentComputedYear)
+    setAcademicYear(currentComputedYear)
+    toast.success(`تم تعيين السنة الدراسية إلى ${currentComputedYear}`)
+  }
+
+  // فتح سنة دراسية جديدة
+  const openNewYearDialog = () => {
+    setOpenYearValue(suggestNextAcademicYear(academicYear))
+    setOpenYearDialogOpen(true)
+  }
+
+  const confirmOpenYear = () => {
+    const year = openYearValue.trim()
+    if (!/^\d{4}-\d{4}$/.test(year)) {
+      toast.error("أدخل السنة بصيغة صحيحة مثل 2026-2027")
+      return
+    }
+    saveAcademicYear(year)
+    setAcademicYear(year)
+    setOpenYearDialogOpen(false)
+    toast.success(`تم فتح السنة الدراسية ${year} — يمكنك الآن إضافة الصفوف والطلاب`)
+  }
+
+  // إغلاق السنة الدراسية الحالية (أرشفة + بدء من جديد)
+  const confirmCloseYear = () => {
+    const year = academicYear
+    const archive = closeAcademicYear(year)
+    setCloseYearDialogOpen(false)
+    refreshData()
+    toast.success(
+      `تم إغلاق السنة الدراسية ${year} وأرشفة جميع بياناتها (${archive.stats.students} طالب، ${archive.stats.groups} مجموعة). يمكنك الآن البدء من جديد.`
+    )
+  }
+
+  // استعادة سنة مغلقة
+  const askRestore = (archive: YearArchive) => {
+    setRestoreTarget(archive)
+    setRestoreDialogOpen(true)
+  }
+
+  const confirmRestore = () => {
+    if (!restoreTarget) return
+    const ok = restoreYearArchive(restoreTarget.academicYear)
+    if (ok) {
+      refreshData()
+      setRestoreDialogOpen(false)
+      toast.success(`تمت استعادة بيانات السنة ${restoreTarget.academicYear} (تم استبدال البيانات الحالية)`)
+    } else {
+      toast.error("تعذر استعادة البيانات")
+    }
+  }
+
+  const removeArchive = (year: string) => {
+    if (!confirm(`هل أنت متأكد من حذف أرشيف السنة ${year} نهائياً؟ لا يمكن التراجع.`)) return
+    deleteYearArchive(year)
+    refreshData()
+    toast.success(`تم حذف أرشيف السنة ${year}`)
+  }
+
+  // تصدير أرشيف سنة معينة
+  const exportArchive = (archive: YearArchive) => {
+    const blob = new Blob([JSON.stringify(archive, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `archive-${archive.academicYear}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast.success("تم تصدير أرشيف السنة")
+  }
+
+  // ============ النسخ الاحتياطي ============
 
   // Export data
   const exportData = () => {
@@ -135,8 +289,14 @@ export default function SettingsPage() {
       exams: getExams(),
       sessions: getSessions(),
       attendance: getAttendance(),
+      announcements: getAnnouncements(),
+      honorees: getHonorees(),
+      sharedFiles: getSharedFiles(),
+      importantLinks: getImportantLinks(),
+      currentAcademicYear: getStoredAcademicYear(),
+      yearArchives: getYearArchives(),
       exportedAt: new Date().toISOString(),
-      version: "1.0.0",
+      version: "1.1.0",
     }
     
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
@@ -166,7 +326,23 @@ export default function SettingsPage() {
         if (data.exams) saveExams(data.exams)
         if (data.sessions) saveSessions(data.sessions)
         if (data.attendance) saveAttendance(data.attendance)
-        
+        if (data.announcements) saveAnnouncements(data.announcements)
+        if (data.honorees) saveHonorees(data.honorees)
+        if (data.sharedFiles) saveSharedFiles(data.sharedFiles)
+        if (data.importantLinks) saveImportantLinks(data.importantLinks)
+        if (data.currentAcademicYear) saveAcademicYear(data.currentAcademicYear)
+        if (data.yearArchives) saveYearArchives(data.yearArchives)
+
+        // رفع البيانات المستوردة إلى Supabase (المصدر الحقيقي)
+        ;(async () => {
+          try {
+            if (isSupabaseConfigured()) await syncAllFromLocal()
+          } catch (e) {
+            console.warn("remote sync after import failed", e)
+            toast.error("تم الاستيراد محلياً، لكن تعذر رفعه إلى Supabase — ستتم المزامنة لاحقاً")
+          }
+        })()
+
         toast.success("تم استيراد البيانات بنجاح! سيتم تحديث الصفحة.")
         setTimeout(() => window.location.reload(), 1000)
       } catch (err) {
@@ -176,10 +352,17 @@ export default function SettingsPage() {
     reader.readAsText(file)
   }
 
-  // Clear all data
-  const clearAllData = () => {
+  // Clear all data (محلياً وفي Supabase)
+  const clearAllData = async () => {
+    try {
+      if (isSupabaseConfigured()) await clearAllRemote()
+    } catch (e) {
+      console.warn("remote clear failed", e)
+      toast.error("تم الحذف محلياً لكن تعذر حذف بيانات Supabase — تحقق من الإعدادات")
+      return
+    }
     localStorage.clear()
-    toast.success("تم حذف جميع البيانات. سيتم تحديث الصفحة.")
+    toast.success("تم حذف جميع البيانات (محلياً وفي Supabase). سيتم تحديث الصفحة.")
     setTimeout(() => window.location.reload(), 1000)
   }
 
@@ -193,6 +376,127 @@ export default function SettingsPage() {
         <p className="text-gray-500 dark:text-gray-400">
           إدارة إعدادات الحساب والنظام
         </p>
+      </motion.div>
+
+      {/* ============ السنة الدراسية ============ */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 }}
+        className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-lg p-6"
+      >
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shrink-0">
+              <CalendarCheck className="w-7 h-7 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">السنة الدراسية</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                السنة الحالية:{" "}
+                <Badge className="bg-indigo-100 text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300 font-bold text-base mr-1">
+                  {academicYear}
+                </Badge>
+              </p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 leading-relaxed max-w-xl">
+                عند إغلاق السنة الدراسية يتم أرشفة جميع بياناتها (الصفوف، المجموعات، الطلاب،
+                التحصيل، الاختبارات، الحضور) ويمكن استعادتها في أي وقت من الأرشيف، ثم تبدأ من جديد.
+                السنة الحالية محسوبة تلقائياً من التاريخ ({currentComputedYear}).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={setToCurrentYear}
+              className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+            >
+              <CheckCircle className="w-4 h-4" />
+              <span>تعيين السنة الحالية ({currentComputedYear})</span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={openNewYearDialog}
+              className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>فتح سنة دراسية جديدة</span>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setCloseYearDialogOpen(true)}
+              className="border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            >
+              <Archive className="w-4 h-4" />
+              <span>إغلاق السنة الحالية</span>
+            </Button>
+          </div>
+        </div>
+
+        {/* أرشيف السنوات المغلقة */}
+        {archives.length > 0 && (
+          <div className="mt-6 border-t border-gray-200 dark:border-gray-800 pt-5">
+            <h3 className="font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+              <Archive className="w-5 h-5 text-gray-400" />
+              سنوات دراسية مغلقة (أرشيف)
+            </h3>
+            <div className="space-y-3">
+              {archives.map(archive => (
+                <div
+                  key={archive.academicYear}
+                  className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-200 dark:border-gray-700"
+                >
+                  <div>
+                    <p className="font-bold text-gray-900 dark:text-white">
+                      {archive.academicYear}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      أُغلقت في {new Date(archive.closedAt).toLocaleDateString("ar-EG", {
+                        year: "numeric",
+                        month: "long",
+                        day: "numeric",
+                      })}
+                      {" • "}
+                      {archive.stats.grades} صف • {archive.stats.groups} مجموعة • {archive.stats.students} طالب
+                      {" • "}
+                      {archive.stats.payments} دفعة • {archive.stats.exams} اختبار
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => askRestore(archive)}
+                      className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>استعادة</span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => exportArchive(archive)}
+                      className="border-green-500 text-green-600 hover:bg-green-50 dark:hover:bg-green-950"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>تصدير</span>
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => removeArchive(archive.academicYear)}
+                      className="border-red-500 text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span>حذف</span>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </motion.div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -267,6 +571,50 @@ export default function SettingsPage() {
           </Card>
         </motion.div>
 
+        {/* Contact Info */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.25 }}
+        >
+          <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-[#25D366] flex items-center justify-center shadow-lg">
+                  <MessageCircle className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">بيانات التواصل</CardTitle>
+                  <p className="text-sm text-gray-500">تظهر في نهاية الصفحة الرئيسية للزوار</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <Label>رقم واتساب التواصل</Label>
+                <Input
+                  dir="ltr"
+                  placeholder="01012345678"
+                  value={whatsappInput}
+                  onChange={e => setWhatsappInput(e.target.value)}
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                  يظهر كزر واتساب أخضر أسفل الصفحة الرئيسية، ويُحفظ في Supabase فتظهر
+                  للطلاب من أي جهاز. اترك الحقل فارغاً لحفظ لإخفاء الزر.
+                </p>
+              </div>
+              <Button
+                onClick={saveWhatsapp}
+                className="w-full bg-[#25D366] hover:bg-[#1ebe5b] text-white"
+              >
+                <MessageCircle className="w-4 h-4" />
+                <span>حفظ رقم الواتساب</span>
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+
         {/* Data Management */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -297,6 +645,7 @@ export default function SettingsPage() {
                   { label: "الاختبارات", value: dataStats.exams, color: "bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300" },
                   { label: "الحصص", value: dataStats.sessions, color: "bg-teal-50 dark:bg-teal-950/30 text-teal-700 dark:text-teal-300" },
                   { label: "سجلات الحضور", value: dataStats.attendance, color: "bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300" },
+                  { label: "السنوات المغلقة", value: archives.length, color: "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300" },
                 ].map((stat) => (
                   <div key={stat.label} className={`${stat.color} rounded-lg p-3 text-center`}>
                     <p className="text-2xl font-bold">{stat.value}</p>
@@ -306,7 +655,22 @@ export default function SettingsPage() {
               </div>
 
               {/* Actions */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                {supabaseConnected && (
+                  <Button
+                    variant="outline"
+                    onClick={handleManualSync}
+                    disabled={syncing}
+                    className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                  >
+                    {syncing ? (
+                      <RotateCcw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <RotateCcw className="w-4 h-4" />
+                    )}
+                    <span>{syncing ? "جاري المزامنة..." : "مزامنة الآن مع Supabase"}</span>
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   onClick={exportData}
@@ -369,11 +733,11 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">الإصدار</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">1.0.0</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">1.1.0</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">التقنية</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">Next.js 14</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">Next.js</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">التصميم</span>
@@ -383,18 +747,31 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">قاعدة البيانات</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">LocalStorage (مؤقت)</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">
+                      {supabaseConnected ? "Supabase (PostgreSQL)" : "المتصفح المحلي (وضع تجريبي)"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
+                    <span className="text-gray-500">حالة Supabase</span>
+                    {supabaseConnected ? (
+                      <span className="font-semibold text-green-600 flex items-center gap-1">
+                        <CheckCircle className="w-4 h-4" />
+                        متصل — البيانات تُحفظ وتُجلب من Supabase
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-yellow-600 flex items-center gap-1">
+                        <AlertCircle className="w-4 h-4" />
+                        غير متصل (الوضع المحلي فقط)
+                      </span>
+                    )}
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">اللغة</span>
                     <span className="font-semibold text-gray-900 dark:text-white">العربية فقط</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
-                    <span className="text-gray-500">حالة Supabase</span>
-                    <span className="font-semibold text-yellow-600 flex items-center gap-1">
-                      <AlertCircle className="w-4 h-4" />
-                      لم يتم الربط
-                    </span>
+                    <span className="text-gray-500">السنة الدراسية الحالية</span>
+                    <span className="font-semibold text-gray-900 dark:text-white">{academicYear}</span>
                   </div>
                 </div>
               </div>
@@ -438,17 +815,123 @@ export default function SettingsPage() {
                 className="mt-1"
               />
             </div>
-            {passwordMessage && (
-              <p className="text-red-500 text-sm flex items-center gap-1">
-                <AlertCircle className="w-4 h-4" />
-                {passwordMessage}
-              </p>
-            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPasswordDialogOpen(false)}>إلغاء</Button>
             <Button onClick={changePassword} className="bg-gradient-to-r from-red-500 to-rose-600">
               تغيير كلمة المرور
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Close Year Confirmation Dialog */}
+      <Dialog open={closeYearDialogOpen} onOpenChange={setCloseYearDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>⚠️ إغلاق السنة الدراسية {academicYear}</DialogTitle>
+            <DialogDescription>
+              سيتم أرشفة جميع بيانات هذه السنة والبدء من جديد
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-3">
+            <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg p-4">
+              <p className="text-sm text-red-700 dark:text-red-300 leading-relaxed">
+                سيتم نقل جميع بيانات السنة الحالية إلى الأرشيف:
+              </p>
+              <ul className="text-sm text-red-700 dark:text-red-300 mt-2 space-y-1 list-disc pr-5">
+                <li>{dataStats.grades} صف مع {getGrades().reduce((s, g) => s + g.groups.length, 0)} مجموعة</li>
+                <li>{dataStats.students} طالب</li>
+                <li>{dataStats.dues} استحقاق و {dataStats.payments} دفعة</li>
+                <li>{dataStats.exams} اختبار و {dataStats.attendance} سجل حضور</li>
+              </ul>
+            </div>
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg p-4">
+              <p className="text-sm text-amber-800 dark:text-amber-200 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>
+                  البيانات المؤرشفة يمكن استعادتها في أي وقت من قسم "سنوات دراسية مغلقة"، كما يمكنك
+                  تصديرها كملف. الإعلانات ولوحة الشرف والملفات لا تتأثر.
+                </span>
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloseYearDialogOpen(false)}>إلغاء</Button>
+            <Button
+              onClick={confirmCloseYear}
+              className="bg-red-500 hover:bg-red-600"
+            >
+              <Archive className="w-4 h-4" />
+              <span>نعم، أغلق السنة وأرشف البيانات</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Open New Year Dialog */}
+      <Dialog open={openYearDialogOpen} onOpenChange={setOpenYearDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>فتح سنة دراسية جديدة</DialogTitle>
+            <DialogDescription>
+              حدد السنة الدراسية الجديدة (ستُستخدم تلقائياً عند إنشاء الصفوف والاختبارات)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>السنة الدراسية الجديدة</Label>
+              <Input
+                placeholder="مثال: 2026-2027"
+                value={openYearValue}
+                onChange={(e) => setOpenYearValue(e.target.value)}
+                className="mt-1 font-bold text-center text-lg"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                السنة التالية لـ {academicYear} هي {getNextAcademicYear(academicYear)}، والسنة الحالية
+                محسوبة من التاريخ هي {currentComputedYear}
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpenYearDialogOpen(false)}>إلغاء</Button>
+            <Button
+              onClick={confirmOpenYear}
+              className="bg-gradient-to-r from-green-500 to-emerald-600"
+            >
+              <FolderOpen className="w-4 h-4" />
+              <span>فتح السنة الدراسية</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Restore Year Confirmation Dialog */}
+      <Dialog open={restoreDialogOpen} onOpenChange={setRestoreDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>استعادة بيانات {restoreTarget?.academicYear}</DialogTitle>
+            <DialogDescription>
+              سيتم استبدال البيانات النشطة الحالية ببيانات السنة المؤرشفة
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg p-4">
+              <p className="text-sm text-amber-800 dark:text-amber-200 leading-relaxed">
+                ⚠️ أي بيانات موجودة حالياً (سنة {academicYear}) سيتم استبدالها ببيانات السنة{" "}
+                {restoreTarget?.academicYear}. يُنصح بتصدير نسخة احتياطية من البيانات الحالية قبل
+                الاستعادة.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRestoreDialogOpen(false)}>إلغاء</Button>
+            <Button
+              onClick={confirmRestore}
+              className="bg-gradient-to-r from-indigo-500 to-purple-600"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>استعادة البيانات</span>
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -467,7 +950,8 @@ export default function SettingsPage() {
             <div className="bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 rounded-lg p-4">
               <p className="text-sm text-red-700 dark:text-red-300">
                 سيتم حذف: {dataStats.grades} صف، {dataStats.students} طالب، {dataStats.dues} استحقاق، 
-                {dataStats.payments} دفعة، {dataStats.exams} اختبار، {dataStats.attendance} سجل حضور
+                {dataStats.payments} دفعة، {dataStats.exams} اختبار، {dataStats.attendance} سجل حضور،
+                وكل الأرشيف والإعلانات
               </p>
             </div>
           </div>

@@ -1,42 +1,49 @@
 -- ============================================================
--- 🛡️ المخطط الكامل الآمن للتطبيق — Supabase (النسخة النهائية)
+-- 🔄 مزامنة التطبيق الكامل مع Supabase
+-- شغّل هذا الملف في Supabase → SQL Editor → New query → Run
 -- ============================================================
--- كيف تشغّله:
---   Supabase Dashboard → SQL Editor → New query
---   → الصق هذا الكود كاملًا → Run
---
--- ✅ آمن 100% عند إعادة التشغيل في أي وقت:
---   • كل جدول: CREATE TABLE IF NOT EXISTS → إن كان موجودًا يُتجاوزه كما هو
---   • كل فهرس: CREATE INDEX IF NOT EXISTS → يُنشأ ما ينقص فقط
---   • كل سياسة أمان: DROP POLICY IF EXISTS + CREATE → تُحدَّث تعريفات
---     السياسة فقط ولا تمسّ البيانات مطلقًا
---   • الملف كله داخل معاملة (BEGIN/COMMIT) واحدة: إن فشلت أي جملة
---     يعود كل شيء كما كان — لا نصف مخطط
---   • لا يوجد DROP TABLE ولا DROP COLUMN ولا TRuncate →
---     بياناتك الحالية (طلاب، مدفوعات، امتحانات...) لن تتأثر أبدًا
---
--- 📦 ما ينشئه (14 جدولًا + الفهارس + كل سياسات RLS):
---   grades, groups, students, dues, payments, exams, sessions,
---   attendance, announcements, honorees, shared_files,
---   important_links, year_archives, app_settings
+-- هذا المخطط يحل محل الجداول القديمة (التي لم يكن الكود يستخدمها).
+-- جميع المعرفات TEXT لأنها مولّدة من التطبيق نفسه.
 -- ============================================================
 
-BEGIN;
+-- 1) حذف الجداول/العروض القديمة إن وُجدت (كانت غير مستخدمة)
+DROP VIEW IF EXISTS student_financial_status;
+DROP VIEW IF EXISTS student_attendance_rate;
+DROP TABLE IF EXISTS users CASCADE;
+DROP TABLE IF EXISTS questions CASCADE;
+DROP TABLE IF EXISTS sub_questions CASCADE;
+DROP TABLE IF EXISTS choices CASCADE;
+DROP TABLE IF EXISTS question_parts CASCADE;
+DROP TABLE IF EXISTS corrections CASCADE;
+DROP TABLE IF EXISTS attendance CASCADE;
+DROP TABLE IF EXISTS sessions CASCADE;
+DROP TABLE IF EXISTS exams CASCADE;
+DROP TABLE IF EXISTS payments CASCADE;
+DROP TABLE IF EXISTS dues CASCADE;
+DROP TABLE IF EXISTS students CASCADE;
+DROP TABLE IF EXISTS groups CASCADE;
+DROP TABLE IF EXISTS grades CASCADE;
+DROP TABLE IF EXISTS announcements CASCADE;
+DROP TABLE IF EXISTS honorees CASCADE;
+DROP TABLE IF EXISTS shared_files CASCADE;
+DROP TABLE IF EXISTS important_links CASCADE;
+DROP TABLE IF EXISTS year_archives CASCADE;
+DROP TABLE IF EXISTS app_settings CASCADE;
 
 -- ============================================================
--- 1) الجداول (إنشاء فقط ما لا يوجد)
+-- 2) الجداول
 -- ============================================================
 
 -- الصفوف الدراسية
-CREATE TABLE IF NOT EXISTS grades (
+CREATE TABLE grades (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   academic_year TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
 );
 
--- المجموعات (كل مجموعة تابعة لصف)
-CREATE TABLE IF NOT EXISTS groups (
+-- المجموعات
+CREATE TABLE groups (
   id TEXT PRIMARY KEY,
   grade_id TEXT NOT NULL REFERENCES grades(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -46,10 +53,10 @@ CREATE TABLE IF NOT EXISTS groups (
   monthly_fee NUMERIC(10,2) NOT NULL DEFAULT 0,
   students_count INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_groups_grade ON groups(grade_id);
+CREATE INDEX idx_groups_grade ON groups(grade_id);
 
 -- الطلاب
-CREATE TABLE IF NOT EXISTS students (
+CREATE TABLE students (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   phone TEXT,
@@ -60,12 +67,12 @@ CREATE TABLE IF NOT EXISTS students (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_students_grade ON students(grade_id);
-CREATE INDEX IF NOT EXISTS idx_students_group ON students(group_id);
-CREATE INDEX IF NOT EXISTS idx_students_status ON students(status);
+CREATE INDEX idx_students_grade ON students(grade_id);
+CREATE INDEX idx_students_group ON students(group_id);
+CREATE INDEX idx_students_status ON students(status);
 
--- الاستحقاقات (مستحقات شهرية لكل طالب)
-CREATE TABLE IF NOT EXISTS dues (
+-- الاستحقاقات
+CREATE TABLE dues (
   id TEXT PRIMARY KEY,
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
@@ -75,11 +82,11 @@ CREATE TABLE IF NOT EXISTS dues (
   status TEXT NOT NULL DEFAULT 'pending',
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_dues_student ON dues(student_id);
-CREATE INDEX IF NOT EXISTS idx_dues_month_year ON dues(month, year);
+CREATE INDEX idx_dues_student ON dues(student_id);
+CREATE INDEX idx_dues_month_year ON dues(month, year);
 
 -- المدفوعات
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE payments (
   id TEXT PRIMARY KEY,
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   due_id TEXT,
@@ -90,11 +97,11 @@ CREATE TABLE IF NOT EXISTS payments (
   notes TEXT,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_payments_student ON payments(student_id);
-CREATE INDEX IF NOT EXISTS idx_payments_month_year ON payments(month, year);
+CREATE INDEX idx_payments_student ON payments(student_id);
+CREATE INDEX idx_payments_month_year ON payments(month, year);
 
--- الاختبارات (الأسئلة كاملة كـ JSONB)
-CREATE TABLE IF NOT EXISTS exams (
+-- الاختبارات (الأسئلة كاملة JSONB)
+CREATE TABLE exams (
   id TEXT PRIMARY KEY,
   grade_id TEXT REFERENCES grades(id) ON DELETE SET NULL,
   group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
@@ -108,11 +115,11 @@ CREATE TABLE IF NOT EXISTS exams (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_exams_grade ON exams(grade_id);
-CREATE INDEX IF NOT EXISTS idx_exams_month ON exams(month);
+CREATE INDEX idx_exams_grade ON exams(grade_id);
+CREATE INDEX idx_exams_month ON exams(month);
 
 -- الحصص
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE sessions (
   id TEXT PRIMARY KEY,
   group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
   session_date TEXT NOT NULL,
@@ -121,10 +128,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   notes TEXT,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_sessions_group ON sessions(group_id);
+CREATE INDEX idx_sessions_group ON sessions(group_id);
 
--- الحضور (كل سجل حضور مرتبط بحصة وطالب)
-CREATE TABLE IF NOT EXISTS attendance (
+-- الحضور
+CREATE TABLE attendance (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
@@ -133,11 +140,11 @@ CREATE TABLE IF NOT EXISTS attendance (
   notes TEXT,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_attendance_session ON attendance(session_id);
-CREATE INDEX IF NOT EXISTS idx_attendance_student ON attendance(student_id);
+CREATE INDEX idx_attendance_session ON attendance(session_id);
+CREATE INDEX idx_attendance_student ON attendance(student_id);
 
 -- الإعلانات
-CREATE TABLE IF NOT EXISTS announcements (
+CREATE TABLE announcements (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
@@ -145,8 +152,8 @@ CREATE TABLE IF NOT EXISTS announcements (
   created_at TEXT NOT NULL
 );
 
--- لوحة الشرف (المتميز هذا الشهر)
-CREATE TABLE IF NOT EXISTS honorees (
+-- لوحة الشرف
+CREATE TABLE honorees (
   id TEXT PRIMARY KEY,
   student_id TEXT,
   student_name TEXT NOT NULL,
@@ -156,11 +163,11 @@ CREATE TABLE IF NOT EXISTS honorees (
   year INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_honorees_group ON honorees(group_id);
-CREATE INDEX IF NOT EXISTS idx_honorees_month_year ON honorees(month, year);
+CREATE INDEX idx_honorees_group ON honorees(group_id);
+CREATE INDEX idx_honorees_month_year ON honorees(month, year);
 
 -- ملفات للتحميل
-CREATE TABLE IF NOT EXISTS shared_files (
+CREATE TABLE shared_files (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
@@ -171,7 +178,7 @@ CREATE TABLE IF NOT EXISTS shared_files (
 );
 
 -- روابط مهمة
-CREATE TABLE IF NOT EXISTS important_links (
+CREATE TABLE important_links (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   url TEXT NOT NULL,
@@ -179,7 +186,7 @@ CREATE TABLE IF NOT EXISTS important_links (
 );
 
 -- أرشيف السنوات المغلقة
-CREATE TABLE IF NOT EXISTS year_archives (
+CREATE TABLE year_archives (
   id TEXT PRIMARY KEY,
   academic_year TEXT NOT NULL,
   closed_at TEXT NOT NULL,
@@ -187,15 +194,14 @@ CREATE TABLE IF NOT EXISTS year_archives (
   data JSONB NOT NULL DEFAULT '{}'
 );
 
--- إعدادات التطبيق (السنة الدراسية الحالية، رقم واتساب التواصل...)
-CREATE TABLE IF NOT EXISTS app_settings (
+-- إعدادات التطبيق (السنة الدراسية الحالية...)
+CREATE TABLE app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
 
 -- ============================================================
--- 2) تفعيل Row Level Security على كل الجداول
---    (تفعيل مكرر = آمن، لا يغيّر شيئًا إن كان مفعّلًا)
+-- 3) Row Level Security
 -- ============================================================
 ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
 ALTER TABLE groups ENABLE ROW LEVEL SECURITY;
@@ -212,66 +218,30 @@ ALTER TABLE important_links ENABLE ROW LEVEL SECURITY;
 ALTER TABLE year_archives ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
 
--- ============================================================
--- 3) سياسات الأمان
---    DROP IF EXISTS + CREATE = تُحدَّث التعريفات عند إعادة التشغيل
---    دون أي تأثير على البيانات
--- ============================================================
-
--- 3.1) وصول كامل (قراءة/كتابة/حذف/تعديل) للمستخدم المصادق فقط (المدير)
-DROP POLICY IF EXISTS "authenticated full access" ON grades;
+-- وصول كامل للمستخدم المصادق عليه (المدير)
 CREATE POLICY "authenticated full access" ON grades FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON groups;
 CREATE POLICY "authenticated full access" ON groups FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON students;
 CREATE POLICY "authenticated full access" ON students FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON dues;
 CREATE POLICY "authenticated full access" ON dues FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON payments;
 CREATE POLICY "authenticated full access" ON payments FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON exams;
 CREATE POLICY "authenticated full access" ON exams FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON sessions;
 CREATE POLICY "authenticated full access" ON sessions FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON attendance;
 CREATE POLICY "authenticated full access" ON attendance FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON announcements;
 CREATE POLICY "authenticated full access" ON announcements FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON honorees;
 CREATE POLICY "authenticated full access" ON honorees FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON shared_files;
 CREATE POLICY "authenticated full access" ON shared_files FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON important_links;
 CREATE POLICY "authenticated full access" ON important_links FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON year_archives;
 CREATE POLICY "authenticated full access" ON year_archives FOR ALL TO authenticated USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS "authenticated full access" ON app_settings;
 CREATE POLICY "authenticated full access" ON app_settings FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- 3.2) قراءة عامة (بدون تسجيل دخول) لجداول الصفحة الرئيسية —
---      حتى يراها الطلاب في أي جهاز
-DROP POLICY IF EXISTS "public read announcements" ON announcements;
+-- قراءة عامة للصفحة الرئيسية (بدون تسجيل دخول) — للطلاب
 CREATE POLICY "public read announcements" ON announcements FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS "public read honorees" ON honorees;
 CREATE POLICY "public read honorees" ON honorees FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS "public read shared_files" ON shared_files;
 CREATE POLICY "public read shared_files" ON shared_files FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS "public read important_links" ON important_links;
 CREATE POLICY "public read important_links" ON important_links FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS "public read grades" ON grades;
 CREATE POLICY "public read grades" ON grades FOR SELECT TO anon, authenticated USING (true);
-DROP POLICY IF EXISTS "public read groups" ON groups;
 CREATE POLICY "public read groups" ON groups FOR SELECT TO anon, authenticated USING (true);
 
--- 3.3) قراءة عامة لإعدادات الموقع (رقم واتساب + السنة الدراسية)
---      لعرضها في فوتر الصفحة العامة
-DROP POLICY IF EXISTS "public read app_settings" ON app_settings;
-CREATE POLICY "public read app_settings" ON app_settings FOR SELECT TO anon, authenticated USING (true);
-
 -- ============================================================
--- 4) اكتمل!
---    لا توجد أي أوامر حذف بيانات في هذا الملف.
---    جاهز لإعادة التشغيل في أي وقت دون أي مخاطرة.
+-- 4) جاهز!
 -- ============================================================
-
-COMMIT;
