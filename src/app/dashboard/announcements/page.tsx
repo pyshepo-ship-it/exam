@@ -49,6 +49,7 @@ import {
   SharedFile,
   ImportantLink,
   getAllGroups,
+  getGroupsOfGrade,
   getGrades,
   getStudents,
   getAnnouncements,
@@ -95,6 +96,7 @@ export default function AnnouncementsPage() {
 
   const [honorDialogOpen, setHonorDialogOpen] = useState(false)
   const [honorForm, setHonorForm] = useState({
+    gradeId: "",
     groupId: "",
     studentId: "",
     studentName: "",
@@ -209,6 +211,7 @@ export default function AnnouncementsPage() {
 
   const openHonorDialog = () => {
     setHonorForm({
+      gradeId: "",
       groupId: "",
       studentId: "",
       studentName: "",
@@ -779,23 +782,48 @@ export default function AnnouncementsPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
-              <Label>المجموعة *</Label>
+              <Label>الصف *</Label>
               <Select
-                value={honorForm.groupId}
+                value={honorForm.gradeId}
                 onValueChange={val =>
-                  setHonorForm(prev => ({ ...prev, groupId: val, studentId: "" }))
+                  setHonorForm(prev => ({ ...prev, gradeId: val, groupId: "", studentId: "", studentName: "" }))
                 }
               >
                 <SelectTrigger className="mt-1">
-                  <SelectValue placeholder="اختر المجموعة" />
+                  <SelectValue placeholder="اختر الصف أولاً" />
                 </SelectTrigger>
                 <SelectContent>
-                  {allGroups.length === 0 ? (
-                    <SelectItem value="__none" disabled>لا توجد مجموعات — أضف صفاً ومجموعة أولاً</SelectItem>
+                  {grades.length === 0 ? (
+                    <SelectItem value="__none" disabled>لا توجد صفوف</SelectItem>
                   ) : (
-                    allGroups.map(group => (
+                    grades.map(grade => (
+                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>المجموعة *</Label>
+              <Select
+                value={honorForm.groupId}
+                disabled={!honorForm.gradeId}
+                onValueChange={val =>
+                  setHonorForm(prev => ({ ...prev, groupId: val, studentId: "", studentName: "" }))
+                }
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder={honorForm.gradeId ? "اختر المجموعة" : "اختر الصف أولاً"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {!honorForm.gradeId ? (
+                    <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
+                  ) : getGroupsOfGrade(grades, honorForm.gradeId).length === 0 ? (
+                    <SelectItem value="__none" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
+                  ) : (
+                    getGroupsOfGrade(grades, honorForm.gradeId).map(group => (
                       <SelectItem key={group.id} value={group.id}>
-                        {group.gradeName} - {group.name}
+                        {group.name}
                       </SelectItem>
                     ))
                   )}

@@ -2,18 +2,22 @@
 
 import React, { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import { 
-  FileText, 
-  Plus, 
-  Edit2, 
-  Trash2, 
-  Eye, 
+import {
+  FileText,
+  Plus,
+  Edit2,
+  Trash2,
+  Eye,
   Download,
   X,
   ChevronDown,
   ChevronUp,
-  BookOpen,
-  Calendar
+  Calendar,
+  Sparkles,
+  Palette,
+  Link2,
+  Globe,
+  Printer,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import toast from "react-hot-toast"
-import { exportToPDF } from "@/lib/pdf-utils"
+import { exportToPDF, printA4 } from "@/lib/pdf-utils"
 import {
   Select,
   SelectContent,
@@ -42,57 +46,28 @@ import {
   Exam,
   Question,
   SubQuestion,
-  getAllGroups,
+  ExamTemplateId,
   getGrades,
   getExams,
   saveExams,
   getStoredAcademicYear,
+  getGroupsOfGrade,
 } from "@/lib/data-storage"
-
-const MONTHS = [
-  "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
-  "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
-]
-
-// أنواع الأسئلة الرئيسية (رأس السؤال يُكتب تلقائياً حسب النوع)
-const QUESTION_TYPES = [
-  { id: 1, label: "اختر الإجابة الصحيحة", desc: "جمل فرعية، لكل منها 4 خيارات (أ، ب، ج، د) مع تحديد الإجابة الصحيحة" },
-  { id: 2, label: "أكمل", desc: "جمل مقسومة لجزأين والفراغ في المنتصف أو في النهاية" },
-  { id: 3, label: "صح أو خطأ", desc: "جمل يضع الطالب أمامها (صح) أو (خطأ)" },
-  { id: 4, label: "علل / بم تفسر / اذكر أهمية", desc: "جمل مع سطر أو سطرين من النقاط لكتابة الإجابة" },
-  { id: 5, label: "صحح ما تحته خط", desc: "جمل مع تحديد عدد الكلمات تحتها خط وخط النقاط للإجابة" },
-]
-
-// أزرار إضافة السؤال (النوع 4 مقسم لثلاثة أنواع فرعية)
-const QUESTION_BUTTONS: { type: 1 | 2 | 3 | 4 | 5; label: string; reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية" }[] = [
-  { type: 1, label: "اختر الإجابة الصحيحة" },
-  { type: 2, label: "أكمل" },
-  { type: 3, label: "صح أو خطأ" },
-  { type: 4, label: "علل لما يأتي", reasoningType: "علل" },
-  { type: 4, label: "بم تفسر", reasoningType: "بم تفسر" },
-  { type: 4, label: "اذكر أهمية", reasoningType: "اذكر أهمية" },
-  { type: 5, label: "صحح ما تحته خط" },
-]
-
-const ARABIC_ORDINALS = ["الأول", "الثاني", "الثالث", "الرابع", "الخامس", "السادس", "السابع", "الثامن", "التاسع", "العاشر"]
-
-const DOTS_LINE = "................................................................"
-
-// رأس السؤال يُكتب تلقائياً حسب النوع (النص المخصص القديم له الأولوية)
-const getQuestionHeader = (q: Question): string => {
-  if (q.headerText && q.headerText.trim()) return q.headerText
-  switch (q.questionType) {
-    case 1: return "اختر الإجابة الصحيحة"
-    case 2: return "أكمل"
-    case 3: return "ضع علامة (صح) أو (خطأ)"
-    case 4:
-      if (q.reasoningType === "بم تفسر") return "بم تفسر:"
-      if (q.reasoningType === "اذكر أهمية") return "اذكر أهمية:"
-      return "علل لما يأتي:"
-    case 5: return "صحح ما تحته خط"
-    default: return ""
-  }
-}
+import { TEACHER_NAME } from "@/lib/branding"
+import {
+  MONTHS,
+  QUESTION_TYPES,
+  QUESTION_BUTTONS,
+  ARABIC_ORDINALS,
+  getQuestionHeader,
+  getQuestionTypeMeta,
+  getExamTotalMarks,
+  getTemplate,
+  renderCompleteParts,
+  getUnderlinedWords,
+} from "@/lib/exam-templates"
+import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
+import { ScienceIcon } from "@/components/exam/science-ornaments"
 
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
@@ -103,7 +78,6 @@ export default function ExamsPage() {
   const [previewExam, setPreviewExam] = useState<Exam | null>(null)
   const [expandedQuestions, setExpandedQuestions] = useState<string[]>([])
 
-  // Exam form
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -114,6 +88,13 @@ export default function ExamsPage() {
     duration: 60,
     totalMarks: 0,
     questions: [] as Question[],
+    templateId: "classic" as ExamTemplateId,
+    showDecorations: true,
+    teacherName: TEACHER_NAME,
+    schoolName: "",
+    allowOnline: false,
+    autoHonorBoard: false,
+    honorMinPercent: 100,
   })
 
   useEffect(() => {
@@ -121,10 +102,9 @@ export default function ExamsPage() {
     setExams(getExams())
   }, [])
 
-  // كل المجموعات في جميع الصفوف (مع اسم الصف)
-  const allGroups = getAllGroups(grades)
+  // مجموعات الصف المختار فقط — لا تظهر مجموعات صف آخر أبداً
+  const groupsOfSelectedGrade = getGroupsOfGrade(grades, examForm.gradeId)
 
-  // Toggle question expansion
   const toggleQuestion = (questionId: string) => {
     setExpandedQuestions(prev =>
       prev.includes(questionId)
@@ -133,7 +113,6 @@ export default function ExamsPage() {
     )
   }
 
-  // إنشاء سؤال فرعي فارغ حسب النوع
   const makeSubQuestion = (type: 1 | 2 | 3 | 4 | 5, index: number): SubQuestion => {
     const id = `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 6)}`
     const sub: SubQuestion = {
@@ -150,7 +129,6 @@ export default function ExamsPage() {
         { id: "4", choiceKey: "د", choiceText: "", isCorrect: false },
       ]
     } else if (type === 2) {
-      // جملة أولى + جملة ثانية، والفراغ في المنتصف (between) أو في النهاية (after)
       sub.parts = [
         { id: `${id}-p1`, partOrder: 1, partText: "", blankPosition: "between" },
         { id: `${id}-p2`, partOrder: 2, partText: "", blankPosition: "between" },
@@ -165,7 +143,6 @@ export default function ExamsPage() {
     return sub
   }
 
-  // Add new question (4 أسئلة فرعية جاهزة)
   const addQuestion = (type: 1 | 2 | 3 | 4 | 5, reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية") => {
     const questionNumber = examForm.questions.length + 1
     const newQuestion: Question = {
@@ -177,15 +154,10 @@ export default function ExamsPage() {
       reasoningType: type === 4 ? reasoningType || "علل" : undefined,
       subQuestions: [0, 1, 2, 3].map(i => makeSubQuestion(type, i)),
     }
-
-    setExamForm(prev => ({
-      ...prev,
-      questions: [...prev.questions, newQuestion],
-    }))
+    setExamForm(prev => ({ ...prev, questions: [...prev.questions, newQuestion] }))
     setExpandedQuestions(prev => [...prev, newQuestion.id])
   }
 
-  // Update reasoning type (type 4)
   const updateReasoningType = (questionId: string, value: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -195,7 +167,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Add sub-question
   const addSubQuestion = (questionId: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -210,8 +181,7 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update sub-question text
-  const updateSubQuestion = (questionId: string, subQuestionId: string, field: string, value: any) => {
+  const updateSubQuestion = (questionId: string, subQuestionId: string, field: string, value: unknown) => {
     setExamForm(prev => ({
       ...prev,
       questions: prev.questions.map(q => {
@@ -228,7 +198,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update choice text
   const updateChoice = (questionId: string, subQuestionId: string, choiceId: string, text: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -252,7 +221,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Set the correct choice
   const setCorrectChoice = (questionId: string, subQuestionId: string, choiceId: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -276,7 +244,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update part text (type 2) — يضيف الجزء تلقائياً إن لم يوجد (بيانات قديمة)
   const updatePartText = (questionId: string, subQuestionId: string, partOrder: number, text: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -308,7 +275,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update blank position (type 2): between | after
   const updateBlankPosition = (questionId: string, subQuestionId: string, position: "between" | "after") => {
     setExamForm(prev => ({
       ...prev,
@@ -332,7 +298,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Update correction fields (type 5)
   const updateCorrection = (questionId: string, subQuestionId: string, field: "wordPosition" | "wordCount", value: number) => {
     setExamForm(prev => ({
       ...prev,
@@ -356,7 +321,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Remove sub-question
   const removeSubQuestion = (questionId: string, subQuestionId: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -374,7 +338,6 @@ export default function ExamsPage() {
     }))
   }
 
-  // Remove question
   const removeQuestion = (questionId: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -384,7 +347,25 @@ export default function ExamsPage() {
     }))
   }
 
-  // Open create dialog
+  const emptyForm = () => ({
+    gradeId: "",
+    groupId: "",
+    title: "",
+    month: new Date().getMonth() + 1,
+    unit: "",
+    academicYear: getStoredAcademicYear(),
+    duration: 60,
+    totalMarks: 0,
+    questions: [] as Question[],
+    templateId: "classic" as ExamTemplateId,
+    showDecorations: true,
+    teacherName: TEACHER_NAME,
+    schoolName: "",
+    allowOnline: false,
+    autoHonorBoard: false,
+    honorMinPercent: 100,
+  })
+
   const openCreateDialog = (exam?: Exam) => {
     if (exam) {
       setEditingExam(exam)
@@ -398,32 +379,28 @@ export default function ExamsPage() {
         duration: exam.duration || 60,
         totalMarks: exam.totalMarks || 0,
         questions: exam.questions,
+        templateId: exam.templateId || "classic",
+        showDecorations: exam.showDecorations !== false,
+        teacherName: exam.teacherName || TEACHER_NAME,
+        schoolName: exam.schoolName || "",
+        allowOnline: !!exam.allowOnline,
+        autoHonorBoard: !!exam.autoHonorBoard,
+        honorMinPercent: exam.honorMinPercent ?? 100,
       })
     } else {
       setEditingExam(null)
-      setExamForm({
-        gradeId: "",
-        groupId: "",
-        title: "",
-        month: new Date().getMonth() + 1,
-        unit: "",
-        academicYear: getStoredAcademicYear(),
-        duration: 60,
-        totalMarks: 0,
-        questions: [],
-      })
+      setExamForm(emptyForm())
     }
     setExpandedQuestions([])
     setCreateDialogOpen(true)
   }
 
-  // Save exam
   const saveExam = () => {
     if (!examForm.gradeId || !examForm.title) {
       toast.error("يرجى ملء جميع الحقول المطلوبة")
       return
     }
-
+    const totalMarks = getExamTotalMarks(examForm.questions)
     const examData: Exam = {
       id: editingExam?.id || Date.now().toString(),
       gradeId: examForm.gradeId,
@@ -433,26 +410,27 @@ export default function ExamsPage() {
       unit: examForm.unit || undefined,
       academicYear: examForm.academicYear,
       duration: examForm.duration,
-      totalMarks: examForm.totalMarks,
+      totalMarks,
       questions: examForm.questions,
+      templateId: examForm.templateId,
+      showDecorations: examForm.showDecorations,
+      teacherName: examForm.teacherName || undefined,
+      schoolName: examForm.schoolName || undefined,
+      allowOnline: examForm.allowOnline,
+      autoHonorBoard: examForm.autoHonorBoard,
+      honorMinPercent: examForm.honorMinPercent,
       createdAt: editingExam?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-
-    let updatedExams: Exam[]
-    if (editingExam) {
-      updatedExams = exams.map(e => e.id === editingExam.id ? examData : e)
-    } else {
-      updatedExams = [...exams, examData]
-    }
-
+    const updatedExams = editingExam
+      ? exams.map(e => (e.id === editingExam.id ? examData : e))
+      : [...exams, examData]
     setExams(updatedExams)
     saveExams(updatedExams)
     setCreateDialogOpen(false)
     toast.success(editingExam ? "تم تحديث الاختبار بنجاح" : "تم إنشاء الاختبار بنجاح")
   }
 
-  // Delete exam
   const deleteExam = (examId: string) => {
     if (confirm("هل أنت متأكد من حذف هذا الاختبار؟")) {
       const updatedExams = exams.filter(e => e.id !== examId)
@@ -462,94 +440,56 @@ export default function ExamsPage() {
     }
   }
 
-  // Preview exam
   const previewExamHandler = (exam: Exam) => {
     setPreviewExam(exam)
     setPreviewDialogOpen(true)
   }
 
-  // Get names
-  const getGradeName = (gradeId: string) => grades.find(g => g.id === gradeId)?.name || 'غير محدد'
+  const getGradeName = (gradeId: string) => grades.find(g => g.id === gradeId)?.name || "غير محدد"
   const getGroupName = (groupId: string) => {
     for (const grade of grades) {
       const group = grade.groups.find(g => g.id === groupId)
       if (group) return group.name
     }
-    return 'الكل'
+    return "الكل"
   }
 
-  // ---- معاينة: نوع 2 (أكمل) ----
-  const renderComplete = (sq: SubQuestion) => {
-    const parts = sq.parts || []
-    const blank = <span className="tracking-wide text-gray-500">....................</span>
-    if (parts.length >= 2) {
-      const p1 = parts[0].partText
-      const p2 = parts[1].partText
-      const atEnd = parts[1].blankPosition === "after"
-      if (atEnd) {
-        return (
-          <>
-            {p1} {p2} <span className="tracking-wide text-gray-500">....................</span>
-          </>
-        )
-      }
-      return (
-        <>
-          {p1} <span className="tracking-wide text-gray-500">....................</span> {p2}
-        </>
-      )
-    }
-    // بيانات قديمة: أجزاء مفصولة بفراغات
-    return parts.map((part, i) => (
-      <span key={part.id}>
-        {part.partText}
-        {i < parts.length - 1 && " .................... "}
-      </span>
-    ))
+  const renderCompletePreview = (sq: SubQuestion) => {
+    const { before, after, atEnd } = renderCompleteParts(sq)
+    const blank = <span className="tracking-wide text-gray-400">....................</span>
+    if (atEnd) return <>{before} {after} {blank}</>
+    return <>{before} {blank} {after}</>
   }
 
-  // ---- معاينة: نوع 5 (صحح ما تحته خط) ----
   const renderCorrectionSentence = (sq: SubQuestion) => {
-    const words = sq.questionText.split(/\s+/).filter(Boolean)
+    const words = getUnderlinedWords(sq)
     if (words.length === 0) return null
-    const corr = sq.corrections?.[0]
-    const start = corr && corr.wordPosition > 0 ? corr.wordPosition - 1 : 0
-    const count = corr?.wordCount && corr.wordCount > 0 ? corr.wordCount : 1
     return words.map((w, i) => (
-      <span
-        key={i}
-        className={
-          i >= start && i < start + count
-            ? "underline decoration-2 underline-offset-4"
-            : undefined
-        }
-      >
-        {w}
-        {i < words.length - 1 && " "}
+      <span key={i}>
+        <span className={w.underlined ? "underline decoration-2 underline-offset-4" : undefined}>{w.word}</span>
+        {i < words.length - 1 ? " " : ""}
       </span>
     ))
   }
 
-  // عدد إجمالي الأسئلة الفرعية
   const totalSubQuestions = examForm.questions.reduce((s, q) => s + q.subQuestions.length, 0)
+  const liveTotalMarks = getExamTotalMarks(examForm.questions)
+  const selectedGradeName = getGradeName(examForm.gradeId)
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="flex flex-col md:flex-row md:items-center md:justify-between gap-4"
       >
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-            الاختبارات
-          </h1>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">الاختبارات</h1>
           <p className="text-gray-500 dark:text-gray-400">
-            إنشاء وإدارة الاختبارات وتحويلها لـ PDF
+            ورقة امتحان للطباعة والتوزيع على الطلاب — من الجوال أو الكمبيوتر، بصيغة A4 والعربية
           </p>
         </div>
-        <Button 
+        <Button
           onClick={() => openCreateDialog()}
           className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 shadow-lg"
         >
@@ -558,7 +498,6 @@ export default function ExamsPage() {
         </Button>
       </motion.div>
 
-      {/* Question Types Info */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -566,16 +505,16 @@ export default function ExamsPage() {
         className="bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-950/30 dark:to-purple-950/30 border border-indigo-200 dark:border-indigo-900 rounded-2xl p-6"
       >
         <h3 className="font-bold text-gray-900 dark:text-white mb-4">
-          أنواع الأسئلة (رأس كل سؤال يُكتب تلقائياً حسب النوع)
+          أنواع الأسئلة (رأس كل سؤال يُكتب تلقائياً — وشارة ملوّنة تميّز نوعه)
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {QUESTION_TYPES.map((type) => (
             <div
               key={type.id}
-              className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-200 dark:border-gray-800"
+              className={`bg-white dark:bg-gray-900 rounded-xl p-4 border-2 ${type.border}`}
             >
-              <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center text-white font-bold mb-2">
-                {type.id}
+              <div className={`w-8 h-8 bg-gradient-to-br ${type.color} rounded-lg flex items-center justify-center text-white font-bold mb-2 text-xs`}>
+                {type.paperMark}
               </div>
               <p className="font-semibold text-gray-900 dark:text-white text-sm">{type.label}</p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{type.desc}</p>
@@ -584,96 +523,107 @@ export default function ExamsPage() {
         </div>
       </motion.div>
 
-      {/* Exams List */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <AnimatePresence>
-          {exams.map((exam, index) => (
-            <motion.div
-              key={exam.id}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ delay: index * 0.05 }}
-            >
-              <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="text-lg text-gray-900 dark:text-white">
-                        {exam.title}
-                      </CardTitle>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                        {getGradeName(exam.gradeId)}
-                      </p>
-                    </div>
-                    <Badge variant="outline" className="bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300">
-                      {exam.questions.length} سؤال
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {exam.month && (
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                        <Calendar className="w-3 h-3 ml-1" />
-                        {MONTHS[exam.month - 1]}
+          {exams.map((exam, index) => {
+            const tpl = getTemplate(exam.templateId)
+            return (
+              <motion.div
+                key={exam.id}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ delay: index * 0.05 }}
+              >
+                <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <CardTitle className="text-lg text-gray-900 dark:text-white">
+                          {exam.title}
+                        </CardTitle>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                          {getGradeName(exam.gradeId)}
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300">
+                        {exam.questions.length} سؤال
                       </Badge>
-                    )}
-                    {exam.unit && (
-                      <Badge variant="outline">الوحدة: {exam.unit}</Badge>
-                    )}
-                    {exam.groupId && (
-                      <Badge variant="outline">{getGroupName(exam.groupId)}</Badge>
-                    )}
-                    {exam.duration && (
-                      <Badge variant="outline">{exam.duration} دقيقة</Badge>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => previewExamHandler(exam)}
-                      className="flex-1"
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>معاينة</span>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openCreateDialog(exam)}
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => deleteExam(exam.id)}
-                      className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      <Badge variant="outline" className="bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                        <Palette className="w-3 h-3 ml-1" />
+                        {tpl.name}
+                      </Badge>
+                      {exam.month && (
+                        <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                          <Calendar className="w-3 h-3 ml-1" />
+                          {MONTHS[exam.month - 1]}
+                        </Badge>
+                      )}
+                      {exam.unit && <Badge variant="outline">الوحدة: {exam.unit}</Badge>}
+                      {exam.groupId && <Badge variant="outline">{getGroupName(exam.groupId)}</Badge>}
+                      {exam.duration && <Badge variant="outline">{exam.duration} دقيقة</Badge>}
+                      {exam.showDecorations !== false && (
+                        <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                          <Sparkles className="w-3 h-3 ml-1" />
+                          زخارف
+                        </Badge>
+                      )}
+                      {exam.allowOnline && (
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                          <Globe className="w-3 h-3 ml-1" />
+                          منشور للطلاب
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="flex-1">
+                        <Eye className="w-4 h-4" />
+                        <span>معاينة</span>
+                      </Button>
+                      {exam.allowOnline && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="نسخ رابط الاختبار"
+                          onClick={() => {
+                            const url = `${window.location.origin}/exam/${exam.id}`
+                            navigator.clipboard.writeText(url).then(
+                              () => toast.success("تم نسخ رابط الاختبار"),
+                              () => toast.error(url),
+                            )
+                          }}
+                        >
+                          <Link2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)}>
+                        <Edit2 className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => deleteExam(exam.id)}
+                        className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )
+          })}
         </AnimatePresence>
 
         {exams.length === 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="col-span-full text-center py-12"
-          >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="col-span-full text-center py-12">
             <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
             <p className="text-gray-500 dark:text-gray-400 mb-4">لا توجد اختبارات بعد</p>
-            <Button 
-              onClick={() => openCreateDialog()}
-              className="bg-gradient-to-r from-red-500 to-rose-600"
-            >
+            <Button onClick={() => openCreateDialog()} className="bg-gradient-to-r from-red-500 to-rose-600">
               <Plus className="w-4 h-4" />
               <span>إنشاء أول اختبار</span>
             </Button>
@@ -681,419 +631,620 @@ export default function ExamsPage() {
         )}
       </div>
 
-      {/* Create/Edit Exam Dialog */}
+      {/* Create / Edit */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="inset-0 left-0 top-0 h-[100dvh] w-[100dvw] max-w-none max-h-[100dvh] translate-x-0 translate-y-0 rounded-none p-3 pb-28 overflow-y-auto sm:inset-auto sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-6xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6">
           <DialogHeader>
-            <DialogTitle>
-              {editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}
-            </DialogTitle>
+            <DialogTitle>{editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}</DialogTitle>
             <DialogDescription>
-              اختر الصف والمجموعة والشهر ثم أضف الأسئلة، والأسئلة الفرعية تحت كل رأس سؤال
+              ورقة للطباعة والتوزيع — اكتب الأسئلة من الجوال بسهولة ثم عاينها قبل التصدير
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6 py-4">
-            {/* Basic Info */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <Label>الصف *</Label>
-                <Select 
-                  value={examForm.gradeId} 
-                  onValueChange={(val) => setExamForm(prev => ({ ...prev, gradeId: val, groupId: "" }))}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="اختر الصف" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {grades.length === 0 ? (
-                      <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
-                    ) : (
-                      grades.map(grade => (
-                        <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>المجموعة (اختياري)</Label>
-                <Select 
-                  value={examForm.groupId || "all"} 
-                  onValueChange={(val) => {
-                    if (val === "all") {
-                      setExamForm(prev => ({ ...prev, groupId: "" }))
-                    } else {
-                      const group = allGroups.find(g => g.id === val)
-                      setExamForm(prev => ({
-                        ...prev,
-                        gradeId: group ? group.gradeId : prev.gradeId,
-                        groupId: val,
-                      }))
-                    }
-                  }}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="كل المجموعات" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">كل المجموعات (للصف كله)</SelectItem>
-                    {/* مجموعات الصف المختار فقط */}
-                    {allGroups
-                      .filter(g => !examForm.gradeId || g.gradeId === examForm.gradeId)
-                      .map(group => (
-                        <SelectItem key={group.id} value={group.id}>
-                          {group.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label htmlFor="examTitle">عنوان الاختبار *</Label>
-                <Input
-                  id="examTitle"
-                  placeholder="مثال: اختبار شهر سبتمبر"
-                  value={examForm.title}
-                  onChange={(e) => setExamForm(prev => ({ ...prev, title: e.target.value }))}
-                  className="mt-1"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="space-y-7 py-2 [&_input]:min-h-11 [&_button]:min-h-10">
+            {/* 1. Cascading grade → group */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">1</span>
+                الصف والمجموعة
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label>الشهر</Label>
-                  <Select 
-                    value={examForm.month.toString()} 
-                    onValueChange={(val) => setExamForm(prev => ({ ...prev, month: parseInt(val) }))}
+                  <Label>الصف *</Label>
+                  <Select
+                    value={examForm.gradeId}
+                    onValueChange={(val) => setExamForm(prev => ({ ...prev, gradeId: val, groupId: "" }))}
                   >
                     <SelectTrigger className="mt-1">
-                      <SelectValue />
+                      <SelectValue placeholder="اختر الصف أولاً" />
                     </SelectTrigger>
                     <SelectContent>
-                      {MONTHS.map((month, index) => (
-                        <SelectItem key={index} value={(index + 1).toString()}>
-                          {month}
-                        </SelectItem>
-                      ))}
+                      {grades.length === 0 ? (
+                        <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
+                      ) : (
+                        grades.map(grade => (
+                          <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label>الوحدة</Label>
+                  <Label>المجموعة (اختياري)</Label>
+                  <Select
+                    value={examForm.groupId || "all"}
+                    disabled={!examForm.gradeId}
+                    onValueChange={(val) =>
+                      setExamForm(prev => ({ ...prev, groupId: val === "all" ? "" : val }))
+                    }
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder={examForm.gradeId ? "كل المجموعات" : "اختر الصف أولاً"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {!examForm.gradeId ? (
+                        <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
+                      ) : (
+                        <>
+                          <SelectItem value="all">كل المجموعات (للصف كله)</SelectItem>
+                          {groupsOfSelectedGrade.length === 0 ? (
+                            <SelectItem value="__empty" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
+                          ) : (
+                            groupsOfSelectedGrade.map(group => (
+                              <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                            ))
+                          )}
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    تظهر مجموعات الصف المختار فقط — لن تظهر مجموعات صف آخر
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            {/* 2. Title / month */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">2</span>
+                بيانات الورقة
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="examTitle">عنوان الاختبار *</Label>
                   <Input
-                    placeholder="1"
-                    value={examForm.unit}
-                    onChange={(e) => setExamForm(prev => ({ ...prev, unit: e.target.value }))}
+                    id="examTitle"
+                    placeholder="مثال: امتحان شهر أكتوبر — الوحدة الأولى"
+                    value={examForm.title}
+                    onChange={(e) => setExamForm(prev => ({ ...prev, title: e.target.value }))}
+                    className="mt-1"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <div>
+                    <Label>الشهر</Label>
+                    <Select
+                      value={examForm.month.toString()}
+                      onValueChange={(val) => setExamForm(prev => ({ ...prev, month: parseInt(val) }))}
+                    >
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MONTHS.map((month, index) => (
+                          <SelectItem key={index} value={(index + 1).toString()}>{month}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>الوحدة</Label>
+                    <Input
+                      placeholder="1"
+                      value={examForm.unit}
+                      onChange={(e) => setExamForm(prev => ({ ...prev, unit: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>المدة (د)</Label>
+                    <Input
+                      type="number"
+                      value={examForm.duration}
+                      onChange={(e) => setExamForm(prev => ({ ...prev, duration: parseInt(e.target.value) || 0 }))}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>اسم المعلم (اختياري)</Label>
+                  <Input
+                    placeholder="يظهر في ترويسة الورقة"
+                    value={examForm.teacherName}
+                    onChange={(e) => setExamForm(prev => ({ ...prev, teacherName: e.target.value }))}
                     className="mt-1"
                   />
                 </div>
                 <div>
-                  <Label>المدة (د)</Label>
+                  <Label>اسم المدرسة / السنتر (اختياري)</Label>
                   <Input
-                    type="number"
-                    value={examForm.duration}
-                    onChange={(e) => setExamForm(prev => ({ ...prev, duration: parseInt(e.target.value) || 0 }))}
+                    placeholder="يظهر أعلى الورقة"
+                    value={examForm.schoolName}
+                    onChange={(e) => setExamForm(prev => ({ ...prev, schoolName: e.target.value }))}
                     className="mt-1"
                   />
                 </div>
               </div>
-            </div>
+            </section>
 
-            {/* Add Question Buttons */}
-            <div>
-              <Label>إضافة سؤال رئيسي (رأس السؤال يُكتب تلقائياً)</Label>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
-                {QUESTION_BUTTONS.map((btn, i) => (
-                  <Button
-                    key={i}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => addQuestion(btn.type, btn.reasoningType)}
-                    className="text-xs"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>{btn.label}</span>
-                  </Button>
-                ))}
-              </div>
-            </div>
+            {/* 3. Templates */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
+                قالب الورقة (5 قوالب احترافية)
+              </h3>
+              <TemplatePicker
+                value={examForm.templateId}
+                onChange={(id) => setExamForm(prev => ({ ...prev, templateId: id }))}
+              />
+              <label className="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={examForm.showDecorations}
+                  onChange={(e) => setExamForm(prev => ({ ...prev, showDecorations: e.target.checked }))}
+                  className="w-4 h-4 accent-emerald-600"
+                />
+                <Sparkles className="w-4 h-4 text-emerald-600" />
+                <div>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">زخارف علمية ملوّنة حول الأسئلة</p>
+                  <p className="text-xs text-gray-500">
+                    ميكروسكوب وأدوات معمل وذرة ونبات… تتغيّر تلقائياً حسب الصف المختار
+                    {examForm.gradeId ? ` (${selectedGradeName})` : " — اختر الصف لتحديدها"}
+                  </p>
+                </div>
+              </label>
+            </section>
 
-            {/* Questions List */}
-            <div className="space-y-4">
-              {examForm.questions.map((question, qIndex) => (
-                <Card key={question.id} className="border-gray-200 dark:border-gray-800">
-                  <CardHeader 
-                    className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors py-3"
-                    onClick={() => toggleQuestion(question.id)}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <Badge className="bg-gradient-to-br from-indigo-500 to-purple-600">
-                          السؤال {ARABIC_ORDINALS[qIndex] || qIndex + 1}
-                        </Badge>
-                        <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
-                          {getQuestionHeader(question)}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          ({question.subQuestions.length} سؤال فرعي)
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            removeQuestion(question.id)
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                        {expandedQuestions.includes(question.id) ? (
-                          <ChevronUp className="w-4 h-4 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-4 h-4 text-gray-400" />
-                        )}
-                      </div>
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-gray-400 text-white text-xs flex items-center justify-center">3ب</span>
+                اختبار إلكتروني (تجريبي — حجر أساس)
+              </h3>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                الورقة المطبوعة لا تحتاج إجابة نموذجية. الاختبار على الموقع تجريبي ولن يُنشر الآن،
+                وسيُطوَّر لاحقاً ليكون اختياراً من متعدد فقط.
+              </p>
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-dashed border-gray-300 dark:border-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={examForm.allowOnline}
+                  onChange={(e) => setExamForm(prev => ({ ...prev, allowOnline: e.target.checked }))}
+                  className="w-4 h-4 accent-indigo-600 mt-1"
+                />
+                <Globe className="w-4 h-4 text-indigo-600 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">تفعيل الأساس التجريبي على الموقع</p>
+                  <p className="text-xs text-gray-500">لا تستخدمه مع الطلاب الآن — للتطوير لاحقاً</p>
+                </div>
+              </label>
+              {examForm.allowOnline && (
+                <label className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={examForm.autoHonorBoard}
+                    onChange={(e) => setExamForm(prev => ({ ...prev, autoHonorBoard: e.target.checked }))}
+                    className="w-4 h-4 accent-amber-600 mt-1"
+                  />
+                  <Sparkles className="w-4 h-4 text-amber-600 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">إضافة المتفوقين تلقائياً إلى لوحة الشرف</p>
+                    <p className="text-xs text-gray-500 mb-2">اختياري حسب درجة الاختبار الإلكتروني</p>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs">الحد الأدنى للنسبة %</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={examForm.honorMinPercent}
+                        onChange={(e) => setExamForm(prev => ({ ...prev, honorMinPercent: Math.min(100, Math.max(1, parseInt(e.target.value) || 100)) }))}
+                        className="h-8 w-20"
+                      />
                     </div>
-                  </CardHeader>
+                  </div>
+                </label>
+              )}
+            </section>
 
-                  {expandedQuestions.includes(question.id) && (
-                    <CardContent className="space-y-4 pt-0">
-                      {/* Type 4: reasoning type selector */}
-                      {question.questionType === 4 && (
-                        <div className="flex items-center gap-3">
-                          <Label className="shrink-0">نوع السؤال:</Label>
-                          <Select
-                            value={question.reasoningType || "علل"}
-                            onValueChange={(val) => updateReasoningType(question.id, val)}
-                          >
-                            <SelectTrigger className="w-44">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="علل">علل لما يأتي</SelectItem>
-                              <SelectItem value="بم تفسر">بم تفسر</SelectItem>
-                              <SelectItem value="اذكر أهمية">اذكر أهمية</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
+            {/* 4. Add questions */}
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">4</span>
+                إضافة سؤال رئيسي
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {QUESTION_BUTTONS.map((btn, i) => {
+                  const meta = getQuestionTypeMeta(btn.type)
+                  return (
+                    <Button
+                      key={i}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addQuestion(btn.type, btn.reasoningType)}
+                      className={`text-xs justify-start border-2 ${meta.border}`}
+                    >
+                      <span
+                        className="inline-flex items-center justify-center min-w-[1.6rem] h-5 rounded text-[10px] font-extrabold text-white ml-1"
+                        style={{ background: meta.accent }}
+                      >
+                        {meta.paperMark}
+                      </span>
+                      <span>{btn.label}</span>
+                    </Button>
+                  )
+                })}
+              </div>
+            </section>
 
-                      {/* Sub Questions */}
-                      <div className="space-y-3">
-                        {question.subQuestions.map((sq, index) => (
-                          <div key={sq.id} className="border border-gray-200 dark:border-gray-800 rounded-lg p-3 space-y-3 bg-gray-50/50 dark:bg-gray-800/30">
-                            <div className="flex items-center justify-between">
-                              <Badge variant="outline" className="text-xs">
-                                السؤال الفرعي {index + 1}
-                              </Badge>
-                              {question.subQuestions.length > 1 && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
-                                  onClick={() => removeSubQuestion(question.id, sq.id)}
-                                >
-                                  <X className="w-3 h-3" />
-                                </Button>
-                              )}
-                            </div>
-
-                            {/* ===== Type 1: اختر الإجابة الصحيحة ===== */}
-                            {question.questionType === 1 && (
-                              <>
-                                <div>
-                                  <Label className="text-xs">نص السؤال</Label>
-                                  <Input
-                                    placeholder="مثال: القمر يدور حول"
-                                    value={sq.questionText}
-                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                    className="mt-1"
-                                  />
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  {sq.choices?.map((choice) => (
-                                    <div key={choice.id} className="flex items-center gap-2">
-                                      <span className="text-sm font-bold text-gray-500 w-4 shrink-0">{choice.choiceKey} -</span>
-                                      <Input
-                                        placeholder={`الخيار ${choice.choiceKey}`}
-                                        value={choice.choiceText}
-                                        onChange={(e) => updateChoice(question.id, sq.id, choice.id, e.target.value)}
-                                        className="h-8 text-sm"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-xs shrink-0">الإجابة الصحيحة:</Label>
-                                  <Select
-                                    value={sq.choices?.find(c => c.isCorrect)?.id || ""}
-                                    onValueChange={(val) => setCorrectChoice(question.id, sq.id, val)}
-                                  >
-                                    <SelectTrigger className="w-56 h-8">
-                                      <SelectValue placeholder="حدد الإجابة الصحيحة" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {sq.choices?.map(c => (
-                                        <SelectItem key={c.id} value={c.id}>
-                                          {c.choiceKey} - {c.choiceText || `الخيار ${c.choiceKey}`}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              </>
-                            )}
-
-                            {/* ===== Type 2: أكمل ===== */}
-                            {question.questionType === 2 && sq.parts && (
-                              <>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                  <div>
-                                    <Label className="text-xs">الجملة الأولى</Label>
-                                    <Input
-                                      placeholder="مثال: القمر يدور حول"
-                                      value={sq.parts[0]?.partText || ""}
-                                      onChange={(e) => updatePartText(question.id, sq.id, 1, e.target.value)}
-                                      className="mt-1 h-8 text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label className="text-xs">الجملة الثانية</Label>
-                                    <Input
-                                      placeholder="مثال: الأرض"
-                                      value={sq.parts[1]?.partText || ""}
-                                      onChange={(e) => updatePartText(question.id, sq.id, 2, e.target.value)}
-                                      className="mt-1 h-8 text-sm"
-                                    />
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-xs shrink-0">موضع الفراغ:</Label>
-                                  <Select
-                                    value={sq.parts[1]?.blankPosition || "between"}
-                                    onValueChange={(val) => updateBlankPosition(question.id, sq.id, val as "between" | "after")}
-                                  >
-                                    <SelectTrigger className="w-56 h-8">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="between">في منتصف الجملتين</SelectItem>
-                                      <SelectItem value="after">في نهاية الجملة</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                {/* معاينة مصغرة */}
-                                <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
-                                  {renderComplete(sq)}
-                                </p>
-                              </>
-                            )}
-
-                            {/* ===== Type 3: صح أو خطأ ===== */}
-                            {question.questionType === 3 && (
-                              <div>
-                                <Label className="text-xs">نص العبارة (سيُضاف (   ) في نهايتها تلقائياً)</Label>
-                                <Input
-                                  placeholder="مثال: القمر يدور حول الأرض"
-                                  value={sq.questionText}
-                                  onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                  className="mt-1"
-                                />
-                              </div>
-                            )}
-
-                            {/* ===== Type 4: علل / بم تفسر / اذكر أهمية ===== */}
-                            {question.questionType === 4 && (
-                              <>
-                                <div>
-                                  <Label className="text-xs">نص العبارة</Label>
-                                  <Input
-                                    placeholder="مثال: الشروق يكون من الشرق"
-                                    value={sq.questionText}
-                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                    className="mt-1"
-                                  />
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Label className="text-xs shrink-0">أسطر الإجابة:</Label>
-                                  <Select
-                                    value={(sq.answerLines || 2).toString()}
-                                    onValueChange={(val) => updateSubQuestion(question.id, sq.id, "answerLines", parseInt(val))}
-                                  >
-                                    <SelectTrigger className="w-32 h-8">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="1">سطر واحد</SelectItem>
-                                      <SelectItem value="2">سطران</SelectItem>
-                                      <SelectItem value="3">ثلاثة أسطر</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              </>
-                            )}
-
-                            {/* ===== Type 5: صحح ما تحته خط ===== */}
-                            {question.questionType === 5 && (
-                              <>
-                                <div>
-                                  <Label className="text-xs">نص الجملة</Label>
-                                  <Input
-                                    placeholder="مثال: الشمس تشرق من الغرب"
-                                    value={sq.questionText}
-                                    onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
-                                    className="mt-1"
-                                  />
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <Label className="text-xs">الخط يبدأ من كلمة رقم</Label>
-                                    <Input
-                                      type="number"
-                                      min={1}
-                                      value={sq.corrections?.[0]?.wordPosition || 1}
-                                      onChange={(e) => updateCorrection(question.id, sq.id, "wordPosition", parseInt(e.target.value) || 1)}
-                                      className="mt-1 h-8 text-sm"
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label className="text-xs">عدد الكلمات تحتها خط</Label>
-                                    <Input
-                                      type="number"
-                                      min={1}
-                                      value={sq.corrections?.[0]?.wordCount || 1}
-                                      onChange={(e) => updateCorrection(question.id, sq.id, "wordCount", parseInt(e.target.value) || 1)}
-                                      className="mt-1 h-8 text-sm"
-                                    />
-                                  </div>
-                                </div>
-                                {sq.questionText && (
-                                  <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
-                                    {renderCorrectionSentence(sq)}
-                                  </p>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        ))}
-
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => addSubQuestion(question.id)}
-                          className="w-full"
-                        >
-                          <Plus className="w-4 h-4" />
-                          <span>إضافة سؤال فرعي ({question.subQuestions.length})</span>
-                        </Button>
+            {/* Questions editor */}
+            <div className="space-y-6">
+              {examForm.questions.map((question, qIndex) => {
+                const meta = getQuestionTypeMeta(question.questionType)
+                const expanded = expandedQuestions.includes(question.id)
+                return (
+                  <React.Fragment key={question.id}>
+                    {qIndex > 0 && (
+                      <div className="flex items-center gap-3 px-2">
+                        <div className="flex-1 h-px bg-gradient-to-l from-transparent via-gray-300 dark:via-gray-700 to-transparent" />
+                        <span className="text-[11px] text-gray-400 flex items-center gap-1">
+                          <ScienceIcon kind="atom" size={12} />
+                          فاصل السؤال
+                        </span>
+                        <div className="flex-1 h-px bg-gradient-to-l from-transparent via-gray-300 dark:via-gray-700 to-transparent" />
                       </div>
-                    </CardContent>
-                  )}
-                </Card>
-              ))}
+                    )}
+                    <Card className={`border-2 ${meta.border} overflow-hidden`}>
+                      <CardHeader
+                        className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors py-3"
+                        onClick={() => toggleQuestion(question.id)}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <span
+                              className="inline-flex items-center justify-center min-w-[2.6rem] h-7 px-2 rounded-md text-[11px] font-extrabold text-white"
+                              style={{ background: meta.accent }}
+                            >
+                              {meta.paperMark}
+                            </span>
+                            <Badge className={`bg-gradient-to-br ${meta.color}`}>
+                              السؤال {ARABIC_ORDINALS[qIndex] || qIndex + 1}
+                            </Badge>
+                            <span className="text-sm font-bold text-gray-800 dark:text-gray-200">
+                              {getQuestionHeader(question)}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              ({question.subQuestions.length} فرعي)
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                removeQuestion(question.id)
+                              }}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                            {expanded ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                          </div>
+                        </div>
+                      </CardHeader>
+
+                      {expanded && (
+                        <CardContent className="space-y-4 pt-0">
+                          {question.questionType === 4 && (
+                            <div className="flex items-center gap-3">
+                              <Label className="shrink-0">نوع السؤال:</Label>
+                              <Select
+                                value={question.reasoningType || "علل"}
+                                onValueChange={(val) => updateReasoningType(question.id, val)}
+                              >
+                                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="علل">علل لما يأتي</SelectItem>
+                                  <SelectItem value="بم تفسر">بم تفسر</SelectItem>
+                                  <SelectItem value="اذكر أهمية">اذكر أهمية</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+
+                          <div className="space-y-4">
+                            {question.subQuestions.map((sq, index) => (
+                              <div key={sq.id}>
+                                {index > 0 && (
+                                  <div className="flex items-center gap-2 my-2">
+                                    <div className="flex-1 border-t-2 border-dashed" style={{ borderColor: `${meta.accent}55` }} />
+                                    <span className="text-[10px] font-bold" style={{ color: meta.accent }}>
+                                      {index + 1}
+                                    </span>
+                                    <div className="flex-1 border-t-2 border-dashed" style={{ borderColor: `${meta.accent}55` }} />
+                                  </div>
+                                )}
+                                <div
+                                  className="rounded-xl p-3 space-y-3"
+                                  style={{ background: `${meta.accent}0d`, border: `1px solid ${meta.accent}33` }}
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <Badge variant="outline" className={`text-xs ${meta.badge}`}>
+                                      السؤال الفرعي {index + 1}
+                                    </Badge>
+                                    <div className="flex items-center gap-2">
+                                      <Label className="text-[11px] text-gray-500">الدرجة</Label>
+                                      <Input
+                                        type="number"
+                                        min={1}
+                                        value={sq.marks || 1}
+                                        onChange={(e) => updateSubQuestion(question.id, sq.id, "marks", parseInt(e.target.value) || 1)}
+                                        className="h-7 w-16 text-sm"
+                                      />
+                                      {question.subQuestions.length > 1 && (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="h-6 w-6 text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+                                          onClick={() => removeSubQuestion(question.id, sq.id)}
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {question.questionType === 1 && (
+                                    <>
+                                      <div>
+                                        <Label className="text-xs">نص السؤال</Label>
+                                        <Input
+                                          placeholder="مثال: القمر يدور حول"
+                                          value={sq.questionText}
+                                          onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                          className="mt-1"
+                                        />
+                                      </div>
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {sq.choices?.map((choice) => (
+                                          <div key={choice.id} className="flex items-center gap-2">
+                                            <span className="text-sm font-bold text-gray-500 w-4 shrink-0">{choice.choiceKey} -</span>
+                                            <Input
+                                              placeholder={`الخيار ${choice.choiceKey}`}
+                                              value={choice.choiceText}
+                                              onChange={(e) => updateChoice(question.id, sq.id, choice.id, e.target.value)}
+                                              className="h-11 sm:h-8 text-sm"
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {examForm.allowOnline && (
+                                        <div className="flex items-center gap-2">
+                                          <Label className="text-xs shrink-0">مفتاح التصحيح (تجريبي):</Label>
+                                          <Select
+                                            value={sq.choices?.find(c => c.isCorrect)?.id}
+                                            onValueChange={(val) => setCorrectChoice(question.id, sq.id, val)}
+                                          >
+                                            <SelectTrigger className="w-56 h-8"><SelectValue placeholder="حدد الإجابة الصحيحة" /></SelectTrigger>
+                                            <SelectContent>
+                                              {sq.choices?.map(c => (
+                                                <SelectItem key={c.id} value={c.id}>
+                                                  {c.choiceKey} - {c.choiceText || `الخيار ${c.choiceKey}`}
+                                                </SelectItem>
+                                              ))}
+                                            </SelectContent>
+                                          </Select>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {question.questionType === 2 && sq.parts && (
+                                    <>
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                        <div>
+                                          <Label className="text-xs">الجملة الأولى</Label>
+                                          <Input
+                                            placeholder="مثال: القمر يدور حول"
+                                            value={sq.parts[0]?.partText || ""}
+                                            onChange={(e) => updatePartText(question.id, sq.id, 1, e.target.value)}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                        <div>
+                                          <Label className="text-xs">الجملة الثانية</Label>
+                                          <Input
+                                            placeholder="مثال: الأرض"
+                                            value={sq.parts[1]?.partText || ""}
+                                            onChange={(e) => updatePartText(question.id, sq.id, 2, e.target.value)}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs shrink-0">موضع الفراغ:</Label>
+                                        <Select
+                                          value={sq.parts[1]?.blankPosition || "between"}
+                                          onValueChange={(val) => updateBlankPosition(question.id, sq.id, val as "between" | "after")}
+                                        >
+                                          <SelectTrigger className="w-56 h-8"><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="between">في منتصف الجملتين</SelectItem>
+                                            <SelectItem value="after">في نهاية الجملة</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                      <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
+                                        {renderCompletePreview(sq)}
+                                      </p>
+                                      {examForm.allowOnline && (
+                                        <div>
+                                          <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                          <Input
+                                            placeholder="الكلمة أو الجملة الناقصة"
+                                            value={sq.correctAnswer || ""}
+                                            onChange={(e) => updateSubQuestion(question.id, sq.id, "correctAnswer", e.target.value)}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {question.questionType === 3 && (
+                                    <>
+                                      <div>
+                                        <Label className="text-xs">نص العبارة (سيُضاف (   ) في نهايتها تلقائياً)</Label>
+                                        <Input
+                                          placeholder="مثال: القمر يدور حول الأرض"
+                                          value={sq.questionText}
+                                          onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                          className="mt-1"
+                                        />
+                                      </div>
+                                      {examForm.allowOnline && (
+                                        <div className="flex items-center gap-2">
+                                          <Label className="text-xs shrink-0">مفتاح التصحيح (تجريبي):</Label>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant={sq.isTrue === true ? "default" : "outline"}
+                                            onClick={() => updateSubQuestion(question.id, sq.id, "isTrue", true)}
+                                          >
+                                            صح
+                                          </Button>
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            variant={sq.isTrue === false ? "default" : "outline"}
+                                            onClick={() => updateSubQuestion(question.id, sq.id, "isTrue", false)}
+                                          >
+                                            خطأ
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {question.questionType === 4 && (
+                                    <>
+                                      <div>
+                                        <Label className="text-xs">نص العبارة</Label>
+                                        <Input
+                                          placeholder="مثال: الشروق يكون من الشرق"
+                                          value={sq.questionText}
+                                          onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                          className="mt-1"
+                                        />
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Label className="text-xs shrink-0">أسطر الإجابة:</Label>
+                                        <Select
+                                          value={(sq.answerLines || 2).toString()}
+                                          onValueChange={(val) => updateSubQuestion(question.id, sq.id, "answerLines", parseInt(val))}
+                                        >
+                                          <SelectTrigger className="w-32 h-8"><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="1">سطر واحد</SelectItem>
+                                            <SelectItem value="2">سطران</SelectItem>
+                                            <SelectItem value="3">ثلاثة أسطر</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    </>
+                                  )}
+
+                                  {question.questionType === 5 && (
+                                    <>
+                                      <div>
+                                        <Label className="text-xs">نص الجملة</Label>
+                                        <Input
+                                          placeholder="مثال: الشمس تشرق من الغرب"
+                                          value={sq.questionText}
+                                          onChange={(e) => updateSubQuestion(question.id, sq.id, "questionText", e.target.value)}
+                                          className="mt-1"
+                                        />
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <Label className="text-xs">الخط يبدأ من كلمة رقم</Label>
+                                          <Input
+                                            type="number"
+                                            min={1}
+                                            value={sq.corrections?.[0]?.wordPosition || 1}
+                                            onChange={(e) => updateCorrection(question.id, sq.id, "wordPosition", parseInt(e.target.value) || 1)}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                        <div>
+                                          <Label className="text-xs">عدد الكلمات تحتها خط</Label>
+                                          <Input
+                                            type="number"
+                                            min={1}
+                                            value={sq.corrections?.[0]?.wordCount || 1}
+                                            onChange={(e) => updateCorrection(question.id, sq.id, "wordCount", parseInt(e.target.value) || 1)}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                      </div>
+                                      {sq.questionText && (
+                                        <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
+                                          {renderCorrectionSentence(sq)}
+                                        </p>
+                                      )}
+                                      {examForm.allowOnline && (
+                                        <div>
+                                          <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                          <Input
+                                            placeholder="الكلمة الصحيحة بدل ما تحته خط"
+                                            value={sq.corrections?.[0]?.correctAnswer || ""}
+                                            onChange={(e) => {
+                                              const val = e.target.value
+                                              setExamForm(prev => ({
+                                                ...prev,
+                                                questions: prev.questions.map(q =>
+                                                  q.id !== question.id ? q : {
+                                                    ...q,
+                                                    subQuestions: q.subQuestions.map(s =>
+                                                      s.id !== sq.id || !s.corrections ? s : {
+                                                        ...s,
+                                                        corrections: s.corrections.map(c => ({ ...c, correctAnswer: val })),
+                                                      }
+                                                    ),
+                                                  }
+                                                ),
+                                              }))
+                                            }}
+                                            className="mt-1 h-8 text-sm"
+                                          />
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+
+                            <Button variant="outline" size="sm" onClick={() => addSubQuestion(question.id)} className="w-full">
+                              <Plus className="w-4 h-4" />
+                              <span>إضافة سؤال فرعي ({question.subQuestions.length})</span>
+                            </Button>
+                          </div>
+                        </CardContent>
+                      )}
+                    </Card>
+                  </React.Fragment>
+                )
+              })}
             </div>
 
             {examForm.questions.length === 0 && (
@@ -1106,16 +1257,14 @@ export default function ExamsPage() {
 
             {examForm.questions.length > 0 && (
               <p className="text-xs text-gray-400 text-center">
-                إجمالي الأسئلة: {examForm.questions.length} سؤال رئيسي • {totalSubQuestions} سؤال فرعي
+                إجمالي: {examForm.questions.length} سؤال رئيسي • {totalSubQuestions} فرعي • {liveTotalMarks} درجة
               </p>
             )}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-              إلغاء
-            </Button>
-            <Button 
+          <DialogFooter className="sticky bottom-0 bg-background/95 backdrop-blur border-t pt-3 sm:static sm:border-0 sm:bg-transparent sm:backdrop-blur-none">
+            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>إلغاء</Button>
+            <Button
               onClick={saveExam}
               className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
             >
@@ -1125,116 +1274,47 @@ export default function ExamsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Preview Dialog */}
+      {/* Preview */}
       <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>معاينة الاختبار</DialogTitle>
+        <DialogContent className="inset-0 left-0 top-0 h-[100dvh] w-[100dvw] max-w-none max-h-[100dvh] translate-x-0 translate-y-0 rounded-none p-3 overflow-y-auto sm:inset-auto sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-4xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6">
+          <DialogHeader className="no-print">
+            <DialogTitle>معاينة الورقة — A4</DialogTitle>
           </DialogHeader>
           {previewExam && (
-            <div id="exam-preview-content" className="py-4 space-y-6 bg-white text-gray-900 p-6 rounded-lg">
-              {/* Exam Header */}
-              <div className="text-center border-b border-gray-300 pb-4">
-                <h2 className="text-2xl font-bold">
-                  {previewExam.title}
-                </h2>
-                <p className="text-gray-600 mt-1">
-                  {getGradeName(previewExam.gradeId)}
-                  {previewExam.groupId && ` - ${getGroupName(previewExam.groupId)}`}
-                  {previewExam.unit && ` - الوحدة ${previewExam.unit}`}
-                </p>
-                <p className="text-sm text-gray-500 mt-1">
-                  العام الدراسي: {previewExam.academicYear} • المدة: {previewExam.duration} دقيقة
-                </p>
-              </div>
-
-              {/* Questions */}
-              <div className="space-y-7">
-                {previewExam.questions.map((question, qi) => (
-                  <div key={question.id} className="space-y-3">
-                    <h3 className="font-bold text-lg">
-                      السؤال {ARABIC_ORDINALS[qi] || qi + 1}: {getQuestionHeader(question)}
-                    </h3>
-
-                    <div className="space-y-4 pr-5">
-                      {question.subQuestions.map((sq, index) => (
-                        <div key={sq.id}>
-                          {/* Type 1 */}
-                          {question.questionType === 1 && (
-                            <div className="space-y-1">
-                              <p>
-                                <span className="font-bold">{index + 1} -</span> {sq.questionText}
-                              </p>
-                              <div className="flex flex-wrap gap-x-8 gap-y-1 pr-6">
-                                {sq.choices?.map(choice => (
-                                  <span key={choice.id}>
-                                    {choice.choiceKey} - {choice.choiceText}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Type 2 */}
-                          {question.questionType === 2 && (
-                            <p>
-                              <span className="font-bold">{index + 1} -</span> {renderComplete(sq)}
-                            </p>
-                          )}
-
-                          {/* Type 3 */}
-                          {question.questionType === 3 && (
-                            <p>
-                              <span className="font-bold">{index + 1} -</span> {sq.questionText}{" "}
-                              <span className="text-gray-500">(    )</span>
-                            </p>
-                          )}
-
-                          {/* Type 4 */}
-                          {question.questionType === 4 && (
-                            <div className="space-y-2">
-                              <p>
-                                <span className="font-bold">{index + 1} -</span> {sq.questionText}
-                              </p>
-                              {Array.from({ length: sq.answerLines || 2 }).map((_, li) => (
-                                <p key={li} className="pr-6 text-gray-400 tracking-wider">
-                                  {DOTS_LINE}
-                                </p>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Type 5 */}
-                          {question.questionType === 5 && (
-                            <div className="space-y-2">
-                              <p>
-                                <span className="font-bold">{index + 1} -</span> {renderCorrectionSentence(sq)}
-                              </p>
-                              <p className="pr-6 text-gray-400 tracking-wider">{DOTS_LINE}</p>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div id="exam-preview-content" className="bg-white">
+              <ExamPaper
+                exam={previewExam}
+                gradeName={getGradeName(previewExam.gradeId)}
+                groupName={previewExam.groupId ? getGroupName(previewExam.groupId) : undefined}
+              />
             </div>
           )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>
-              إغلاق
+          <DialogFooter className="no-print">
+            <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>إغلاق</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                try {
+                  printA4()
+                } catch {
+                  toast.error("تعذر فتح نافذة الطباعة")
+                }
+              }}
+            >
+              <Printer className="w-4 h-4" />
+              <span>طباعة A4</span>
             </Button>
-            <Button 
+            <Button
               onClick={async () => {
                 try {
-                  await exportToPDF('exam-preview-content', `${previewExam?.title || 'اختبار'}-${new Date().toLocaleDateString('ar-EG')}`, {
-                    orientation: 'portrait',
-                    scale: 2,
-                  })
-                  toast.success('تم تحميل الاختبار بنجاح')
-                } catch (error) {
-                  toast.error('حدث خطأ أثناء التصدير')
+                  await exportToPDF(
+                    "exam-preview-content",
+                    `${previewExam?.title || "اختبار"}-${new Date().toLocaleDateString("ar-EG")}`,
+                    { orientation: "portrait", scale: 2 }
+                  )
+                  toast.success("تم تحميل الاختبار بنجاح")
+                } catch {
+                  toast.error("حدث خطأ أثناء التصدير")
                 }
               }}
               className="bg-gradient-to-r from-purple-500 to-pink-600"
@@ -1245,6 +1325,7 @@ export default function ExamsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
     </div>
   )
 }

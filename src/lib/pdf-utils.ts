@@ -19,13 +19,29 @@ export const exportToPDF = async (
   const { orientation = 'portrait', scale = 2, margin = 10 } = options || {}
 
   try {
-    // إنشاء canvas من العنصر
+    try {
+      await (document as unknown as { fonts?: { ready: Promise<unknown> } }).fonts?.ready
+    } catch {
+      /* تجاهل */
+    }
+
     const canvas = await html2canvas(element, {
       scale,
       useCORS: true,
       logging: false,
       backgroundColor: '#ffffff',
-    })
+      windowWidth: Math.max(element.scrollWidth, 794),
+      onclone: (doc) => {
+        doc.documentElement.setAttribute('dir', 'rtl')
+        doc.documentElement.setAttribute('lang', 'ar')
+        const cloned = doc.getElementById(elementId) as HTMLElement | null
+        if (cloned) {
+          cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
+          cloned.style.direction = 'rtl'
+          cloned.style.textAlign = 'right'
+        }
+      },
+    } as Parameters<typeof html2canvas>[1])
 
     const imgData = canvas.toDataURL('image/png')
     const pdf = new jsPDF({
@@ -34,24 +50,29 @@ export const exportToPDF = async (
       format: 'a4',
     })
 
-    const pdfWidth = pdf.internal.pageSize.getWidth() - margin * 2
-    const pdfHeight = pdf.internal.pageSize.getHeight() - margin * 2
-    
-    const imgWidth = canvas.width
-    const imgHeight = canvas.height
-    const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight)
-    
-    const imgX = margin + (pdfWidth - imgWidth * ratio) / 2
-    const imgY = margin
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const usableWidth = pageWidth - margin * 2
+    const usableHeight = pageHeight - margin * 2
 
-    pdf.addImage(
-      imgData,
-      'PNG',
-      imgX,
-      imgY,
-      imgWidth * ratio,
-      imgHeight * ratio
-    )
+    const imgWidthMm = usableWidth
+    const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+
+    if (imgHeightMm <= usableHeight) {
+      pdf.addImage(imgData, 'PNG', margin, margin, imgWidthMm, imgHeightMm)
+    } else {
+      // ورقة امتحان طويلة: نقسمها على عدة صفحات A4 دون تصغير المحتوى
+      let heightLeft = imgHeightMm
+      let position = margin
+      pdf.addImage(imgData, 'PNG', margin, position, imgWidthMm, imgHeightMm)
+      heightLeft -= usableHeight
+      while (heightLeft > 0) {
+        position = margin - (imgHeightMm - heightLeft)
+        pdf.addPage()
+        pdf.addImage(imgData, 'PNG', margin, position, imgWidthMm, imgHeightMm)
+        heightLeft -= usableHeight
+      }
+    }
 
     pdf.save(`${filename}.pdf`)
     return true
@@ -151,6 +172,18 @@ export const exportTableToPDF = async (
   )
 
   pdf.save(`${filename}.pdf`)
+}
+
+/** طباعة A4 من الصفحة الحالية مع الإبقاء على خطوط العربية وتنسيقات Tailwind */
+export const printA4 = () => {
+  const cleanup = () => {
+    document.body.classList.remove('printing-exam')
+    window.removeEventListener('afterprint', cleanup)
+  }
+  document.body.classList.add('printing-exam')
+  window.addEventListener('afterprint', cleanup)
+  window.print()
+  window.setTimeout(cleanup, 1500)
 }
 
 // طباعة عنصر مباشرة

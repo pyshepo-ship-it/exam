@@ -7,6 +7,7 @@ export const STORAGE_KEYS = {
   EXAMS: "exams",
   SESSIONS: "sessions",
   ATTENDANCE: "attendance",
+  EXAM_ATTEMPTS: "examAttempts",
   ANNOUNCEMENTS: "announcements",
   HONOREES: "honorees",
   SHARED_FILES: "sharedFiles",
