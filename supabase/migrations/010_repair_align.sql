@@ -251,6 +251,19 @@ BEGIN
   GRANT SELECT ON public.exam_attempt_counts TO anon, authenticated;
 END $$;
 
+-- ------------------------------------------------------------
+-- 7) جعل الـ Views تستدعي بصلاحيات المستخدم (إصلاح تنبيه Linter)
+-- ------------------------------------------------------------
+DO $$
+BEGIN
+  IF to_regclass('public.exam_attempt_counts') IS NOT NULL THEN
+    EXECUTE 'ALTER VIEW public.exam_attempt_counts SET (security_invoker = true)';
+  END IF;
+  IF to_regclass('public.group_schedule_conflicts') IS NOT NULL THEN
+    EXECUTE 'ALTER VIEW public.group_schedule_conflicts SET (security_invoker = true)';
+  END IF;
+END $$;
+
 -- ============================================================
 -- انتهى — شغّل supabase/health_check.sql للتأكد أن كل البنود ✅
 -- ============================================================

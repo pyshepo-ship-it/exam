@@ -152,6 +152,19 @@ SELECT
 FROM (SELECT 1) x;
 
 -- ============================================================
+-- 6-ب) الـ Views: هل تعمل بصلاحيات المستخدم (بدون تنبيه Linter)؟
+-- ============================================================
+SELECT
+  c.relname AS "الـ View",
+  CASE WHEN (c.reloptions::text LIKE '%security_invoker=on%' OR c.reloptions::text LIKE '%security_invoker=true%')
+       THEN 'بصلاحيات المستخدم ✅'
+       ELSE 'بصلاحيات المالك ⚠️ — نفّذ 011_fix_views_security_invoker.sql' END AS "الوضع"
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'v'
+ORDER BY 1;
+
+-- ============================================================
 -- 7) الارتباطات اليتيمة (سجلات تفقد جدولها الأصل) — تبويب Messages
 -- ============================================================
 DO $$

@@ -23,7 +23,8 @@ import {
   Ban,
   GraduationCap,
   KeyRound,
-  Copy
+  Copy,
+  MessageCircleQuestion
 } from "lucide-react"
 import {
   isStudentPortalActive,
@@ -33,6 +34,7 @@ import {
   updateStudentByTeacher,
 } from "@/lib/student-accounts"
 import { forcePushAll } from "@/lib/supabase/sync"
+import { isInquiryChannelClosed, setStudentInquiryChannel } from "@/lib/inquiries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -896,6 +898,46 @@ export default function StudentsPage() {
                         لا يوجد له حساب بوابة بعد — سيُنشأ تلقائياً عند الموافقة على طلب تسجيله
                       </p>
                     )}
+                  </div>
+                )
+              })()}
+
+              {/* Inquiry Channel — منع الطالب من استخدام الاستفسارات نهائياً */}
+              {(() => {
+                const closed = isInquiryChannelClosed(selectedStudent.id)
+                return (
+                  <div className={`rounded-xl border p-4 ${closed ? "border-red-300 dark:border-red-900 bg-red-50/60 dark:bg-red-950/30" : "border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30"}`}>
+                    <p className={`font-extrabold text-sm mb-2 flex items-center gap-2 ${closed ? "text-red-800 dark:text-red-300" : "text-sky-800 dark:text-sky-300"}`}>
+                      <MessageCircleQuestion className="w-4 h-4" />
+                      قناة الاستفسار {closed ? "— مغلقة ⛔" : "— مفتوحة"}
+                    </p>
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-xs text-gray-600 dark:text-gray-400 flex-1 min-w-40">
+                        {closed
+                          ? "لا يستطيع الطالب إرسال أي استفسار من بوابته نهائياً حتى تعيد فتح القناة"
+                          : "الطالب يستطيع إرسال استفسار وردّ عليه — أغلق القناة لمنعه تماماً"}
+                      </p>
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          const res = setStudentInquiryChannel(selectedStudent.id, !closed)
+                          if (res.ok) {
+                            toast.success(res.message || "تم")
+                            const fresh = getStudents()
+                            setStudents(fresh)
+                            setSelectedStudent(fresh.find(s => s.id === selectedStudent.id) || selectedStudent)
+                            forcePushAll().catch(() => {})
+                          } else {
+                            toast.error(res.error || "تعذر التنفيذ")
+                          }
+                        }}
+                        className={closed
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                          : "bg-red-600 hover:bg-red-700 text-white"}
+                      >
+                        {closed ? "إعادة فتح القناة" : "منع الاستفسارات (إغلاق القناة)"}
+                      </Button>
+                    </div>
                   </div>
                 )
               })()}

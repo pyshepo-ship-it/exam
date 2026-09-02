@@ -601,3 +601,21 @@ Password: 789789789
 
 ### التحقق
 - verify كامل أخضر 57/37/152/17/29/38/8 + build + smoke (/, /dashboard/students, /student) 200.
+
+
+---
+
+## الجولة 8 — إصلاح تنبيهات Linter + مفتاح منع الاستفسارات في صفحة الطلاب
+
+### تنبيها Supabase Linter (security_definer_view)
+- السبب: في Postgres الـ View يُنفَّذ بصلاحيات مالكه (postgres) متجاوزاً RLS الخاصة بالمستخدم.
+- الحل الرسمي: `security_invoker = on` عبر `ALTER VIEW`.
+- `supabase/migrations/011_fix_views_security_invoker.sql`: إصلاح View فحصي (exam_attempt_counts + group_schedule_conflicts) في DO-block محمي بفحص الوجود — idempotent. نفس الإصلاح أُلحق بـ 010 لتشغيلات مستقبلية نظيفة.
+- health_check.sql: قسم جديد 6-ب يفحص security_invoker لكل الـ Views.
+
+### منع طالب من الاستفسارات — الآن من مكانين
+1. صفحة الطلبات → تبويب الاستفسارات → بطاقة الطالب → «إغلاق القناة تماماً» (كان موجوداً).
+2. **جديد**: صفحة الطلاب → تفاصيل الطالب → قسم «قناة الاستفسار» — يعمل على **أي طالب** حتى لو لم يرسل استفساراً قط، مع زر فتح/غلق وشارة حالة ملوّنة.
+
+### التحقق
+- verify كامل أخضر 57/37/152/17/29/38/8 + build.
