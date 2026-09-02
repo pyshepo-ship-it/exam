@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { motion } from "framer-motion"
 import { 
   Settings, 
@@ -22,7 +22,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { createClient } from "@/lib/supabase/client"
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import {
   Dialog,
   DialogContent,
@@ -50,7 +50,6 @@ import {
 } from "@/lib/data-storage"
 
 export default function SettingsPage() {
-  const supabase = createClient()
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
   const [backupDialogOpen, setBackupDialogOpen] = useState(false)
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
@@ -71,6 +70,16 @@ export default function SettingsPage() {
     attendance: 0,
   })
 
+  // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
+  // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient()
+    }
+    return supabaseRef.current
+  }
+
   useEffect(() => {
     setDataStats({
       grades: getGrades().length,
@@ -83,14 +92,17 @@ export default function SettingsPage() {
     })
     
     // Get user email from Supabase
-    const getUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user?.email) {
-        setUserEmail(session.user.email)
+    if (isSupabaseConfigured()) {
+      const getUser = async () => {
+        const supabase = getSupabase()
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.email) {
+          setUserEmail(session.user.email)
+        }
       }
+      getUser()
     }
-    getUser()
-  }, [supabase.auth])
+  }, [])
 
   // Change password
   const changePassword = async () => {

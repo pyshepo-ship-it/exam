@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { motion, AnimatePresence } from "framer-motion"
@@ -20,7 +20,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { createClient } from "@/lib/supabase/client"
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -43,14 +43,30 @@ export default function DashboardLayout({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const supabase = createClient()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
 
+  // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
+  // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient()
+    }
+    return supabaseRef.current
+  }
+
   useEffect(() => {
     setMounted(true)
-    
+
+    // في الوضع المحلي (بدون Supabase) لا يوجد تسجيل دخول للتحقق منه.
+    if (!isSupabaseConfigured()) {
+      return
+    }
+
+    const supabase = getSupabase()
+
     // Check Supabase auth
     const getUser = async () => {
       const { data: { session } } = await supabase.auth.getSession()
@@ -75,9 +91,14 @@ export default function DashboardLayout({
     })
     
     return () => subscription.unsubscribe()
-  }, [router, supabase.auth])
+  }, [router])
 
   const handleLogout = async () => {
+    if (!isSupabaseConfigured()) {
+      router.push("/login")
+      return
+    }
+    const supabase = getSupabase()
     await supabase.auth.signOut()
     router.push("/login")
   }

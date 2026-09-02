@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useRef } from "react"
 import { motion } from "framer-motion"
 import { 
   BookOpen, 
@@ -17,23 +17,39 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useRouter } from "next/navigation"
-import { createClient } from "@/lib/supabase/client"
+import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import toast from "react-hot-toast"
 
 export default function LoginPage() {
   const router = useRouter()
-  const supabase = createClient()
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [showForgotPassword, setShowForgotPassword] = useState(false)
 
+  // يُنشأ عميل Supabase داخل المتصفح فقط (داخل المعالجات)،
+  // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null)
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClient()
+    }
+    return supabaseRef.current
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
 
+    if (!isSupabaseConfigured()) {
+      setLoading(false)
+      toast.error("Supabase غير مُعدّ. يرجى إعداد متغيرات البيئة أولاً (راجع SUPABASE_SETUP.md)")
+      return
+    }
+
     try {
+      const supabase = getSupabase()
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
@@ -60,7 +76,14 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
 
+    if (!isSupabaseConfigured()) {
+      setLoading(false)
+      toast.error("Supabase غير مُعدّ. يرجى إعداد متغيرات البيئة أولاً (راجع SUPABASE_SETUP.md)")
+      return
+    }
+
     try {
+      const supabase = getSupabase()
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/reset-password`,
       })
