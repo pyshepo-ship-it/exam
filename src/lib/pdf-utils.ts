@@ -1,22 +1,31 @@
-import jsPDF from 'jspdf'
-import html2canvas from 'html2canvas'
+import jsPDF from "jspdf"
+import { toPng } from "html-to-image"
 
-// تصدير عنصر HTML كـ PDF
+const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
+    img.onerror = reject
+    img.src = dataUrl
+  })
+}
+
+// تصدير عنصر HTML كـ PDF — يدعم ألوان Tailwind v4 (oklab / oklch) والخطوط العربية بدون أخطاء
 export const exportToPDF = async (
   elementId: string,
   filename: string,
   options?: {
-    orientation?: 'portrait' | 'landscape'
+    orientation?: "portrait" | "landscape"
     scale?: number
     margin?: number
   }
 ) => {
   const element = document.getElementById(elementId)
   if (!element) {
-    throw new Error('Element not found')
+    throw new Error("Element not found")
   }
 
-  const { orientation = 'portrait', scale = 2, margin = 6 } = options || {}
+  const { orientation = "portrait", margin = 6 } = options || {}
 
   try {
     try {
@@ -27,8 +36,8 @@ export const exportToPDF = async (
 
     const pdf = new jsPDF({
       orientation,
-      unit: 'mm',
-      format: 'a4',
+      unit: "mm",
+      format: "a4",
     })
 
     const pageWidth = pdf.internal.pageSize.getWidth()
@@ -36,7 +45,7 @@ export const exportToPDF = async (
     const usableWidth = pageWidth - margin * 2
     const usableHeight = pageHeight - margin * 2
 
-    const pages = element.querySelectorAll<HTMLElement>('.exam-page')
+    const pages = element.querySelectorAll<HTMLElement>(".exam-page")
 
     if (pages.length > 0) {
       // تصدير الصفحات المحددة (صفحة 1 وصفحة 2) بدون أي تجاوز أو صفحة ثالثة
@@ -45,62 +54,41 @@ export const exportToPDF = async (
           pdf.addPage()
         }
         const pageEl = pages[i]
-        const canvas = await html2canvas(pageEl, {
-          scale,
-          useCORS: true,
-          logging: false,
-          backgroundColor: '#ffffff',
-          windowWidth: Math.max(pageEl.scrollWidth, 794),
-          onclone: (doc) => {
-            doc.documentElement.setAttribute('dir', 'rtl')
-            doc.documentElement.setAttribute('lang', 'ar')
-            const cloned = doc.getElementById(elementId) as HTMLElement | null
-            if (cloned) {
-              cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
-              cloned.style.direction = 'rtl'
-              cloned.style.textAlign = 'right'
-            }
-          },
-        } as Parameters<typeof html2canvas>[1])
 
-        const imgData = canvas.toDataURL('image/png')
-        const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+        const imgData = await toPng(pageEl, {
+          quality: 0.98,
+          pixelRatio: 2,
+          backgroundColor: "#ffffff",
+          skipAutoScale: true,
+        })
+
+        const dims = await getImageDimensions(imgData)
+        const imgHeightMm = (dims.height * usableWidth) / dims.width
         const renderHeight = Math.min(imgHeightMm, usableHeight)
-        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, renderHeight)
+        pdf.addImage(imgData, "PNG", margin, margin, usableWidth, renderHeight)
       }
     } else {
-      const canvas = await html2canvas(element, {
-        scale,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: Math.max(element.scrollWidth, 794),
-        onclone: (doc) => {
-          doc.documentElement.setAttribute('dir', 'rtl')
-          doc.documentElement.setAttribute('lang', 'ar')
-          const cloned = doc.getElementById(elementId) as HTMLElement | null
-          if (cloned) {
-            cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
-            cloned.style.direction = 'rtl'
-            cloned.style.textAlign = 'right'
-          }
-        },
-      } as Parameters<typeof html2canvas>[1])
+      const imgData = await toPng(element, {
+        quality: 0.98,
+        pixelRatio: 2,
+        backgroundColor: "#ffffff",
+        skipAutoScale: true,
+      })
 
-      const imgData = canvas.toDataURL('image/png')
-      const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+      const dims = await getImageDimensions(imgData)
+      const imgHeightMm = (dims.height * usableWidth) / dims.width
 
       if (imgHeightMm <= usableHeight) {
-        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, imgHeightMm)
+        pdf.addImage(imgData, "PNG", margin, margin, usableWidth, imgHeightMm)
       } else {
         let heightLeft = imgHeightMm
         let position = margin
-        pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeightMm)
+        pdf.addImage(imgData, "PNG", margin, position, usableWidth, imgHeightMm)
         heightLeft -= usableHeight
         while (heightLeft > 0) {
           position = margin - (imgHeightMm - heightLeft)
           pdf.addPage()
-          pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeightMm)
+          pdf.addImage(imgData, "PNG", margin, position, usableWidth, imgHeightMm)
           heightLeft -= usableHeight
         }
       }
@@ -109,7 +97,7 @@ export const exportToPDF = async (
     pdf.save(`${filename}.pdf`)
     return true
   } catch (error) {
-    console.error('Error exporting PDF:', error)
+    console.error("Error exporting PDF:", error)
     throw error
   }
 }
@@ -122,9 +110,9 @@ export const exportTableToPDF = async (
   filename: string
 ) => {
   const pdf = new jsPDF({
-    orientation: 'landscape',
-    unit: 'mm',
-    format: 'a4',
+    orientation: "landscape",
+    unit: "mm",
+    format: "a4",
   })
 
   const pageWidth = pdf.internal.pageSize.getWidth()
@@ -133,15 +121,15 @@ export const exportTableToPDF = async (
 
   // العنوان
   pdf.setFontSize(18)
-  pdf.text(title, pageWidth / 2, margin + 5, { align: 'center' })
+  pdf.text(title, pageWidth / 2, margin + 5, { align: "center" })
 
   // التاريخ
   pdf.setFontSize(10)
   pdf.text(
-    `التاريخ: ${new Date().toLocaleDateString('ar-EG')}`,
+    `التاريخ: ${new Date().toLocaleDateString("ar-EG")}`,
     pageWidth - margin,
     margin + 12,
-    { align: 'right' }
+    { align: "right" }
   )
 
   // رؤوس الجدول
@@ -149,7 +137,7 @@ export const exportTableToPDF = async (
   const colWidth = (pageWidth - margin * 2) / headers.length
   
   pdf.setFillColor(99, 102, 241) // indigo-500
-  pdf.rect(margin, startY, pageWidth - margin * 2, 10, 'F')
+  pdf.rect(margin, startY, pageWidth - margin * 2, 10, "F")
   
   pdf.setTextColor(255, 255, 255)
   pdf.setFontSize(11)
@@ -158,7 +146,7 @@ export const exportTableToPDF = async (
       header,
       margin + colWidth * (headers.length - index - 0.5),
       startY + 7,
-      { align: 'center' }
+      { align: "center" }
     )
   })
 
@@ -178,7 +166,7 @@ export const exportTableToPDF = async (
     // تلوين الصفوف بالتناوب
     if (rowIndex % 2 === 0) {
       pdf.setFillColor(243, 244, 246) // gray-100
-      pdf.rect(margin, currentY - 3, pageWidth - margin * 2, rowHeight, 'F')
+      pdf.rect(margin, currentY - 3, pageWidth - margin * 2, rowHeight, "F")
     }
 
     row.forEach((cell, cellIndex) => {
@@ -186,7 +174,7 @@ export const exportTableToPDF = async (
         cell,
         margin + colWidth * (headers.length - cellIndex - 0.5),
         currentY + 2,
-        { align: 'center' }
+        { align: "center" }
       )
     })
 
@@ -197,10 +185,10 @@ export const exportTableToPDF = async (
   pdf.setFontSize(8)
   pdf.setTextColor(156, 163, 175)
   pdf.text(
-    'نظام إدارة الدروس الخصوصية',
+    "نظام إدارة الدروس الخصوصية",
     pageWidth / 2,
     pageHeight - 5,
-    { align: 'center' }
+    { align: "center" }
   )
 
   pdf.save(`${filename}.pdf`)
@@ -209,11 +197,11 @@ export const exportTableToPDF = async (
 /** طباعة A4 من الصفحة الحالية مع الإبقاء على خطوط العربية وتنسيقات Tailwind */
 export const printA4 = () => {
   const cleanup = () => {
-    document.body.classList.remove('printing-exam')
-    window.removeEventListener('afterprint', cleanup)
+    document.body.classList.remove("printing-exam")
+    window.removeEventListener("afterprint", cleanup)
   }
-  document.body.classList.add('printing-exam')
-  window.addEventListener('afterprint', cleanup)
+  document.body.classList.add("printing-exam")
+  window.addEventListener("afterprint", cleanup)
   window.print()
   window.setTimeout(cleanup, 1500)
 }
@@ -222,10 +210,10 @@ export const printA4 = () => {
 export const printElement = (elementId: string) => {
   const element = document.getElementById(elementId)
   if (!element) {
-    throw new Error('Element not found')
+    throw new Error("Element not found")
   }
 
-  const printWindow = window.open('', '', 'width=800,height=600')
+  const printWindow = window.open("", "", "width=800,height=600")
   if (!printWindow) return
 
   printWindow.document.write(`
