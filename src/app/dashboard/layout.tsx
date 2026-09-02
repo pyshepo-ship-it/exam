@@ -53,6 +53,36 @@ export default function DashboardLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
+  // عداد الطلبات الجديدة (تسجيل + نقل + استفسارات بانتظار الرد) — شارة إشعار حية
+  const [requestsBadge, setRequestsBadge] = useState(0)
+
+  useEffect(() => {
+    const computeBadge = () => {
+      try {
+        const regs = (JSON.parse(localStorage.getItem("registrationRequests") || "[]") as { status?: string }[])
+        const transfers = (JSON.parse(localStorage.getItem("groupTransferRequests") || "[]") as { status?: string }[])
+        const inquiries = (JSON.parse(localStorage.getItem("inquiries") || "[]") as { status?: string; messages?: { from?: string }[] }[])
+        const pending = regs.filter(r => r.status === "pending").length + transfers.filter(t => t.status === "pending").length
+        const awaiting = inquiries.filter(t => {
+          if (t.status !== "open") return false
+          const msgs = t.messages || []
+          const last = msgs[msgs.length - 1]
+          return last && last.from === "student"
+        }).length
+        setRequestsBadge(pending + awaiting)
+      } catch {
+        setRequestsBadge(0)
+      }
+    }
+    computeBadge()
+    // تحديث دوري خفيف + عند رجوع التركيز للتبويب
+    const timer = window.setInterval(computeBadge, 8000)
+    window.addEventListener("focus", computeBadge)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", computeBadge)
+    }
+  }, [pathname])
 
   // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
   // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
@@ -176,6 +206,11 @@ export default function DashboardLayout({
               >
                 <Icon className={`w-5 h-5 ${isActive ? "" : "group-hover:scale-110"} transition-transform`} />
                 <span className="font-medium">{item.label}</span>
+                {item.href === "/dashboard/requests" && requestsBadge > 0 && (
+                  <span className="mr-auto bg-red-500 text-white text-[11px] font-extrabold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center shadow">
+                    {requestsBadge}
+                  </span>
+                )}
               </Link>
             )
           })}
@@ -254,6 +289,11 @@ export default function DashboardLayout({
                     >
                       <Icon className="w-5 h-5" />
                       <span className="font-medium">{item.label}</span>
+                      {item.href === "/dashboard/requests" && requestsBadge > 0 && (
+                        <span className="mr-auto bg-red-500 text-white text-[11px] font-extrabold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center shadow">
+                          {requestsBadge}
+                        </span>
+                      )}
                     </Link>
                   )
                 })}

@@ -487,15 +487,15 @@ export default function ExamsPage() {
   }
 
   const saveExam = () => {
-    if (!examForm.gradeId || !examForm.title) {
-      toast.error("يرجى ملء جميع الحقول المطلوبة")
+    if (!examForm.title) {
+      toast.error("يرجى إدخال عنوان الاختبار")
       return
     }
     const totalMarks = getExamTotalMarks(examForm.questions)
     const examData: Exam = {
       id: editingExam?.id || Date.now().toString(),
-      gradeId: examForm.gradeId,
-      groupId: examForm.groupId || undefined,
+      gradeId: examForm.gradeId === "__all" ? "" : examForm.gradeId,
+      groupId: examForm.gradeId === "__all" ? undefined : (examForm.groupId || undefined),
       title: examForm.title,
       month: examForm.month,
       unit: examForm.unit || undefined,
@@ -543,7 +543,7 @@ export default function ExamsPage() {
     setPreviewDialogOpen(true)
   }
 
-  const getGradeName = (gradeId: string) => grades.find(g => g.id === gradeId)?.name || "غير محدد"
+  const getGradeName = (gradeId: string) => (!gradeId ? "عام — كل الصفوف" : grades.find(g => g.id === gradeId)?.name || "غير محدد")
   const getGroupName = (groupId: string) => {
     for (const grade of grades) {
       const group = grade.groups.find(g => g.id === groupId)
@@ -781,22 +781,15 @@ export default function ExamsPage() {
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="اختر الصف أولاً" />
                     </SelectTrigger>
-                    <SelectContent>
-                      {grades.length === 0 ? (
-                        <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
-                      ) : (
-                        grades.map(grade => (
-                          <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
+                    <SelectContent>  <SelectItem value="__all">عام — كل الصفوف</SelectItem>
+                      {grades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
                   <Label>المجموعة (اختياري)</Label>
                   <Select
                     value={examForm.groupId || "all"}
-                    disabled={!examForm.gradeId}
+                    disabled={!examForm.gradeId || examForm.gradeId === "__all"}
                     onValueChange={(val) =>
                       setExamForm(prev => ({ ...prev, groupId: val === "all" ? "" : val }))
                     }
@@ -805,7 +798,7 @@ export default function ExamsPage() {
                       <SelectValue placeholder={examForm.gradeId ? "كل المجموعات" : "اختر الصف أولاً"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {!examForm.gradeId ? (
+                      {!examForm.gradeId || examForm.gradeId === "__all" ? (
                         <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
                       ) : (
                         <>
@@ -1052,7 +1045,10 @@ export default function ExamsPage() {
                           </button>
                         )
                       })}
-                      {groupsOfSelectedGrade.length === 0 && (
+                      {examForm.gradeId === "__all" && (
+                        <p className="text-xs text-emerald-600">اختبار عام — يظهر لطلاب كل الصفوف ولا تحتاج لتحديد مجموعات</p>
+                      )}
+                      {groupsOfSelectedGrade.length === 0 && examForm.gradeId !== "__all" && (
                         <p className="text-xs text-amber-600">اختر الصف أولاً لعرض مجموعاته</p>
                       )}
                     </div>

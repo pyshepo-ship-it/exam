@@ -117,7 +117,7 @@ export default function LoginPage() {
                 <BookOpen className="w-8 h-8 text-white" />
               </div>
             </div>
-            <CardTitle className="text-3xl font-bold">نظام إدارة الدروس</CardTitle>
+            <CardTitle className="text-3xl font-bold">أ/ ضحى العربي</CardTitle>
             <CardDescription>
               {!showForgotPassword 
                 ? "سجل دخولك للوصول إلى لوحة التحكم" 

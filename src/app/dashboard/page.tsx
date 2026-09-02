@@ -143,7 +143,7 @@ export default function DashboardPage() {
       >
         <div className="relative z-10">
           <h1 className="text-3xl md:text-4xl font-bold mb-2">
-            مرحباً بك في نظام إدارة الدروس 👋
+            أهلاً بك في موقع أ/ ضحى العربي 👋
           </h1>
           <p className="text-indigo-100 text-lg">
             يمكنك من هنا إدارة جميع دروسك الخصوصية بسهولة ويسر

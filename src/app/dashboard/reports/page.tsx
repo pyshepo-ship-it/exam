@@ -84,6 +84,7 @@ export default function ReportsPage() {
   const [srGroupId, setSrGroupId] = useState("")
   const [srStudentId, setSrStudentId] = useState("")
   const [srType, setSrType] = useState<StudentReportType>("comprehensive")
+  const [srMonth, setSrMonth] = useState("")
   const [srReport, setSrReport] = useState<StudentReport | null>(null)
   const [printOpen, setPrintOpen] = useState(false)
 
@@ -600,6 +601,16 @@ export default function ReportsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <Label>الفترة</Label>
+                  <Select value={srMonth} onValueChange={setSrMonth}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all">العام كاملاً (سنوي)</SelectItem>
+                      {MONTHS.map((m, i) => <SelectItem key={i} value={(i + 1).toString()}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {srReport && (
@@ -769,7 +780,7 @@ export default function ReportsPage() {
       <HtmlPrintDialog
         open={printOpen}
         onOpenChange={setPrintOpen}
-        build={printOpen && srReport ? () => buildStudentReportPagesHtml({ report: srReport, type: srType, mode: "teacher" }) : null}
+        build={printOpen && srReport ? () => buildStudentReportPagesHtml({ report: srReport, type: srType, mode: "teacher", month: srMonth && srMonth !== "__all" ? parseInt(srMonth) : null }) : null}
         filename={`تقرير-${srReport?.student.name || "الطالب"}-${STUDENT_REPORT_LABELS[srType]}`}
         title={`${STUDENT_REPORT_LABELS[srType]} — ${srReport?.student.name || ""}`}
         description="تقرير رسمي بتوقيع المعلم — جاهز للطباعة أو الإرسال لولي الأمر"

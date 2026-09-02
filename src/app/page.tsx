@@ -210,7 +210,6 @@ export default function HomePage() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-arabic">
       {/* مؤثرات لوحة الشرف الاحتفالية (CSS خالص — سريعة وخفيفة) */}
       <style>{`
-        @keyframes honor-spin { to { transform: rotate(360deg); } }
         @keyframes honor-glow {
           0%, 100% { box-shadow: 0 0 12px rgba(245, 158, 11, .45), 0 0 26px rgba(245, 158, 11, .18); }
           50% { box-shadow: 0 0 22px rgba(245, 158, 11, .75), 0 0 46px rgba(245, 158, 11, .32); }
@@ -228,12 +227,12 @@ export default function HomePage() {
           50% { transform: scale(1.06); }
           100% { transform: scale(1); }
         }
+        /* حلقة ثابتة (بدون دوران) بطلب المستخدم — تُكتفى بحركات الكارت */
         .honor-ring {
           position: relative;
           border-radius: 9999px;
           padding: 3px;
           background: conic-gradient(#f59e0b, #ef4444, #a855f7, #3b82f6, #10b981, #f59e0b);
-          animation: honor-spin 4s linear infinite;
         }
         .honor-avatar-glow { animation: honor-glow 2.6s ease-in-out infinite; }
         .honor-name {
@@ -259,7 +258,7 @@ export default function HomePage() {
         }
         .honor-card-pop { animation: honor-pop 3s ease-in-out infinite; }
         @media (prefers-reduced-motion: reduce) {
-          .honor-ring, .honor-avatar-glow, .honor-name, .honor-sparkle, .honor-card-pop { animation: none; }
+          .honor-avatar-glow, .honor-name, .honor-sparkle, .honor-card-pop { animation: none; }
           .honor-name { -webkit-text-fill-color: currentColor; background: none; }
         }
       `}</style>
@@ -271,7 +270,7 @@ export default function HomePage() {
               <BookOpen className="w-6 h-6 text-white" />
             </div>
             <div className="min-w-0">
-              <h1 className="font-bold text-gray-900 dark:text-white leading-tight truncate">نظام إدارة الدروس</h1>
+              <h1 className="font-bold text-gray-900 dark:text-white leading-tight truncate">أ/ ضحى العربي</h1>
               <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
                 الإعلانات ولوحة الشرف والملفات
               </p>
@@ -745,7 +744,7 @@ export default function HomePage() {
         <div className="border-t border-gray-200 dark:border-gray-800 py-5 space-y-3">
           <TeacherSignature compact />
           <p className="text-center text-sm text-gray-400 dark:text-gray-600">
-            نظام إدارة الدروس الخصوصية — جميع الحقوق محفوظة © {now.getFullYear()}
+            أ/ ضحى العربي — جميع الحقوق محفوظة © {now.getFullYear()}
           </p>
         </div>
       </footer>

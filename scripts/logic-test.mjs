@@ -196,6 +196,19 @@ t("المكرَّم يظهر في شهره فقط", () => {
   eq(mod.isHonoreeActive(h, new Date("2026-09-10")), true, "سبتمبر:")
   eq(mod.isHonoreeActive(h, new Date("2026-10-10")), false, "أكتوبر:")
 })
+t("مدة الأيام تتحكم في الظهور (افتراضي 30 يوم من لحظة الإضافة)", () => {
+  const base = new Date("2026-09-01T10:00:00Z")
+  const withDays = { id: "hd", studentName: "سارة", groupId: "g", reason: "مشاركة", month: 9, year: 2026, days: 30, createdAt: base.toISOString() }
+  eq(mod.isHonoreeActive(withDays, new Date("2026-09-20T10:00:00Z")), true, "اليوم 19 من 30:")
+  eq(mod.isHonoreeActive(withDays, new Date("2026-10-02T10:01:00Z")), false, "بعد 30 يوماً + دقيقة:")
+  eq(mod.isHonoreeActive(withDays, new Date("2026-10-10")), false, "بعد المدة في شهر آخر:")
+  const seven = { ...withDays, days: 7 }
+  eq(mod.isHonoreeActive(seven, new Date("2026-09-07T10:00:00Z")), true, "آخر لحظة من 7 أيام:")
+  eq(mod.isHonoreeActive(seven, new Date("2026-09-09T10:00:00Z")), false, "بعد 7 أيام:")
+  // بدون days → السلوك القديم (الشهر كاملاً)
+  const legacy = { id: "hl", studentName: "كريم", groupId: "g", reason: "تفوق", month: 9, year: 2026, createdAt: base.toISOString() }
+  eq(mod.isHonoreeActive(legacy, new Date("2026-09-30")), true, "بدون days — نهاية الشهر:")
+})
 
 console.log("\n\x1b[1mسيناريو 8: getAllGroups يربط الصف بالمجموعة\x1b[0m")
 t("كل مجموعة تحمل gradeId و gradeName الصحيحين", () => {

@@ -79,6 +79,7 @@ export default function StudentPortalPage() {
   const [gradeGroups, setGradeGroups] = useState<{ id: string; name: string; days: string[]; startTime: string; endTime: string }[]>([])
   const [tab, setTab] = useState<StudentReportType>("comprehensive")
   const [printOpen, setPrintOpen] = useState(false)
+  const [printMonth, setPrintMonth] = useState("")
   const [reportsEnabled, setReportsEnabled] = useState(true)
   const [transferTarget, setTransferTarget] = useState("")
   const [transferBusy, setTransferBusy] = useState(false)
@@ -183,8 +184,8 @@ export default function StudentPortalPage() {
 
   const buildPrint = useMemo(() => {
     if (!report) return null
-    return () => buildStudentReportPagesHtml({ report, type: tab, mode: "student" })
-  }, [report, tab])
+    return () => buildStudentReportPagesHtml({ report, type: tab, mode: "student", month: printMonth && printMonth !== "__all" ? parseInt(printMonth) : null })
+  }, [report, tab, printMonth])
 
   if (!mounted || !session) {
     return (
@@ -537,13 +538,22 @@ export default function StudentPortalPage() {
                 </p>
               </div>
               {reportsEnabled ? (
-                <Button
-                  onClick={() => setPrintOpen(true)}
-                  className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shrink-0"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>طباعة التقرير المفصل</span>
-                </Button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Select value={printMonth} onValueChange={setPrintMonth}>
+                    <SelectTrigger className="w-44"><SelectValue placeholder="الفترة" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all">العام كاملاً (سنوي)</SelectItem>
+                      {MONTHS.map((m, i) => <SelectItem key={i} value={(i + 1).toString()}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    onClick={() => setPrintOpen(true)}
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>طباعة التقرير المفصل</span>
+                  </Button>
+                </div>
               ) : (
                 <div className="flex items-center gap-2 text-amber-600 text-sm font-bold shrink-0">
                   <Lock className="w-4 h-4" />

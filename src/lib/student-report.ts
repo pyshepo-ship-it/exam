@@ -65,7 +65,7 @@ export interface StudentReport {
   balance: number
   totalDue: number
   totalPaid: number
-  attendance: { total: number; present: number; absent: number; rate: number; recent: { date: string; status: string }[] }
+  attendance: { total: number; present: number; absent: number; rate: number; recent: { date: string; status: string }[]; allDays: { date: string; status: string }[] }
   honors: Honoree[]
   history: StudentHistoryEvent[]
   collectedAt: string
@@ -130,6 +130,7 @@ export function collectStudentReport(studentId: string): StudentReport | null {
       absent,
       rate: total > 0 ? Math.round((present / total) * 100) : 0,
       recent: myAtt.slice(-12).reverse().map(a => ({ date: attendanceDayKey(a), status: attendanceLabel(a.status) })),
+      allDays: myAtt.map(a => ({ date: attendanceDayKey(a), status: attendanceLabel(a.status) })),
     },
     honors,
     history,
@@ -206,7 +207,7 @@ function headerBlock(report: StudentReport, type: StudentReportType, mode: "teac
           </div>
           <div style="text-align:left;">
             <div style="font-size:13px;font-weight:800;color:#111827;">${esc(getTeacherName())}</div>
-            <div style="font-size:11px;color:#9ca3af;">نظام إدارة الدروس الخصوصية</div>
+            <div style="font-size:11px;color:#9ca3af;">أ/ ضحى العربي</div>
           </div>
         </div>
         <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
@@ -538,6 +539,7 @@ export function reportFromPortalData(d: {
       absent,
       rate: total > 0 ? Math.round((present / total) * 100) : 0,
       recent: myAtt.slice(-12).reverse().map(a => ({ date: attendanceDayKey(a), status: attendanceLabel(a.status) })),
+      allDays: myAtt.map(a => ({ date: attendanceDayKey(a), status: attendanceLabel(a.status) })),
     },
     honors: d.honorees,
     history: [...d.history].sort((a, b) => (a.date || "").localeCompare(b.date || "")),
@@ -549,13 +551,61 @@ export function reportFromPortalData(d: {
  * بناء صفحات تقرير الطالب (HTML جاهز للعرض والطباعة وPDF).
  * واجهة مطابقة لـ buildSchedulePagesHtml لسهولة الاستخدام بنفس الحوار.
  */
+/**
+ * تصفية التقرير على شهر محدد (شهري) — أو كل الشهور (العام كاملاً / سنوي).
+ * تعيد الحسابات المالية وإحصاءات الحضور على الفترة المختارة فقط.
+ */
+export function filterReportByMonth(report: StudentReport, month: number | null): StudentReport {
+  if (!month) return report
+  const inMonth = (iso: string): boolean => {
+    const d = new Date(iso)
+    return !isNaN(d.getTime()) && d.getMonth() + 1 === month
+  }
+  const manualGrades = report.manualGrades.filter(m => m.month === month)
+  const examAttempts = report.examAttempts.filter(a => inMonth(a.submittedAt))
+  const dues = report.dues.filter(d => d.month === month)
+  const payments = report.payments.filter(p => p.month === month)
+  const honors = report.honors.filter(h => h.month === month)
+  const allDays = (report.attendance.allDays || []).filter(a => {
+    const mm = parseInt((a.date || "").slice(5, 7), 10)
+    return mm === month
+  })
+  const present = allDays.filter(a => a.status !== "غائب").length
+  const absent = allDays.filter(a => a.status === "غائب").length
+  const total = allDays.length
+  const totalDue = dues.reduce((s, d) => s + d.amount, 0)
+  const totalPaid = payments.reduce((s, p) => s + p.amount, 0)
+  return {
+    ...report,
+    manualGrades,
+    examAttempts,
+    dues,
+    payments,
+    honors,
+    totalDue,
+    totalPaid,
+    balance: totalDue - totalPaid,
+    attendance: {
+      total,
+      present,
+      absent,
+      rate: total > 0 ? Math.round((present / total) * 100) : 0,
+      recent: allDays.slice(-12).reverse(),
+      allDays,
+    },
+  }
+}
+
 export function buildStudentReportPagesHtml(opts: {
   report: StudentReport
   type: StudentReportType
   mode?: "teacher" | "student"
+  /** شهر محدد (1-12) — أُترك فارغاً = العام كاملاً */
+  month?: number | null
 }): { html: string; pageCount: number } {
-  const { report, type } = opts
+  const { type } = opts
   const mode = opts.mode || "teacher"
+  const report = filterReportByMonth(opts.report, opts.month ?? null)
 
   const blocks: Block[] = [headerBlock(report, type, mode)]
   switch (type) {

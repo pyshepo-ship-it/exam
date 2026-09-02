@@ -185,7 +185,7 @@ export const exportTableToPDF = async (
   pdf.setFontSize(8)
   pdf.setTextColor(156, 163, 175)
   pdf.text(
-    "نظام إدارة الدروس الخصوصية",
+    "أ/ ضحى العربي",
     pageWidth / 2,
     pageHeight - 5,
     { align: "center" }

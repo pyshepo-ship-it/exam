@@ -498,6 +498,33 @@ eq("اختبار لصف آخر → لا يظهر للطالب", PC.isExamForStud
 eq("اختبار الصف بلا استهداف مجموعات → يظهر لكل المجموعات", PC.isExamForStudent(mkExam({}), "g-1", "gr-2") === true)
 eq("اختبار لمجموعة محددة → لا يظهر لمجموعة أخرى", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-2"] }), "g-1", "gr-1") === false)
 eq("اختبار للمجموعة المستهدفة → يظهر", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-1"] }), "g-1", "gr-1") === true)
+eq("اختبار عام (بلا صف) → يظهر لكل الصفوف", PC.isExamForStudent(mkExam({ gradeId: "" }), "g-2", "gr-3") === true)
+eq("اختبار عام لمجموعات محددة → يظهر لها فقط", PC.isExamForStudent(mkExam({ gradeId: "", targetGroupIds: ["gr-3"] }), "g-1", "gr-1") === false && PC.isExamForStudent(mkExam({ gradeId: "", targetGroupIds: ["gr-3"] }), "g-2", "gr-3") === true)
+
+// ============================================================
+section("سيناريو 11-ب: تقرير شهري مقابل سنوي (فلتر الشهر)")
+
+// أحمد: درجة يدوية + محاولة + استحقاق/دفعة كلها في الشهر الحالي → ثم نضيف بيانات شهر آخر
+const otherMonth = M === 1 ? 12 : M - 1
+const otherYear = M === 1 ? Y - 1 : Y
+DS.saveManualGrades([
+  ...DS.getManualGrades(),
+  { id: "mg-om", studentId: "st-old", gradeId: "g-1", groupId: "gr-1", title: "واجب شهر آخر", score: 5, maxScore: 10, month: otherMonth, year: otherYear, createdAt: new Date().toISOString() },
+])
+DS.saveDues([...DS.getDues(), { id: "due-om", studentId: "st-old", groupId: "gr-1", month: otherMonth, year: otherYear, amount: 200, status: "paid", createdAt: new Date().toISOString() }])
+
+const fullYear = SR.collectStudentReport("st-old")
+const yearPages = SR.buildStudentReportPagesHtml({ report: fullYear, type: "grades", mode: "teacher" })
+eq("التقرير السنوي يشمل درجات كل الشهور", yearPages.html.includes("واجب الوحدة الأولى") && yearPages.html.includes("واجب شهر آخر"))
+
+const monthPages = SR.buildStudentReportPagesHtml({ report: fullYear, type: "grades", mode: "teacher", month: M })
+eq("التقرير الشهري يعرض درجات الشهر فقط", monthPages.html.includes("واجب الوحدة الأولى") && !monthPages.html.includes("واجب شهر آخر"))
+
+const payYear = SR.buildStudentReportPagesHtml({ report: fullYear, type: "payments", mode: "teacher" })
+const payMonth = SR.buildStudentReportPagesHtml({ report: fullYear, type: "payments", mode: "teacher", month: M })
+eq("السنوي: إجمالي الاستحقاقات = 300", payYear.html.includes((300).toLocaleString("ar-EG")))
+eq("الشهري: إجمالي الاستحقاقات = 100 فقط", payMonth.html.includes((100).toLocaleString("ar-EG")) && !payMonth.html.includes((300).toLocaleString("ar-EG")))
+eq("الشهري: كشف المطابقة يعرض الشهر المطلوب فقط", payMonth.html.includes(`${M}/`) && !payMonth.html.includes(`${otherMonth}/${otherYear}`))
 
 const attemptWithOverride = { score: 10, manualOverride: { score: 17, reason: "تساهل", at: nowIso() } }
 eq("الدرجة الفعلية تراعي التعديل اليدوي", PC.effectiveAttemptScore(attemptWithOverride) === 17)
@@ -521,7 +548,7 @@ section("سيناريو 13: كشف الحساب في تقرير الطالب (ا
 
 // أحمد: استحقاق 100 دُفع منه 60 → متبقي 40
 const rep2 = SR.collectStudentReport("st-old")
-eq("التقرير يحمل المستحقات بكامل حالتها", rep2.dues.length === 1 && rep2.dues[0].amount === 100)
+eq("التقرير يحمل المستحقات بكامل حالتها", rep2.dues.length === 2 && rep2.dues.some(d => d.amount === 100) && rep2.dues.some(d => d.amount === 200))
 const stmtPages = SR.buildStudentReportPagesHtml({ report: rep2, type: "payments", mode: "teacher" })
 eq("كشف الحساب يعرض الاستحقاق والمدفوع والمتبقي", stmtPages.html.includes("كشف الحساب الشهري") && stmtPages.html.includes("الرصيد المتبقي"))
 eq("كشف الحساب يوضح الحالة الجزئية", stmtPages.html.includes("جزئي") && stmtPages.html.includes((40).toLocaleString("ar-EG")))
