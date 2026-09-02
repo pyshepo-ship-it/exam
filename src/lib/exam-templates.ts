@@ -258,74 +258,141 @@ export function getUnderlinedWords(sq: SubQuestion): { word: string; underlined:
   }))
 }
 
+/** هيكل صفحة الامتحان الموزعة */
+export interface ExamPagePartition {
+  pageNumber: number
+  totalPages: number
+  isFirstPage: boolean
+  isLastPage: boolean
+  questions: { question: Question; globalIndex: number }[]
+}
+
 /**
- * تقسيم أسئلة الامتحان على صفحتين A4 كحد أقصى بذكاء
- * يضمن ملء الصفحة الأولى بأقصى عدد من الأسئلة الكاملة
- * مع عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً
+ * تقسيم أسئلة الامتحان ديناميكياً على الصفحات
+ * - يدعم صفحة واحدة، صفحتين، 3 صفحات أو أكثر تلقائياً بحسب عدد وحجم الأسئلة
+ * - لا يتم شطر أي سؤال رئيسي بين صفحتين نهائياً
+ * - يحزم الأسئلة بذكاء لملء كل صفحة بأكبر عدد ممكن من الأسئلة الكاملة
  */
 export interface ExamPartition {
+  pages: ExamPagePartition[]
+  totalPages: number
+  isSinglePage: boolean
   page1Questions: { question: Question; globalIndex: number }[]
   page2Questions: { question: Question; globalIndex: number }[]
-  isSinglePage: boolean
 }
 
 export function partitionExamQuestions(questions: Question[]): ExamPartition {
   const n = questions.length
   if (n === 0) {
-    return { page1Questions: [], page2Questions: [], isSinglePage: true }
+    return {
+      pages: [],
+      totalPages: 1,
+      isSinglePage: true,
+      page1Questions: [],
+      page2Questions: [],
+    }
   }
 
-  // تقدير ارتفاع السؤال بوحدات بكسل واقعية
+  // تقدير وزن/ارتفاع السؤال بوحدات تقريبية دقيقة
   const getQWeight = (q: Question): number => {
-    const base = 44
+    const base = 48
     const subCount = q.subQuestions.length || 1
-    let subWeight = 26
-    if (q.questionType === 1) subWeight = 34 // MCQ
-    if (q.questionType === 4) subWeight = 24 + (q.subQuestions[0]?.answerLines || 2) * 12 // علل
-    if (q.questionType === 5) subWeight = 30 // تصحيح
+    let subWeight = 34
+    if (q.questionType === 1) subWeight = 42 // MCQ مع خيارات ومسافات واسعة
+    if (q.questionType === 4) subWeight = 28 + (q.subQuestions[0]?.answerLines ?? 1) * 16 // علل
+    if (q.questionType === 5) subWeight = 36 // تصحيح
     return base + subCount * subWeight
   }
 
   const weights = questions.map(getQWeight)
   const totalQuestionsWeight = weights.reduce((a, b) => a + b, 0)
 
-  // الصفحة الأولى تستوعب حتى 520 وحدة للأسئلة
-  const PAGE1_MAX_Q_WEIGHT = 520
-  // صفحة واحدة فقط إذا كان الامتحان قصيراً (سؤالان صغيران بمجموع وزن <= 400)
-  const SINGLE_PAGE_MAX_WEIGHT = 400
+  // سعة الصفحة الأولى (مع احتساب الترويسة الرئيسية وحقول الطالب)
+  const PAGE1_MAX_CAPACITY = 600
+  // سعة الصفحات التالية (مع الترويسة المصغرة فقط)
+  const SUBSEQUENT_PAGE_MAX_CAPACITY = 680
+  // أقصى وزن للامتحان المكون من صفحة واحدة فقط
+  const SINGLE_PAGE_MAX_WEIGHT = 380
 
   if (n <= 2 && totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
+    const singleQuestions = questions.map((q, i) => ({ question: q, globalIndex: i }))
+    const singlePage: ExamPagePartition = {
+      pageNumber: 1,
+      totalPages: 1,
+      isFirstPage: true,
+      isLastPage: true,
+      questions: singleQuestions,
+    }
     return {
-      page1Questions: questions.map((q, i) => ({ question: q, globalIndex: i })),
-      page2Questions: [],
+      pages: [singlePage],
+      totalPages: 1,
       isSinglePage: true,
+      page1Questions: singleQuestions,
+      page2Questions: [],
     }
   }
 
-  // توزيع ذكي لملء الصفحة الأولى بأكبر عدد ممكن من الأسئلة الكاملة
-  let split = 1
-  let accumulated = weights[0]
+  // إذا كان الامتحان 3 أسئلة وتجاوز حد الصفحة الواحدة، نقسمه على صفحتين (2 في الأولى و1 في الثانية)
+  if (n === 3 && totalQuestionsWeight > SINGLE_PAGE_MAX_WEIGHT) {
+    const p1 = questions.slice(0, 2).map((q, i) => ({ question: q, globalIndex: i }))
+    const p2 = questions.slice(2).map((q, i) => ({ question: q, globalIndex: 2 + i }))
+    const pages: ExamPagePartition[] = [
+      { pageNumber: 1, totalPages: 2, isFirstPage: true, isLastPage: false, questions: p1 },
+      { pageNumber: 2, totalPages: 2, isFirstPage: false, isLastPage: true, questions: p2 },
+    ]
+    return {
+      pages,
+      totalPages: 2,
+      isSinglePage: false,
+      page1Questions: p1,
+      page2Questions: p2,
+    }
+  }
 
-  for (let i = 1; i < n; i++) {
-    if (accumulated + weights[i] <= PAGE1_MAX_Q_WEIGHT) {
-      accumulated += weights[i]
-      split = i + 1
+  // توزيع ذكي ديناميكي على عدد الصفحات المناسب (صفحتين، 3 صفحات أو أكثر)
+  const rawPages: { question: Question; globalIndex: number }[][] = []
+  let currentPage: { question: Question; globalIndex: number }[] = []
+  let currentCapacity = 0
+
+  for (let i = 0; i < n; i++) {
+    const q = questions[i]
+    const w = weights[i]
+    const maxCapacity = rawPages.length === 0 ? PAGE1_MAX_CAPACITY : SUBSEQUENT_PAGE_MAX_CAPACITY
+
+    if (currentPage.length === 0) {
+      currentPage.push({ question: q, globalIndex: i })
+      currentCapacity = w
+    } else if (currentCapacity + w <= maxCapacity) {
+      currentPage.push({ question: q, globalIndex: i })
+      currentCapacity += w
     } else {
-      break
+      rawPages.push(currentPage)
+      currentPage = [{ question: q, globalIndex: i }]
+      currentCapacity = w
     }
   }
 
-  // ضمان وجود سؤال واحد على الأقل في الصفحة الثانية
-  if (split >= n) {
-    split = n - 1
+  if (currentPage.length > 0) {
+    rawPages.push(currentPage)
   }
 
-  const p1 = questions.slice(0, split).map((q, i) => ({ question: q, globalIndex: i }))
-  const p2 = questions.slice(split).map((q, i) => ({ question: q, globalIndex: split + i }))
+  const totalPages = rawPages.length
+  const pages: ExamPagePartition[] = rawPages.map((pageQuestions, idx) => ({
+    pageNumber: idx + 1,
+    totalPages,
+    isFirstPage: idx === 0,
+    isLastPage: idx === totalPages - 1,
+    questions: pageQuestions,
+  }))
+
+  const p1 = pages[0]?.questions || []
+  const p2 = pages[1]?.questions || []
 
   return {
+    pages,
+    totalPages,
+    isSinglePage: totalPages === 1,
     page1Questions: p1,
     page2Questions: p2,
-    isSinglePage: false,
   }
 }

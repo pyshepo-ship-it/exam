@@ -138,7 +138,7 @@ export default function ExamsPage() {
         { id: `${id}-c1`, wrongWord: "", correctAnswer: "", wordPosition: 1, wordCount: 1 },
       ]
     } else if (type === 4) {
-      sub.answerLines = 2
+      sub.answerLines = 1
     }
     return sub
   }
@@ -1147,16 +1147,17 @@ export default function ExamsPage() {
                                         />
                                       </div>
                                       <div className="flex items-center gap-2">
-                                        <Label className="text-xs shrink-0">أسطر الإجابة:</Label>
+                                        <Label className="text-xs shrink-0">سطور الإجابة (النقاط):</Label>
                                         <Select
-                                          value={(sq.answerLines || 2).toString()}
+                                          value={(sq.answerLines ?? 1).toString()}
                                           onValueChange={(val) => updateSubQuestion(question.id, sq.id, "answerLines", parseInt(val))}
                                         >
-                                          <SelectTrigger className="w-32 h-8"><SelectValue /></SelectTrigger>
+                                          <SelectTrigger className="w-36 h-8"><SelectValue /></SelectTrigger>
                                           <SelectContent>
-                                            <SelectItem value="1">سطر واحد</SelectItem>
+                                            <SelectItem value="1">سطر واحد (افتراضي)</SelectItem>
                                             <SelectItem value="2">سطران</SelectItem>
-                                            <SelectItem value="3">ثلاثة أسطر</SelectItem>
+                                            <SelectItem value="3">3 أسطر</SelectItem>
+                                            <SelectItem value="4">4 أسطر</SelectItem>
                                           </SelectContent>
                                         </Select>
                                       </div>

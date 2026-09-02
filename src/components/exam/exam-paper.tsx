@@ -51,7 +51,7 @@ function TypeSeal({ question }: { question: Question }) {
 function CompleteLine({ sq }: { sq: SubQuestion }) {
   const { before, after, atEnd } = renderCompleteParts(sq)
   const blank = (
-    <span className="inline-block min-w-[5.5rem] sm:min-w-[7rem] border-b-2 border-dotted border-current mx-1 align-baseline">
+    <span className="inline-block min-w-[6rem] sm:min-w-[8rem] border-b-2 border-dotted border-current mx-1 align-baseline">
       {"\u00a0"}
     </span>
   )
@@ -88,59 +88,69 @@ function CorrectionLine({ sq }: { sq: SubQuestion }) {
 
 function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQuestion; index: number }) {
   return (
-    <div className="exam-sub text-[13.5px] sm:text-[14.5px] leading-relaxed py-0.5">
+    <div className="exam-sub text-[14px] sm:text-[15px] leading-relaxed py-1">
+      {/* 1. اختيار من متعدد مع مسافات مريحة وواضحة بين الخيارات */}
       {question.questionType === 1 && (
-        <div>
-          <p className="font-medium text-right">
-            <span className="font-bold">{index + 1} – </span>
+        <div className="space-y-2">
+          <p className="font-medium text-right leading-relaxed">
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
-          <div className="flex flex-wrap gap-x-7 gap-y-1 pr-4 mt-1 text-xs sm:text-[13.5px]">
+          <div className="flex flex-wrap items-center gap-x-8 sm:gap-x-12 gap-y-2 pr-4 pt-0.5 text-xs sm:text-[14px]">
             {sq.choices?.map(choice => (
-              <span key={choice.id} className="text-gray-800 dark:text-gray-200">
-                {choice.choiceKey}{") "}{choice.choiceText}
+              <span key={choice.id} className="text-gray-800 dark:text-gray-200 inline-flex items-center">
+                <span className="font-bold text-gray-600 dark:text-gray-400 ml-1">{choice.choiceKey}{")"}</span>
+                <span>{choice.choiceText}</span>
               </span>
             ))}
           </div>
         </div>
       )}
+
+      {/* 2. أكمل العبارات الآتية */}
       {question.questionType === 2 && (
         <p className="font-medium text-right leading-loose">
-          <span className="font-bold">{index + 1} – </span>
+          <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
           <CompleteLine sq={sq} />
         </p>
       )}
+
+      {/* 3. صح أو خطأ */}
       {question.questionType === 3 && (
-        <div className="flex items-center justify-between gap-3 w-full py-0.5 flex-nowrap">
-          <p className="min-w-0 flex-1 text-right text-[13.5px] sm:text-[14.5px] leading-snug break-words">
-            <span className="font-bold">{index + 1} – </span>
+        <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
+          <p className="min-w-0 flex-1 text-right text-[14px] sm:text-[15px] leading-relaxed break-words font-medium">
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
-          <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.4rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
+          <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
             (&nbsp;&nbsp;&nbsp;&nbsp;)
           </span>
         </div>
       )}
+
+      {/* 4. علل / بم تفسر / اذكر أهمية (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
       {question.questionType === 4 && (
-        <div className="space-y-1">
-          <p className="font-medium text-right">
-            <span className="font-bold">{index + 1} – </span>
+        <div className="space-y-1.5">
+          <p className="font-medium text-right leading-relaxed">
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
-          {Array.from({ length: sq.answerLines || 2 }).map((_, li) => (
-            <p key={li} className="pr-4 tracking-wider opacity-60 text-xs leading-6">
+          {Array.from({ length: sq.answerLines ?? 1 }).map((_, li) => (
+            <p key={li} className="pr-4 tracking-wider opacity-60 text-xs sm:text-sm leading-8 select-none">
               {DOTS_LINE}
             </p>
           ))}
         </div>
       )}
+
+      {/* 5. صحح ما تحته خط */}
       {question.questionType === 5 && (
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold">{index + 1} – </span>
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             <CorrectionLine sq={sq} />
           </p>
-          <p className="pr-4 tracking-wider opacity-60 text-xs leading-6">{DOTS_LINE}</p>
+          <p className="pr-4 tracking-wider opacity-60 text-xs sm:text-sm leading-8 select-none">{DOTS_LINE}</p>
         </div>
       )}
     </div>
@@ -168,7 +178,7 @@ function QuestionBlock({
 
   const headerEl = (
     <div
-      className="relative z-10 flex items-center justify-between gap-2.5 px-3 py-1.5 w-full flex-nowrap"
+      className="relative z-10 flex items-center justify-between gap-2.5 px-3.5 py-1.5 w-full flex-nowrap"
       style={
         colorful
           ? {
@@ -187,7 +197,7 @@ function QuestionBlock({
     >
       <div className="flex items-center gap-2 min-w-0 flex-1 flex-nowrap">
         <TypeSeal question={question} />
-        <h3 className="font-extrabold text-sm sm:text-[14px] m-0 leading-tight min-w-0 break-words">
+        <h3 className="font-extrabold text-sm sm:text-[14.5px] m-0 leading-tight min-w-0 break-words">
           السؤال {ordinal}: {header}
         </h3>
       </div>
@@ -216,12 +226,12 @@ function QuestionBlock({
     >
       {showDecorations && <QuestionOrnaments gradeName={gradeName} index={index} />}
       {headerEl}
-      <div className="relative z-10 px-3.5 py-2.5 space-y-2.5">
+      <div className="relative z-10 px-4 py-3 space-y-3">
         {question.subQuestions.map((sq, si) => (
           <React.Fragment key={sq.id}>
             {si > 0 && (
               <div
-                className="h-px my-1"
+                className="h-px my-1.5"
                 style={{
                   background:
                     template === "classic"
@@ -268,7 +278,6 @@ function PaperHeader({
 }) {
   const month = exam.month ? MONTHS[exam.month - 1] : ""
   
-  // الصف والشهر والعام الدراسي فقط
   const subtitle = [
     gradeName,
     month ? `شهر ${month}` : null,
@@ -359,14 +368,18 @@ function PaperHeader({
   )
 }
 
-function PageTwoMiniBanner({
+function PageContinuationMiniBanner({
   exam,
   gradeName,
   template,
+  pageNumber,
+  totalPages,
 }: {
   exam: Exam
   gradeName: string
   template: ExamTemplateId
+  pageNumber: number
+  totalPages: number
 }) {
   return (
     <div
@@ -387,7 +400,7 @@ function PageTwoMiniBanner({
       <span className="truncate min-w-0">تابع: {exam.title}</span>
       <span className="opacity-80 shrink-0 px-2">{gradeName}</span>
       <span className="text-[11px] px-2 py-0.5 rounded bg-white/80 dark:bg-gray-900/80 border border-current/15 shrink-0 whitespace-nowrap">
-        الصفحة ٢ من ٢
+        الصفحة {pageNumber} من {totalPages}
       </span>
     </div>
   )
@@ -427,32 +440,49 @@ export function ExamPaper({
       ? { background: "#fafafe", color: "#1e1b4b", border: "2.5px solid #c5a059", padding: "16px 18px", borderRadius: 12 }
       : { background: "#fffefb", color: "#1e1b4b", border: "2.5px solid #6366f1", padding: "16px 18px", borderRadius: 14 }
 
-  // تقسيم الأسئلة بذكاء لملء الصفحة الأولى بأقصى عدد ممكن دون شطر أي سؤال
-  const { page1Questions, page2Questions, isSinglePage } = partitionExamQuestions(exam.questions)
+  // توزيع الأسئلة ديناميكياً على الصفحات (1، 2، 3 أو أكثر) دون شطر أي سؤال
+  const partition = partitionExamQuestions(exam.questions)
 
-  // الامتحان في صفحة واحدة
-  if (isSinglePage || page2Questions.length === 0) {
-    return (
-      <div className="w-full max-w-full mx-auto" dir="rtl" lang="ar">
+  return (
+    <div className="w-full max-w-full mx-auto space-y-6 print:space-y-0" dir="rtl" lang="ar">
+      {partition.pages.map((page) => (
         <article
-          className="exam-paper exam-page exam-page-single relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto min-h-[270mm]"
+          key={page.pageNumber}
+          className={`exam-paper exam-page exam-page-${page.pageNumber} ${
+            page.totalPages === 1
+              ? "exam-page-single"
+              : page.isLastPage
+              ? "exam-page-last"
+              : "exam-page-middle"
+          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto min-h-[270mm]`}
           dir="rtl"
           lang="ar"
           style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
         >
           {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
+          
           <div className="relative z-10 flex flex-col justify-between flex-1 w-full">
-            <PaperHeader
-              exam={exam}
-              gradeName={gradeName}
-              template={template}
-              teacherName={teacher}
-              schoolName={school}
-              totalMarks={totalMarks}
-            />
+            {page.isFirstPage ? (
+              <PaperHeader
+                exam={exam}
+                gradeName={gradeName}
+                template={template}
+                teacherName={teacher}
+                schoolName={school}
+                totalMarks={totalMarks}
+              />
+            ) : (
+              <PageContinuationMiniBanner
+                exam={exam}
+                gradeName={gradeName}
+                template={template}
+                pageNumber={page.pageNumber}
+                totalPages={page.totalPages}
+              />
+            )}
 
-            <div className="flex-1 flex flex-col justify-around gap-3 w-full my-2">
-              {page1Questions.map(({ question, globalIndex }) => (
+            <div className="flex-1 flex flex-col justify-around gap-3.5 w-full my-2">
+              {page.questions.map(({ question, globalIndex }) => (
                 <QuestionBlock
                   key={question.id}
                   question={question}
@@ -468,89 +498,21 @@ export function ExamPaper({
               <p className="text-center text-sm opacity-60 py-8">لم تُضف أسئلة بعد</p>
             )}
 
-            <footer className="relative z-10 mt-auto pt-3 text-center border-t border-dashed border-current/25 w-full">
-              <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
-              <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
-              <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>
-            </footer>
+            {page.isLastPage ? (
+              <footer className="relative z-10 mt-auto pt-3 text-center border-t border-dashed border-current/25 w-full">
+                <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
+                <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
+                <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>
+              </footer>
+            ) : (
+              <div className="relative z-10 mt-auto pt-2 text-center text-xs font-bold opacity-75 border-t border-dashed border-current/20 flex items-center justify-between w-full">
+                <span className="text-[11px] whitespace-nowrap">الصفحة {page.pageNumber} من {page.totalPages}</span>
+                <span className="text-[11px] font-semibold whitespace-nowrap">بقية الأسئلة في الصفحة التالية ⟵</span>
+              </div>
+            )}
           </div>
         </article>
-      </div>
-    )
-  }
-
-  // الامتحان مقسم على صفحتين A4 بامتلاء وتوزيع متوازن
-  return (
-    <div className="w-full max-w-full mx-auto space-y-6 print:space-y-0" dir="rtl" lang="ar">
-      {/* الصفحة الأولى */}
-      <article
-        className="exam-paper exam-page exam-page-1 relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto min-h-[270mm]"
-        dir="rtl"
-        lang="ar"
-        style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
-      >
-        {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-        <div className="relative z-10 flex flex-col justify-between flex-1 w-full">
-          <PaperHeader
-            exam={exam}
-            gradeName={gradeName}
-            template={template}
-            teacherName={teacher}
-            schoolName={school}
-            totalMarks={totalMarks}
-          />
-
-          <div className="flex-1 flex flex-col justify-around gap-3 w-full my-2">
-            {page1Questions.map(({ question, globalIndex }) => (
-              <QuestionBlock
-                key={question.id}
-                question={question}
-                index={globalIndex}
-                template={template}
-                gradeName={gradeName}
-                showDecorations={decorations}
-              />
-            ))}
-          </div>
-
-          <div className="relative z-10 mt-auto pt-2 text-center text-xs font-bold opacity-75 border-t border-dashed border-current/20 flex items-center justify-between w-full">
-            <span className="text-[11px] whitespace-nowrap">الصفحة ١ من ٢</span>
-            <span className="text-[11px] font-semibold whitespace-nowrap">بقية الأسئلة في الصفحة التالية ⟵</span>
-          </div>
-        </div>
-      </article>
-
-      {/* الصفحة الثانية */}
-      <article
-        className="exam-paper exam-page exam-page-2 relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto min-h-[270mm]"
-        dir="rtl"
-        lang="ar"
-        style={{ ...shellBase, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
-      >
-        {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-        <div className="relative z-10 flex flex-col justify-between flex-1 w-full">
-          <PageTwoMiniBanner exam={exam} gradeName={gradeName} template={template} />
-
-          <div className="flex-1 flex flex-col justify-around gap-3 w-full my-2">
-            {page2Questions.map(({ question, globalIndex }) => (
-              <QuestionBlock
-                key={question.id}
-                question={question}
-                index={globalIndex}
-                template={template}
-                gradeName={gradeName}
-                showDecorations={decorations}
-              />
-            ))}
-          </div>
-
-          <footer className="relative z-10 mt-auto pt-2.5 text-center border-t border-dashed border-current/25 w-full">
-            <p className="text-[11px] opacity-70 mb-0.5 font-medium">انتهت الأسئلة</p>
-            <p className="text-sm sm:text-base font-semibold text-gray-800 dark:text-gray-200">{sigLine}</p>
-            <p className="text-base sm:text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">{teacher}</p>
-          </footer>
-        </div>
-      </article>
+      ))}
     </div>
   )
 }

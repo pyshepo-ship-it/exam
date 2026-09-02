@@ -405,17 +405,32 @@ const tplMod = await import(
   "data:text/javascript;base64," + Buffer.from(tplJs).toString("base64")
 )
 
-console.log("\n\x1b[1mسيناريو 13: تقسيم أسئلة الامتحان على صفحتين بالضبط وعدم شطر أي سؤال\x1b[0m")
+console.log("\n\x1b[1mسيناريو 13: تقسيم أسئلة الامتحان ديناميكياً على الصفحات وعدم شطر أي سؤال\x1b[0m")
 t("امتحان 5 أسئلة يملأ الصفحة الأولى [3 أسئلة كاملة] و [سؤالين كاملين في الصفحة 2]", () => {
   const makeQ = (id, type) => ({
     id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
-    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1 })),
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1, answerLines: 1 })),
   })
   const qs = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3), makeQ("q4", 4), makeQ("q5", 5)]
   const partition = tplMod.partitionExamQuestions(qs)
   eq(partition.isSinglePage, false)
+  eq(partition.totalPages, 2)
   eq(partition.page1Questions.map(p => p.question.id), ["q1", "q2", "q3"])
   eq(partition.page2Questions.map(p => p.question.id), ["q4", "q5"])
+})
+t("امتحان أكثر من 5 أسئلة يتوزع تلقائياً على 3 صفحات دون ضغط ودون كسر الأسئلة", () => {
+  const makeQ = (id, type) => ({
+    id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "س", marks: 1, answerLines: 1 })),
+  })
+  const qs = [
+    makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3),
+    makeQ("q4", 4), makeQ("q5", 5), makeQ("q6", 1), makeQ("q7", 2)
+  ]
+  const partition = tplMod.partitionExamQuestions(qs)
+  eq(partition.totalPages >= 3, true)
+  const allIds = partition.pages.flatMap(p => p.questions.map(q => q.question.id))
+  eq(allIds.length, 7)
 })
 
 console.log(`\n${"=".repeat(56)}`)

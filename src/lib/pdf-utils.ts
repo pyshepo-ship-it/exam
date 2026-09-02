@@ -270,11 +270,15 @@ export const printElement = (elementId: string) => {
           flex-direction: column !important;
           justify-content: space-between !important;
         }
-        .exam-page-1 {
+        .exam-page:not(:last-child),
+        .exam-page-1:not(:last-child),
+        .exam-page-middle {
           page-break-after: always !important;
           break-after: page !important;
         }
-        .exam-page-2, .exam-page-single {
+        .exam-page:last-child,
+        .exam-page-last,
+        .exam-page-single {
           page-break-after: avoid !important;
           break-after: avoid !important;
         }

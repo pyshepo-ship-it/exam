@@ -814,9 +814,9 @@ test("فحص صلاحيات الوصول للزوار (anon): قراءة الم�
 })
 
 // ============================================================
-// اختبار 11: خوارزمية تقسيم الامتحان على صفحتين A4 وعدم قسمة أي سؤال
+// اختبار 11: خوارزمية تقسيم الامتحان ديناميكياً على الصفحات وعدم قسمة أي سؤال
 // ============================================================
-section("11) اختبارات تقسيم صفحات الامتحان (قاعدة الصفحتين A4 وعدم قسمة السؤال)")
+section("11) اختبارات تقسيم صفحات الامتحان (التوزيع الديناميكي وعدم قسمة السؤال)")
 
 test("تقسيم امتحان من 5 أسئلة: ملء الصفحة الأولى بأقصى عدد من الأسئلة الكاملة (السؤال 1 و 2 و 3 في الأولى، و 4 و 5 في الثانية)", () => {
   const makeQ = (id, type) => ({
@@ -825,13 +825,14 @@ test("تقسيم امتحان من 5 أسئلة: ملء الصفحة الأول�
     questionNumber: 1,
     orderNumber: 1,
     headerText: "",
-    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1 })),
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1, answerLines: 1 })),
   })
 
   const questions = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3), makeQ("q4", 4), makeQ("q5", 5)]
   const part = templatesMod.partitionExamQuestions(questions)
 
-  assertEq(part.isSinglePage, false, "يجب أن يتوزع على صفحتين بالضبط")
+  assertEq(part.isSinglePage, false, "يجب أن يتوزع على صفحتين")
+  assertEq(part.totalPages, 2)
   assertEq(part.page1Questions.map(p => p.question.id), ["q1", "q2", "q3"], "الصفحة الأولى تضم السؤال 1 و 2 و 3 ممتلئة")
   assertEq(part.page2Questions.map(p => p.question.id), ["q4", "q5"], "الصفحة الثانية تضم الأسئلة 4 و 5")
 })
@@ -843,18 +844,39 @@ test("تقسيم امتحان من 3 أسئلة: السؤال 1 و 2 في الص
     questionNumber: 1,
     orderNumber: 1,
     headerText: "",
-    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1 })),
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1, answerLines: 1 })),
   })
 
   const questions = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3)]
   const part = templatesMod.partitionExamQuestions(questions)
 
   assertEq(part.isSinglePage, false)
+  assertEq(part.totalPages, 2)
   assertEq(part.page1Questions.map(p => p.question.id), ["q1", "q2"])
   assertEq(part.page2Questions.map(p => p.question.id), ["q3"])
 })
 
-test("ضمان عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً (كل سؤال بكامل أفرعه في صفحة واحدة)", () => {
+test("امتحان بأكثر من 5 أسئلة يتوزع بسلاسة على 3 صفحات أو أكثر بدون ضغط الحجم", () => {
+  const makeQ = (id, type) => ({
+    id,
+    questionType: type,
+    questionNumber: 1,
+    orderNumber: 1,
+    headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1, answerLines: 1 })),
+  })
+
+  const questions = [
+    makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3),
+    makeQ("q4", 4), makeQ("q5", 5), makeQ("q6", 1), makeQ("q7", 2)
+  ]
+  const part = templatesMod.partitionExamQuestions(questions)
+
+  assert(part.totalPages >= 3, "يجب أن يمتد إلى 3 صفحات أو أكثر")
+  assertEq(part.pages.flatMap(p => p.questions).length, 7, "جميع الأسئلة الـ 7 موجودة كاملة")
+})
+
+test("ضمان عدم قسمة أي سؤال رئيسي بين أي صفحتين نهائياً (كل سؤال بكامل أفرعه في صفحة واحدة)", () => {
   const makeQ = (id, count) => ({
     id,
     questionType: 1,
@@ -864,18 +886,18 @@ test("ضمان عدم قسمة أي سؤال رئيسي بين صفحتين نه
     subQuestions: Array.from({ length: count }).map((_, i) => ({ id: `${id}_${i}`, orderNumber: i + 1, questionText: "نص", marks: 1 })),
   })
 
-  const questions = [makeQ("q1", 6), makeQ("q2", 5), makeQ("q3", 4), makeQ("q4", 4)]
+  const questions = [makeQ("q1", 6), makeQ("q2", 5), makeQ("q3", 4), makeQ("q4", 4), makeQ("q5", 4)]
   const part = templatesMod.partitionExamQuestions(questions)
 
-  // تحقق أن كل سؤال موجود إما بالكامل في p1 أو بالكامل في p2
-  const p1Ids = new Set(part.page1Questions.map(p => p.question.id))
-  const p2Ids = new Set(part.page2Questions.map(p => p.question.id))
-
-  for (const q of questions) {
-    const inP1 = p1Ids.has(q.id)
-    const inP2 = p2Ids.has(q.id)
-    assert((inP1 && !inP2) || (!inP1 && inP2), `السؤال ${q.id} مقسوم أو مكرر بين الصفحتين`)
+  // تحقق أن كل سؤال موجود في صفحة واحدة فقط بالكامل
+  const seenIds = new Set()
+  for (const page of part.pages) {
+    for (const item of page.questions) {
+      assert(!seenIds.has(item.question.id), `السؤال ${item.question.id} مكرر أو مقسوم بين الصفحات`)
+      seenIds.add(item.question.id)
+    }
   }
+  assertEq(seenIds.size, questions.length, "جميع الأسئلة مقسمة ككتل كاملة دون انقسام")
 })
 
 // ============================================================
