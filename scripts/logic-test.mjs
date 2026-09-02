@@ -381,7 +381,7 @@ t("shouldPromoteToHonor يحترم النسبة والخيار", () => {
 let pubSrc = readFileSync("src/lib/exam-public.ts", "utf8")
 pubSrc = pubSrc.replace(/import type[\s\S]*?from\s*"\.\/data-storage"/, "")
 pubSrc = pubSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/exam-grade"/, "")
-let gradeBare = readFileSync("src/lib/exam-grade.ts", "utf8").replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "")
+const gradeBare = readFileSync("src/lib/exam-grade.ts", "utf8").replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "")
 const pubJs = ts.transpileModule(gradeBare + "\n" + pubSrc, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
