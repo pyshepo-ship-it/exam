@@ -193,7 +193,7 @@ interface Block { html: string }
 function headerBlock(report: StudentReport, type: StudentReportType, mode: "teacher" | "student"): Block {
   const studentModeNote =
     mode === "student"
-      ? `<span style="display:inline-block;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;margin-right:6px;">نسخة ولي الأمر</span>`
+      ? `<span style="display:inline-block;white-space:nowrap;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;margin-right:6px;">نسخة ولي الأمر</span>`
       : ""
   return {
     html: `
@@ -209,10 +209,10 @@ function headerBlock(report: StudentReport, type: StudentReportType, mode: "teac
             <div style="font-size:15px;font-weight:800;color:#111827;">${esc(getTeacherName())}</div>
           </div>
         </div>
-        <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px;">
-          <span style="display:inline-block;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:999px;padding:4px 14px;font-size:13px;font-weight:800;">👤 ${esc(report.student.name)}</span>
-          <span style="display:inline-block;background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;">📘 ${esc(report.gradeName)}</span>
-          <span style="display:inline-block;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;">👥 ${esc(report.groupName)} — ${esc(report.groupTime)}</span>
+        <div style="margin-top:6px;margin-bottom:10px;line-height:2.4;">
+          <span style="display:inline-block;white-space:nowrap;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:999px;padding:4px 14px;font-size:13px;font-weight:800;">👤 ${esc(report.student.name)}</span>
+          <span style="display:inline-block;white-space:nowrap;background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;">📘 ${esc(report.gradeName)}</span>
+          <span style="display:inline-block;white-space:nowrap;background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;border-radius:999px;padding:4px 14px;font-size:12px;font-weight:700;">👥 ${esc(report.groupName)} — ${esc(report.groupTime)}</span>
           ${studentModeNote}
         </div>
       </div>
@@ -269,9 +269,9 @@ function gradesBlocks(report: StudentReport): Block[] {
   return chunks.map((chunk, ci) => ({
     html: `
       ${ci === 0 ? sectionTitle("📝 الدرجات والتقييمات") + `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-        <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#4338ca;">المجموع: ${weightedScore} / ${weightedMax}</span>
-        <span style="background:${avg >= 85 ? "#ecfdf5" : "#fefce8"};border:1px solid ${avg >= 85 ? "#a7f3d0" : "#fde68a"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${avg >= 85 ? "#047857" : "#a16207"};">النسبة العامة: ${avg}%</span>
+      <div style="margin-top:6px;margin-bottom:10px;line-height:2.4;">
+        <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#4338ca;">المجموع: ${weightedScore} / ${weightedMax}</span>
+        <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:${avg >= 85 ? "#ecfdf5" : "#fefce8"};border:1px solid ${avg >= 85 ? "#a7f3d0" : "#fde68a"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${avg >= 85 ? "#047857" : "#a16207"};">النسبة العامة: ${avg}%</span>
       </div>` : ""}
       <table style="${TABLE}margin-bottom:14px;">
         <tr style="background:#6366f1;color:#ffffff;">
@@ -301,10 +301,10 @@ function paymentsBlocks(report: StudentReport): Block[] {
     `)
 
   const summary = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-      <span style="background:#fefce8;border:1px solid #fde68a;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#a16207;">إجمالي الاستحقاقات: ${esc(money(report.totalDue))}</span>
-      <span style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#047857;">إجمالي المدفوع: ${esc(money(report.totalPaid))}</span>
-      <span style="background:${report.balance > 0 ? "#fef2f2" : "#ecfdf5"};border:1px solid ${report.balance > 0 ? "#fecaca" : "#a7f3d0"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${report.balance > 0 ? "#b91c1c" : "#047857"};">الرصيد المتبقي: ${esc(money(report.balance))}</span>
+    <div style="margin-top:6px;margin-bottom:10px;line-height:2.4;">
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#fefce8;border:1px solid #fde68a;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#a16207;">إجمالي الاستحقاقات: ${esc(money(report.totalDue))}</span>
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#047857;">إجمالي المدفوع: ${esc(money(report.totalPaid))}</span>
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:${report.balance > 0 ? "#fef2f2" : "#ecfdf5"};border:1px solid ${report.balance > 0 ? "#fecaca" : "#a7f3d0"};border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:${report.balance > 0 ? "#b91c1c" : "#047857"};">الرصيد المتبقي: ${esc(money(report.balance))}</span>
     </div>
   `
 
@@ -395,11 +395,11 @@ function attendanceBlocks(report: StudentReport): Block[] {
     {
       html: `
         ${sectionTitle("📅 الحضور والغياب")}
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#4338ca;">إجمالي الأيام: ${report.attendance.total}</span>
-          <span style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#047857;">حضور: ${report.attendance.present}</span>
-          <span style="background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#b91c1c;">غياب: ${report.attendance.absent}</span>
-          <span style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#6d28d9;">نسبة الحضور: ${report.attendance.rate}%</span>
+        <div style="margin-top:6px;margin-bottom:10px;line-height:2.4;">
+          <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#4338ca;">إجمالي الأيام: ${report.attendance.total}</span>
+          <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#047857;">حضور: ${report.attendance.present}</span>
+          <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#b91c1c;">غياب: ${report.attendance.absent}</span>
+          <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:800;color:#6d28d9;">نسبة الحضور: ${report.attendance.rate}%</span>
         </div>
         ${rows ? `<table style="${TABLE}margin-bottom:14px;">
           <tr style="background:#6366f1;color:#ffffff;">
@@ -457,12 +457,12 @@ function comprehensiveBlocks(report: StudentReport): Block[] {
   })()
 
   const cards = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-      <span style="background:#eef2ff;border:1px solid #c7d2fe;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#4338ca;">📚 عدد التقييمات: ${report.manualGrades.length + report.examAttempts.length}</span>
-      ${avgPct !== null ? `<span style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#047857;">📈 النسبة العامة: ${avgPct}%</span>` : ""}
-      <span style="background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#b91c1c;">💼 الرصيد: ${esc(money(report.balance))}</span>
-      <span style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#6d28d9;">📅 نسبة الحضور: ${report.attendance.rate}%</span>
-      <span style="background:#fefce8;border:1px solid #fde68a;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#a16207;">🏆 مرات التكريم: ${report.honors.length}</span>
+    <div style="margin-top:6px;margin-bottom:10px;line-height:2.4;">
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#4338ca;">📚 عدد التقييمات: ${report.manualGrades.length + report.examAttempts.length}</span>
+      ${avgPct !== null ? `<span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#047857;">📈 النسبة العامة: ${avgPct}%</span>` : ""}
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#b91c1c;">💼 الرصيد: ${esc(money(report.balance))}</span>
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#6d28d9;">📅 نسبة الحضور: ${report.attendance.rate}%</span>
+      <span style="display:inline-block;white-space:nowrap;margin-left:6px;background:#fefce8;border:1px solid #fde68a;border-radius:12px;padding:8px 14px;font-size:12px;font-weight:800;color:#a16207;">🏆 مرات التكريم: ${report.honors.length}</span>
     </div>
   `
 

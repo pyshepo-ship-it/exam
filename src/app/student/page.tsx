@@ -740,10 +740,10 @@ export default function StudentPortalPage() {
                             <p className="text-sm text-gray-400 py-4 text-center">لا توجد سجلات حضور بعد</p>
                           ) : (
                             <div className="flex flex-wrap gap-2">
-                              <span className="bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 rounded-full px-3 py-1.5 text-xs font-bold">أيام مسجلة: {report.attendance.total}</span>
-                              <span className="bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 rounded-full px-3 py-1.5 text-xs font-bold">حضور: {report.attendance.present}</span>
-                              <span className="bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 rounded-full px-3 py-1.5 text-xs font-bold">غياب: {report.attendance.absent}</span>
-                              <span className="bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 rounded-full px-3 py-1.5 text-xs font-bold">النسبة: {report.attendance.rate}%</span>
+                              <span className="bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap">أيام مسجلة: {report.attendance.total}</span>
+                              <span className="bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap">حضور: {report.attendance.present}</span>
+                              <span className="bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap">غياب: {report.attendance.absent}</span>
+                              <span className="bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 rounded-full px-3 py-1.5 text-xs font-bold whitespace-nowrap">النسبة: {report.attendance.rate}%</span>
                             </div>
                           )}
                         </div>
