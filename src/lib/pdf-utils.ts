@@ -16,7 +16,7 @@ export const exportToPDF = async (
     throw new Error('Element not found')
   }
 
-  const { orientation = 'portrait', scale = 2, margin = 10 } = options || {}
+  const { orientation = 'portrait', scale = 2, margin = 6 } = options || {}
 
   try {
     try {
@@ -25,25 +25,6 @@ export const exportToPDF = async (
       /* تجاهل */
     }
 
-    const canvas = await html2canvas(element, {
-      scale,
-      useCORS: true,
-      logging: false,
-      backgroundColor: '#ffffff',
-      windowWidth: Math.max(element.scrollWidth, 794),
-      onclone: (doc) => {
-        doc.documentElement.setAttribute('dir', 'rtl')
-        doc.documentElement.setAttribute('lang', 'ar')
-        const cloned = doc.getElementById(elementId) as HTMLElement | null
-        if (cloned) {
-          cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
-          cloned.style.direction = 'rtl'
-          cloned.style.textAlign = 'right'
-        }
-      },
-    } as Parameters<typeof html2canvas>[1])
-
-    const imgData = canvas.toDataURL('image/png')
     const pdf = new jsPDF({
       orientation,
       unit: 'mm',
@@ -55,22 +36,73 @@ export const exportToPDF = async (
     const usableWidth = pageWidth - margin * 2
     const usableHeight = pageHeight - margin * 2
 
-    const imgWidthMm = usableWidth
-    const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+    const pages = element.querySelectorAll<HTMLElement>('.exam-page')
 
-    if (imgHeightMm <= usableHeight) {
-      pdf.addImage(imgData, 'PNG', margin, margin, imgWidthMm, imgHeightMm)
+    if (pages.length > 0) {
+      // تصدير الصفحات المحددة (صفحة 1 وصفحة 2) بدون أي تجاوز أو صفحة ثالثة
+      for (let i = 0; i < pages.length; i++) {
+        if (i > 0) {
+          pdf.addPage()
+        }
+        const pageEl = pages[i]
+        const canvas = await html2canvas(pageEl, {
+          scale,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          windowWidth: Math.max(pageEl.scrollWidth, 794),
+          onclone: (doc) => {
+            doc.documentElement.setAttribute('dir', 'rtl')
+            doc.documentElement.setAttribute('lang', 'ar')
+            const cloned = doc.getElementById(elementId) as HTMLElement | null
+            if (cloned) {
+              cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
+              cloned.style.direction = 'rtl'
+              cloned.style.textAlign = 'right'
+            }
+          },
+        } as Parameters<typeof html2canvas>[1])
+
+        const imgData = canvas.toDataURL('image/png')
+        const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+        const renderHeight = Math.min(imgHeightMm, usableHeight)
+        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, renderHeight)
+      }
     } else {
-      // ورقة امتحان طويلة: نقسمها على عدة صفحات A4 دون تصغير المحتوى
-      let heightLeft = imgHeightMm
-      let position = margin
-      pdf.addImage(imgData, 'PNG', margin, position, imgWidthMm, imgHeightMm)
-      heightLeft -= usableHeight
-      while (heightLeft > 0) {
-        position = margin - (imgHeightMm - heightLeft)
-        pdf.addPage()
-        pdf.addImage(imgData, 'PNG', margin, position, imgWidthMm, imgHeightMm)
+      const canvas = await html2canvas(element, {
+        scale,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: Math.max(element.scrollWidth, 794),
+        onclone: (doc) => {
+          doc.documentElement.setAttribute('dir', 'rtl')
+          doc.documentElement.setAttribute('lang', 'ar')
+          const cloned = doc.getElementById(elementId) as HTMLElement | null
+          if (cloned) {
+            cloned.style.fontFamily = "'Cairo', 'Tajawal', Tahoma, Arial, sans-serif"
+            cloned.style.direction = 'rtl'
+            cloned.style.textAlign = 'right'
+          }
+        },
+      } as Parameters<typeof html2canvas>[1])
+
+      const imgData = canvas.toDataURL('image/png')
+      const imgHeightMm = (canvas.height * usableWidth) / canvas.width
+
+      if (imgHeightMm <= usableHeight) {
+        pdf.addImage(imgData, 'PNG', margin, margin, usableWidth, imgHeightMm)
+      } else {
+        let heightLeft = imgHeightMm
+        let position = margin
+        pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeightMm)
         heightLeft -= usableHeight
+        while (heightLeft > 0) {
+          position = margin - (imgHeightMm - heightLeft)
+          pdf.addPage()
+          pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeightMm)
+          heightLeft -= usableHeight
+        }
       }
     }
 

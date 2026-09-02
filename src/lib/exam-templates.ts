@@ -147,15 +147,10 @@ export type OrnamentKind =
   | "bug"
 
 const BAND_ORNAMENTS: Record<GradeBand, OrnamentKind[]> = {
-  // الرابع: أجسام حية، شمس، ماء، نبات — منهج الاكتشاف
   g4: ["sun", "leaf", "flower", "droplet", "bug", "planet"],
-  // الخامس: ميكروسكوب بسيط، مغناطيس، حرارة
   g5: ["microscope", "leaf", "magnet", "thermometer", "sun", "droplet"],
-  // السادس: خلية، طاقة، أدوات معمل
   g6: ["microscope", "flask", "magnet", "zap", "thermometer", "leaf"],
-  // إعدادي: ذرة، دورق، دائرة، حمض وقاعدة
   prep: ["flask", "atom", "microscope", "testTube", "zap", "magnet"],
-  // أولى ثانوي: DNA، ذرة، معمل
   sec1: ["atom", "dna", "flask", "microscope", "testTube", "brain"],
   other: ["microscope", "flask", "atom", "leaf", "sun", "magnet"],
 }
@@ -187,7 +182,6 @@ export interface ExamTemplateDef {
   name: string
   tagline: string
   bestFor: string
-  /** معاينة البطاقة */
   swatch: string[]
   previewClass: string
 }
@@ -262,4 +256,84 @@ export function getUnderlinedWords(sq: SubQuestion): { word: string; underlined:
     word,
     underlined: i >= start && i < start + count,
   }))
+}
+
+/**
+ * تقسيم أسئلة الامتحان على صفحتين A4 كحد أقصى
+ * يضمن عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً
+ */
+export interface ExamPartition {
+  page1Questions: { question: Question; globalIndex: number }[]
+  page2Questions: { question: Question; globalIndex: number }[]
+  isSinglePage: boolean
+}
+
+export function partitionExamQuestions(questions: Question[]): ExamPartition {
+  const n = questions.length
+  if (n === 0) {
+    return { page1Questions: [], page2Questions: [], isSinglePage: true }
+  }
+
+  // حساب وزن تقريبي لارتفاع السؤال
+  const getQWeight = (q: Question): number => {
+    const base = 40
+    const subCount = q.subQuestions.length || 1
+    let subWeight = 24
+    if (q.questionType === 1) subWeight = 32
+    if (q.questionType === 4) subWeight = 22 + (q.subQuestions[0]?.answerLines || 2) * 10
+    if (q.questionType === 5) subWeight = 28
+    return base + subCount * subWeight
+  }
+
+  const weights = questions.map(getQWeight)
+  const totalWeight = weights.reduce((a, b) => a + b, 0)
+
+  // إذا كان الامتحان قصيراً جداً (سؤال أو سؤالين بمجموع أسئلة فرعية قليل) يكفي صفحة واحدة
+  if (n <= 2 && totalWeight <= 280) {
+    return {
+      page1Questions: questions.map((q, i) => ({ question: q, globalIndex: i })),
+      page2Questions: [],
+      isSinglePage: true,
+    }
+  }
+
+  // الامتحان مقسم على صفحتين بالضبط
+  const HEADER_WEIGHT = 110
+  const FOOTER_WEIGHT = 80
+
+  let bestSplit = 1
+  let minDiff = Infinity
+
+  for (let k = 1; k < n; k++) {
+    const p1Weight = HEADER_WEIGHT + weights.slice(0, k).reduce((a, b) => a + b, 0)
+    const p2Weight = FOOTER_WEIGHT + weights.slice(k).reduce((a, b) => a + b, 0)
+    const diff = Math.abs(p1Weight - p2Weight)
+    if (diff < minDiff) {
+      minDiff = diff
+      bestSplit = k
+    }
+  }
+
+  // تطبيق قاعدة التوزيع التلقائي المتوازن
+  // إذا 3 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والسؤال 3 في الصفحة الثانية
+  if (n === 3 && bestSplit === 1 && weights[0] + weights[1] <= 440) {
+    bestSplit = 2
+  }
+  // إذا 4 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والسؤال 3 و 4 في الصفحة الثانية
+  if (n === 4 && bestSplit !== 2) {
+    bestSplit = 2
+  }
+  // إذا 5 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والأسئلة 3 و 4 و 5 في الصفحة الثانية
+  if (n === 5 && bestSplit !== 2) {
+    bestSplit = 2
+  }
+
+  const p1 = questions.slice(0, bestSplit).map((q, i) => ({ question: q, globalIndex: i }))
+  const p2 = questions.slice(bestSplit).map((q, i) => ({ question: q, globalIndex: bestSplit + i }))
+
+  return {
+    page1Questions: p1,
+    page2Questions: p2,
+    isSinglePage: false,
+  }
 }

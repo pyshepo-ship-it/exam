@@ -122,12 +122,6 @@ const gradeMod = await transpileAndLoad("src/lib/exam-grade.ts", [
 ])
 
 // Exam Public
-const examPublicMod = await transpileAndLoad("src/lib/exam-public.ts", [
-  [/import type[\s\S]*?from\s*"\.\/data-storage"/, ""],
-  [/import\s*\{[\s\S]*?\}\s*from\s*"\.\/exam-grade"/, ""],
-], [
-  // inject gradeExam
-])
 const examPublicJs = ts.transpileModule(
   readFileSync("src/lib/exam-grade.ts", "utf8").replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "") +
   "\n" +
@@ -142,9 +136,6 @@ const publicMod = await import("data:text/javascript;base64," + Buffer.from(exam
 const templatesMod = await transpileAndLoad("src/lib/exam-templates.ts", [
   [/import type[\s\S]*?from\s*"\.\/data-storage"/, ""],
 ])
-
-// Supabase sync
-const syncRaw = readFileSync("src/lib/supabase/sync.ts", "utf8")
 
 // Helper function to scan files
 function walk(dir, out = []) {
@@ -820,6 +811,71 @@ test("فحص صلاحيات الوصول للزوار (anon): قراءة الم�
   assert(schema.includes("CREATE POLICY \"public read shared_files\""), "قراءة الملفات عامة")
   assert(schema.includes("CREATE POLICY \"public read important_links\""), "قراءة الروابط عامة")
   assert(schema.includes("CREATE POLICY \"anon insert exam_attempts\""), "تسليم الاختبار متاح للزائر")
+})
+
+// ============================================================
+// اختبار 11: خوارزمية تقسيم الامتحان على صفحتين A4 وعدم قسمة أي سؤال
+// ============================================================
+section("11) اختبارات تقسيم صفحات الامتحان (قاعدة الصفحتين A4 وعدم قسمة السؤال)")
+
+test("تقسيم امتحان من 5 أسئلة: السؤال 1 و 2 في الصفحة الأولى، والأسئلة 3 و 4 و 5 في الصفحة الثانية", () => {
+  const makeQ = (id, type) => ({
+    id,
+    questionType: type,
+    questionNumber: 1,
+    orderNumber: 1,
+    headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1 })),
+  })
+
+  const questions = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3), makeQ("q4", 4), makeQ("q5", 5)]
+  const part = templatesMod.partitionExamQuestions(questions)
+
+  assertEq(part.isSinglePage, false, "يجب أن يتوزع على صفحتين بالضبط")
+  assertEq(part.page1Questions.map(p => p.question.id), ["q1", "q2"], "الصفحة الأولى تضم السؤال 1 و 2")
+  assertEq(part.page2Questions.map(p => p.question.id), ["q3", "q4", "q5"], "الصفحة الثانية تضم الأسئلة 3 و 4 و 5")
+})
+
+test("تقسيم امتحان من 3 أسئلة: السؤال 1 و 2 في الصفحة الأولى والسؤال 3 في الصفحة الثانية", () => {
+  const makeQ = (id, type) => ({
+    id,
+    questionType: type,
+    questionNumber: 1,
+    orderNumber: 1,
+    headerText: "",
+    subQuestions: [1, 2, 3, 4].map(i => ({ id: `${id}_${i}`, orderNumber: i, questionText: "نص", marks: 1 })),
+  })
+
+  const questions = [makeQ("q1", 1), makeQ("q2", 2), makeQ("q3", 3)]
+  const part = templatesMod.partitionExamQuestions(questions)
+
+  assertEq(part.isSinglePage, false)
+  assertEq(part.page1Questions.map(p => p.question.id), ["q1", "q2"])
+  assertEq(part.page2Questions.map(p => p.question.id), ["q3"])
+})
+
+test("ضمان عدم قسمة أي سؤال رئيسي بين صفحتين نهائياً (كل سؤال بكامل أفرعه في صفحة واحدة)", () => {
+  const makeQ = (id, count) => ({
+    id,
+    questionType: 1,
+    questionNumber: 1,
+    orderNumber: 1,
+    headerText: "",
+    subQuestions: Array.from({ length: count }).map((_, i) => ({ id: `${id}_${i}`, orderNumber: i + 1, questionText: "نص", marks: 1 })),
+  })
+
+  const questions = [makeQ("q1", 6), makeQ("q2", 5), makeQ("q3", 4), makeQ("q4", 4)]
+  const part = templatesMod.partitionExamQuestions(questions)
+
+  // تحقق أن كل سؤال موجود إما بالكامل في p1 أو بالكامل في p2
+  const p1Ids = new Set(part.page1Questions.map(p => p.question.id))
+  const p2Ids = new Set(part.page2Questions.map(p => p.question.id))
+
+  for (const q of questions) {
+    const inP1 = p1Ids.has(q.id)
+    const inP2 = p2Ids.has(q.id)
+    assert((inP1 && !inP2) || (!inP1 && inP2), `السؤال ${q.id} مقسوم أو مكرر بين الصفحتين`)
+  }
 })
 
 // ============================================================

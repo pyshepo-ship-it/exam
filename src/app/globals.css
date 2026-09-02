@@ -159,6 +159,7 @@
   margin-inline: auto;
   direction: rtl;
   text-align: right;
+  box-sizing: border-box;
 }
 .exam-paper h1, .exam-paper h3 {
   font-family: inherit;
@@ -166,20 +167,38 @@
 
 @page {
   size: A4 portrait;
-  margin: 12mm;
+  margin: 8mm 8mm;
 }
 
 @media print {
   .exam-ornaments { opacity: 0.85; }
-  .exam-paper {
+  
+  .exam-page {
     box-shadow: none !important;
     border-width: 2px !important;
-    max-width: 186mm;
-    width: 186mm;
+    max-width: 190mm !important;
+    width: 190mm !important;
+    min-height: 275mm !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-sizing: border-box !important;
   }
+
+  .exam-page-1 {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+
+  .exam-page-2, .exam-page-single {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
   .exam-q {
-    break-inside: avoid;
-    page-break-inside: avoid;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 
   body.printing-exam {
@@ -195,12 +214,14 @@
   body.printing-exam #exam-preview-content {
     position: absolute !important;
     inset: 0 auto auto 0;
-    width: 186mm;
-    max-width: 186mm;
+    width: 190mm;
+    max-width: 190mm;
     margin: 0 auto;
     background: #fff !important;
     overflow: visible !important;
     box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
   body.printing-exam .no-print {
     display: none !important;
