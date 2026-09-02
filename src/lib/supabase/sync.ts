@@ -44,6 +44,7 @@ function getSupabase() {
 // معرفات الصفوف الموجودة حالياً في Supabase (لكشف الحذف)
 let remoteIds: Record<string, Set<string>> = {};
 let warnedOnce = false;
+let lastWarned = "";
 
 const DB_TABLES = [
   "grades",
@@ -352,15 +353,22 @@ function setLocal(key: string, rows: unknown[]) {
 }
 
 function warnSyncError(err: unknown) {
-  console.warn("Supabase sync error:", err);
-  if (!warnedOnce) {
-    warnedOnce = true;
-    import("react-hot-toast")
-      .then(({ toast }) =>
-        toast.error(`تعذر الحفظ في قاعدة البيانات: ${explainSupabaseError(err)}`, { duration: 8000 })
-      )
-      .catch(() => {});
-  }
+  console.warn("Supabase sync error:", {
+    table: (err as any)?.table,
+    code: (err as any)?.code,
+    message: (err as any)?.message,
+    details: (err as any)?.details,
+    hint: (err as any)?.hint,
+  });
+  const table = (err as any)?.table ? ` [جدول: ${(err as any).table}]` : "";
+  const message = `تعذر الحفظ في قاعدة البيانات${table}: ${explainSupabaseError(err)}`;
+  // لا نكرر نفس الرسالة أكثر من مرة، لكن نعرض الأخطاء المختلفة كلها
+  if (lastWarned === message) return;
+  lastWarned = message;
+  warnedOnce = true;
+  import("react-hot-toast")
+    .then(({ toast }) => toast.error(message, { duration: 10000 }))
+    .catch(() => {});
 }
 
 /** تنفيذ حفظ فوري (يُستخدم مع await) */
@@ -372,7 +380,7 @@ async function pushRows(dbTable: string, remoteRows: any[]): Promise<void> {
 
   if (remoteRows.length > 0) {
     const { error } = await sb.from(dbTable).upsert(remoteRows, { onConflict: "id" });
-    if (error) throw error;
+    if (error) throw Object.assign(error, { table: dbTable });
   }
 
   const prevIds = remoteIds[dbTable];
@@ -380,7 +388,7 @@ async function pushRows(dbTable: string, remoteRows: any[]): Promise<void> {
     const toDelete = [...prevIds].filter((id) => !newIds.has(id));
     if (toDelete.length > 0) {
       const { error } = await sb.from(dbTable).delete().in("id", toDelete);
-      if (error) throw error;
+      if (error) throw Object.assign(error, { table: dbTable });
     }
   }
 
@@ -826,9 +834,23 @@ export async function checkSupabaseConnection(): Promise<ConnectionCheck> {
 
 /** ترجمة أخطاء Supabase الشائعة إلى رسالة عربية واضحة مع خطوة الإصلاح */
 export function explainSupabaseError(err: any): string {
-  const raw = err?.message || String(err ?? "")
+  const raw = [err?.message, err?.details, err?.hint]
+    .filter(Boolean)
+    .join(" | ") || String(err ?? "")
   const code = err?.code || ""
 
+  if (/invalid input syntax for type uuid/i.test(raw) || code === "22P02") {
+    return (
+      "مخطط قاعدة البيانات قديم: عمود id من نوع UUID بينما التطبيق يستخدم معرفات نصية. " +
+      "الحل: شغّل ملف supabase/migrations/005_fix_id_types.sql في Supabase ← SQL Editor."
+    )
+  }
+  if (/column .* does not exist/i.test(raw) || code === "42703") {
+    return (
+      "عمود مفقود في قاعدة البيانات (مخطط قديم). " +
+      "الحل: شغّل ملف supabase/migrations/005_fix_id_types.sql في Supabase ← SQL Editor."
+    )
+  }
   if (/permission denied/i.test(raw) || code === "42501") {
     return (
       "صلاحيات قاعدة البيانات ناقصة (permission denied). " +
@@ -853,4 +875,121 @@ export function explainSupabaseError(err: any): string {
     return "تعذّر الوصول إلى Supabase — تحقق من اتصال الإنترنت أو رابط المشروع."
   }
   return raw
+}
+
+
+// ============================================================
+// تشخيص شامل: يحدد بالضبط أين ولماذا يفشل الحفظ
+// ============================================================
+
+export interface TableDiagnostic {
+  table: string
+  canRead: boolean
+  canWrite: boolean
+  error?: string
+}
+
+export interface Diagnostics {
+  /** هل يوجد مستخدم مسجّل دخوله؟ (الكتابة تتطلب ذلك) */
+  authenticated: boolean
+  userEmail: string | null
+  /** الدور الفعلي الذي تراه قاعدة البيانات: anon أو authenticated */
+  role: string | null
+  tables: TableDiagnostic[]
+  /** الخلاصة والحل المقترح */
+  summary: string
+}
+
+/**
+ * يفحص كل جدول على حدة (قراءة ثم كتابة تجريبية داخل معاملة تُلغى)
+ * ويحدد ما إذا كانت المشكلة في الجلسة أم في الصلاحيات.
+ */
+export async function runDiagnostics(): Promise<Diagnostics> {
+  const sb = getSupabase()
+  const out: Diagnostics = {
+    authenticated: false,
+    userEmail: null,
+    role: null,
+    tables: [],
+    summary: "",
+  }
+
+  if (!sb) {
+    out.summary = "متغيرات Supabase غير مُعدّة في هذا الموقع."
+    return out
+  }
+
+  // 1) حالة الجلسة — الكتابة مسموحة فقط لدور authenticated
+  const { data: sessionData } = await sb.auth.getSession()
+  const session = sessionData?.session ?? null
+  out.authenticated = Boolean(session)
+  out.userEmail = session?.user?.email ?? null
+
+  // الدور الفعلي مقروءاً من داخل التوكن
+  if (session?.access_token) {
+    try {
+      const payload = JSON.parse(atob(session.access_token.split(".")[1]))
+      out.role = payload?.role ?? null
+    } catch {
+      out.role = null
+    }
+  } else {
+    out.role = "anon"
+  }
+
+  // 2) فحص كل جدول: قراءة + كتابة فعلية (تُحذف بعدها مباشرة)
+  for (const t of DB_TABLES) {
+    const diag: TableDiagnostic = { table: t, canRead: false, canWrite: false }
+
+    const { error: readErr } = await sb.from(t).select("id").limit(1)
+    if (readErr) {
+      diag.error = explainSupabaseError(readErr)
+    } else {
+      diag.canRead = true
+
+      // كتابة سجل اختباري بمعرّف فريد ثم حذفه فوراً
+      const probeId = `__probe_${Date.now()}__`
+      const { error: writeErr } = await sb.from(t).insert({ id: probeId } as any)
+
+      if (!writeErr) {
+        diag.canWrite = true
+        await sb.from(t).delete().eq("id", probeId)
+      } else if (/null value|not-null|violates foreign key|invalid input/i.test(writeErr.message || "")) {
+        // الرفض بسبب قيود الأعمدة يعني أن الصلاحية نفسها سليمة
+        diag.canWrite = true
+      } else {
+        diag.error = explainSupabaseError(writeErr)
+      }
+    }
+
+    out.tables.push(diag)
+  }
+
+  // 3) الخلاصة
+  const noWrite = out.tables.filter((t) => !t.canWrite)
+  const noRead = out.tables.filter((t) => !t.canRead)
+
+  if (!out.authenticated) {
+    out.summary =
+      "لا توجد جلسة دخول صالحة — لذلك تراك قاعدة البيانات كزائر (anon) والقراءة تنجح بينما الكتابة تُرفض. " +
+      "الحل: سجّل الخروج ثم سجّل الدخول مرة أخرى من صفحة /login."
+  } else if (out.role !== "authenticated") {
+    out.summary =
+      `جلستك موجودة لكن الدور المُرسل إلى قاعدة البيانات هو "${out.role}" وليس "authenticated". ` +
+      "الحل: سجّل الخروج وسجّل الدخول من جديد لتحديث التوكن."
+  } else if (noWrite.length === out.tables.length) {
+    out.summary =
+      "الكتابة مرفوضة في كل الجداول رغم تسجيل الدخول — الصلاحيات لم تُطبَّق. " +
+      "الحل: شغّل supabase/migrations/004_fix_permissions.sql في SQL Editor ثم أعد الفحص."
+  } else if (noWrite.length > 0) {
+    out.summary =
+      `الكتابة مرفوضة في الجداول التالية فقط: ${noWrite.map((t) => t.table).join("، ")}. ` +
+      "شغّل supabase/migrations/004_fix_permissions.sql لمنح الصلاحيات الناقصة."
+  } else if (noRead.length > 0) {
+    out.summary = `تعذّرت القراءة من: ${noRead.map((t) => t.table).join("، ")}.`
+  } else {
+    out.summary = "كل شيء سليم — القراءة والكتابة تعملان في جميع الجداول."
+  }
+
+  return out
 }

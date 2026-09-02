@@ -707,7 +707,7 @@ export default function SettingsPage() {
                     </Button>
                   </div>
 
-                  {conn && !conn.ok && /permission denied|صلاحيات/i.test(conn.error || "") && (
+                  {conn && !conn.ok && /permission denied|صلاحيات|مخطط|uuid|عمود/i.test(conn.error || "") && (
                     <div className="rounded-lg bg-white dark:bg-gray-900 border border-red-300 dark:border-red-800 p-4 text-sm space-y-2">
                       <p className="font-bold text-red-700 dark:text-red-400">
                         كيف تُصلح هذا الخطأ (دقيقة واحدة):
@@ -718,7 +718,9 @@ export default function SettingsPage() {
                         <li>
                           الصق محتوى الملف{" "}
                           <code className="bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-xs">
-                            supabase/migrations/004_fix_permissions.sql
+                            {/uuid|مخطط|عمود/i.test(conn.error || "")
+                              ? "supabase/migrations/005_fix_id_types.sql"
+                              : "supabase/migrations/004_fix_permissions.sql"}
                           </code>{" "}
                           الموجود في المشروع.
                         </li>
