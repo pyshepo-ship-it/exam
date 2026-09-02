@@ -745,11 +745,7 @@ export async function requestGroupTransfer(
     return { ok: false, error: "يمكن الانضمام فقط إلى مجموعات داخل صفك الحالي — تواصل مع المعلم لتغيير الصف" }
   }
 
-  // لا تكرار لطلب معلق لنفس الطالب لنفس المجموعة
-  const dup = getGroupTransferRequests().find(
-    t => t.studentId === studentId && t.status === "pending" && t.toGroupId === toGroupId
-  )
-  if (dup) return { ok: false, error: "لديك طلب معلق لهذه المجموعة بالفعل — انتظر مراجعة المعلم" }
+  // منع التكرار يتم عرضياً لدى المدرس (الطلبات في السحابة — لا قائمة محلية على جهاز الطالب)
 
   const request: GroupTransferRequest = {
     id: `tr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

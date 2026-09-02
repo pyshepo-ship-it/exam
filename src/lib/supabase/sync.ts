@@ -1236,19 +1236,17 @@ export async function submitRegistrationRequest(request: any): Promise<{ ok: boo
 
 /** إرسال طلب انضمام لمجموعة أخرى من بوابة الطالب */
 export async function submitGroupTransferRequest(request: any): Promise<{ ok: boolean; error?: string }> {
-  const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
-  const next = [...local, request]
-  localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify(next))
-  const rollbackLocal = () => {
-    try { localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify(local)) } catch { /* تجاهل */ }
-  }
-
   const sb = getSupabase()
-  if (!sb) return { ok: true }
+  if (!sb) {
+    // وضع التطوير المحلي فقط (بلا Supabase)
+    const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
+    localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify([...local, request]))
+    return { ok: true }
+  }
+  // سحابي خالص: الطلب يذهب لقاعدة البيانات مباشرة — لا نسخة على جهاز الطالب
   const { error } = await sb.from("group_transfer_requests").insert(toGroupTransferRequestRow(request))
   if (error) {
     console.warn("submitGroupTransferRequest:", error)
-    rollbackLocal()
     return { ok: false, error: explainSupabaseError(error) }
   }
   return { ok: true }

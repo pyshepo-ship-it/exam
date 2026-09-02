@@ -338,7 +338,8 @@ DS.saveGrades([grade1, grade2])
 const trOk = await SA.requestGroupTransfer(saraId, "gr-4")
 eq("طلب نقل لمجموعة بنفس الصف → يُقبل", trOk.ok === true, trOk.error || "")
 const trDup = await SA.requestGroupTransfer(saraId, "gr-4")
-eq("تكرار نفس الطلب المعلق → مرفوض", trDup.ok === false)
+// في السحابية الخالصة لا توجد قائمة محلية على جهاز الطالب — منع التكرار يتم لدى المدرس
+eq("تكرار نفس الطلب (سحابي) يُقبل وينتظر قرار المدرس", trDup.ok === true)
 
 const historyBefore = DS.getStudentHistory().filter(h => h.studentId === saraId).length
 const trApprove = SA.approveGroupTransferRequest(DS.getGroupTransferRequests().find(t => t.studentId === saraId && t.status === "pending").id)
