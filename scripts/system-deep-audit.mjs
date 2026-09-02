@@ -769,7 +769,7 @@ test("فحص عناصر Radix Select: خلو جميع SelectItem من القيم
 })
 
 test("فحص Middleware: حماية جميع مسارات /dashboard والتوجيه إلى /login", () => {
-  const mw = readFileSync("src/middleware.ts", "utf8")
+  const mw = readFileSync("src/proxy.ts", "utf8")
   assert(mw.includes("req.nextUrl.pathname.startsWith('/dashboard')"), "حماية مسار الداشبورد")
   assert(mw.includes("NextResponse.redirect(redirectUrl)"), "إعادة التوجيه عند انعدام الجلسة")
 })

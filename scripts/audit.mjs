@@ -137,7 +137,7 @@ check(
 
 // كل SelectItem يجب أن يملك قيمة غير فارغة (Radix يرمي خطأ مع value="")
 section("3) سلامة عناصر القوائم (Radix Select)")
-let emptyValue = []
+const emptyValue = []
 for (const f of walk("src")) {
   const c = readFileSync(f, "utf8")
   if (/<SelectItem\s+value=""/.test(c)) emptyValue.push(f)
@@ -284,7 +284,7 @@ check(
 )
 
 // حماية لوحة التحكم
-const middleware = read("src/middleware.ts")
+const middleware = read("src/proxy.ts")
 check("يوجد middleware لحماية المسارات", middleware.length > 0)
 
 const layout = read("src/app/dashboard/layout.tsx")
