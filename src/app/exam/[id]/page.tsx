@@ -3,17 +3,9 @@
 import React, { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
-import { Clock, CheckCircle2, Trophy, BookOpen, AlertCircle } from "lucide-react"
+import { Clock, CheckCircle2, Trophy, BookOpen, AlertCircle, LogIn, UserPlus, ShieldCheck, UserX } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import {
   Exam,
   ExamAttempt,
@@ -78,6 +70,8 @@ export default function TakeExamPage() {
   const [answerVisibility, setAnswerVisibility] = useState<'never' | 'afterEach' | 'atEnd'>("never")
   const [closedReason, setClosedReason] = useState("")
   const [honored, setHonored] = useState(false)
+  // بيانات الطالب من جلسة الدخول — الاختبارات للمسجلين فقط (لا اختيار اسم للزوار)
+  const [portalStudent, setPortalStudent] = useState<{ id: string; name: string; gradeId: string; groupId: string } | null>(null)
   const submittedRef = React.useRef(false)
   const hadPositiveTime = React.useRef(false)
   const sealRef = React.useRef("")
@@ -113,12 +107,18 @@ export default function TakeExamPage() {
         }
       }
 
-      // جلسة الطالب: عزل تام — لا يختار صفاً أو مجموعة غير مجموعته
+      // جلسة الطالب: الهوية تلقائية — لا اختيار اسم إطلاقاً
       const portal = getPortalSession()
       if (portal) {
         const me = nextStudents.find(s => s.id === portal.studentId)
+        setStudentName(me?.name || portal.name)
+        setPortalStudent({
+          id: portal.studentId,
+          name: me?.name || portal.name,
+          gradeId: me?.gradeId || "",
+          groupId: me?.groupId || "",
+        })
         if (me) {
-          nextStudents = nextStudents // نفس القائمة
           setGradeId(me.gradeId)
           setGroupId(me.groupId)
         }
@@ -169,8 +169,8 @@ export default function TakeExamPage() {
         sealRef.current = sealed.token
         setAnswerVisibility(found.answerVisibility || "never")
         setExam(sealed.view)
-        setGradeId(prev => (portal ? prev : found!.gradeId || ""))
-        setGroupId(prev => (portal ? prev : found!.groupId || ""))
+        setGradeId(prev => prev || found!.gradeId || "")
+        setGroupId(prev => prev || found!.groupId || "")
       } else {
         setExam(null)
       }
@@ -212,25 +212,15 @@ export default function TakeExamPage() {
 
   const startExam = () => {
     if (!exam) return
+    // الاختبار للمسجلين فقط — الهوية تأتي من الجلسة تلقائياً
+    if (!portalStudent) return
     // وضع «بعد الإجابة على السؤال»: مفاتيح الإجابات تُفك محلياً بقرار صريح من المعلم
     if (answerVisibility === "afterEach" && sealRef.current) {
       specRef.current = decodeSealForReview(sealRef.current, exam.id)
     }
-    if (!studentName.trim()) {
-      alert("يرجى كتابة اسمك")
-      return
-    }
     if (!gradeId || !groupId) {
-      alert("يرجى اختيار الصف والمجموعة")
+      alert("لم يتم تحديد صفك ومجموعتك — أكمل بياناتك من إعدادات حسابك أو راجع المعلم")
       return
-    }
-    // حد المحاولات للزائر (بلا حساب): نقارن بالاسم والمجموعة
-    if (!getPortalSession() && exam.maxAttempts && exam.maxAttempts > 0) {
-      const at = attemptsStatus(exam, getExamAttempts(), undefined, studentName, groupId)
-      if (!at.allowed) {
-        alert(at.reason || "استُنفدت محاولاتك لهذا الاختبار")
-        return
-      }
     }
     const minutes = exam.duration && exam.duration > 0 ? exam.duration : 60
     setStartedAt(new Date().toISOString())
@@ -251,15 +241,11 @@ export default function TakeExamPage() {
       : gradeExam(exam, answers)
     setResult(graded)
 
-    const portalSession = getPortalSession()
-    const matched =
-      (portalSession && groupStudents.find(s => s.id === portalSession.studentId)) ||
-      groupStudents.find(s => s.name.trim() === studentName.trim())
     const attempt: ExamAttempt = {
       id: `${exam.id}-${Date.now()}`,
       examId: exam.id,
-      studentId: portalSession?.studentId || matched?.id,
-      studentName: studentName.trim(),
+      studentId: portalStudent?.id,
+      studentName: (portalStudent?.name || studentName).trim(),
       groupId,
       gradeId,
       answers,
@@ -281,7 +267,7 @@ export default function TakeExamPage() {
       exam,
       studentName: attempt.studentName,
       groupId,
-      studentId: matched?.id,
+      studentId: portalStudent?.id,
       score: graded.score,
       totalMarks: graded.autoTotal,
     })
@@ -494,79 +480,62 @@ export default function TakeExamPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-8">
-        {step === "identify" && (
+        {step === "identify" && !portalStudent && (
+          <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-8 text-center space-y-5">
+            <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mx-auto">
+              <UserX className="w-8 h-8 text-white" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold">الاختبار متاح للطلاب المسجلين فقط</h2>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                لضمان عدالة النتائج وتسجيل درجاتك في تقريرك، يجب تسجيل الدخول بحسابك قبل بدء الاختبار.
+                <br />
+                لا تملك حساباً؟ سجّل الآن وانتظر موافقة المعلم.
+              </p>
+            </div>
+            <div className="space-y-3 max-w-sm mx-auto pt-2">
+              <Button asChild className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 h-12 text-base">
+                <Link href={`/student/login?next=${encodeURIComponent("/exam/" + examId)}`}>
+                  <LogIn className="w-5 h-5 ml-2" />
+                  تسجيل الدخول لبدء الاختبار
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full h-12 text-base">
+                <Link href="/student/register">
+                  <UserPlus className="w-5 h-5 ml-2" />
+                  إنشاء حساب جديد
+                </Link>
+              </Button>
+            </div>
+            <p className="text-xs text-gray-400 pt-2">
+              بعد تسجيل الدخول ستعود لهذا الاختبار تلقائياً وسيبدأ العدّ عند الضغط على «بدء الاختبار».
+            </p>
+          </div>
+        )}
+
+        {step === "identify" && portalStudent && (
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
-            <h2 className="text-xl font-bold">بيانات الطالب</h2>
+            <h2 className="text-xl font-bold">تأكيد بدء الاختبار</h2>
             <p className="text-sm text-gray-500">
               بعد البدء يبدأ العدّ التنازلي ({exam.duration || 60} دقيقة) ولا يمكن إيقافه.
             </p>
-            <div>
-              <Label>الاسم *</Label>
-              <Input
-                className="mt-1"
-                value={studentName}
-                onChange={e => setStudentName(e.target.value)}
-                placeholder="اكتب اسمك ثلاثياً"
-              />
-            </div>
-            {groupStudents.length > 0 && (
-              <div>
-                <Label>أو اختر اسمك من قائمة المجموعة</Label>
-                <Select onValueChange={val => {
-                  const s = groupStudents.find(x => x.id === val)
-                  if (s) setStudentName(s.name)
-                }}>
-                  <SelectTrigger className="mt-1"><SelectValue placeholder="اختر من الطلاب" /></SelectTrigger>
-                  <SelectContent>
-                    {groupStudents.map(s => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 p-4 space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <ShieldCheck className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                  <span className="font-bold text-lg truncate">{portalStudent.name}</span>
+                </div>
+                <span className="shrink-0 bg-green-100 text-green-700 rounded-full px-3 py-1 text-xs font-bold">✓ مسجل الدخول</span>
               </div>
-            )}
-            <div>
-              <Label>الصف *</Label>
-              <Select
-                value={gradeId || undefined}
-                disabled={Boolean(exam.gradeId) || Boolean(getPortalSession())}
-                onValueChange={val => {
-                  setGradeId(val)
-                  if (!exam.groupId) setGroupId("")
-                }}
-              >
-                <SelectTrigger className="mt-1"><SelectValue placeholder="اختر الصف" /></SelectTrigger>
-                <SelectContent>
-                  {grades.map(g => (
-                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                {grades.find(g => g.id === gradeId)?.name || ""}
+                {groupId ? ` — ${groups.find(x => x.id === groupId)?.name || ""}` : ""}
+              </div>
+              <p className="text-xs text-gray-400">
+                اسمك وصفك ومجموعتك مسجَّلة تلقائياً من حسابك — تُحفظ درجتك في تقريرك مباشرة.
+              </p>
             </div>
-            <div>
-              <Label>المجموعة *</Label>
-              <Select
-                value={groupId || undefined}
-                disabled={!gradeId || Boolean(exam.groupId) || Boolean(getPortalSession())}
-                onValueChange={setGroupId}
-              >
-                <SelectTrigger className="mt-1">
-                  <SelectValue placeholder={gradeId ? "اختر المجموعة" : "اختر الصف أولاً"} />
-                </SelectTrigger>
-                <SelectContent>
-                  {!gradeId ? (
-                    <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
-                  ) : groups.length === 0 ? (
-                    <SelectItem value="__none" disabled>لا توجد مجموعات في هذا الصف</SelectItem>
-                  ) : (
-                    groups.map(g => (
-                      <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={startExam} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600">
+            <Button onClick={startExam} className="w-full bg-gradient-to-r from-indigo-500 to-purple-600 h-12 text-base">
               بدء الاختبار
             </Button>
           </div>

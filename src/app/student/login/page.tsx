@@ -29,12 +29,18 @@ export default function StudentLoginPage() {
   const [recMsg, setRecMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [recBusy, setRecBusy] = useState(false)
 
-  // إن كانت له جلسة سابقة ننتقل به للبوابة مباشرة
+  // هدف التحويل بعد الدخول: ?next=/exam/... للعودة للاختبار مباشرة (داخلي فقط — منع الاختراق)
+  const [nextUrl, setNextUrl] = useState("")
   useEffect(() => {
     const { getPortalSession } = require("@/lib/student-accounts") as typeof import("@/lib/student-accounts")
+    try {
+      const n = new URLSearchParams(window.location.search).get("next") || ""
+      setNextUrl(n.startsWith("/") && !n.startsWith("//") ? n : "")
+    } catch { /* تجاهل */ }
     if (getPortalSession()) {
-      window.location.href = "/student"
+      window.location.href = nextUrl || "/student"
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const submit = async () => {
@@ -44,7 +50,7 @@ export default function StudentLoginPage() {
     const res: LoginResult = await portalLogin(email, password)
     setBusy(false)
     if (res.ok) {
-      window.location.href = "/student"
+      window.location.href = nextUrl || "/student"
     } else {
       setError(res.error)
       setErrorStatus(res.status || "")
