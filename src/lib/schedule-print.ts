@@ -139,8 +139,11 @@ function pageHeaderBlock(mode: "teacher" | "student", opts: SchedulePrintOptions
   }
 }
 
-/** جدول الملخص العام — لكل المجموعات في كل الصفوف (نسخة المدرس) */
-function summaryTableBlock(grades: Grade[]): Block[] {
+/**
+ * جدول الملخص العام — لكل المجموعات في كل الصفوف (نسخة المدرس).
+ * يُقسَّم على دفعات صفوف حتى لا يتجاوز أي كتلة ارتفاع صفحة A4.
+ */
+function summaryTableBlocks(grades: Grade[]): Block[] {
   const rows: string[] = []
   let totalMonthly = 0
   let totalStudents = 0
@@ -166,18 +169,6 @@ function summaryTableBlock(grades: Grade[]): Block[] {
 
   if (rows.length === 0) return []
 
-  const head = `
-    <tr style="background:#4f46e5;color:#ffffff;">
-      <th style="${TH}text-align:right;">الصف</th>
-      <th style="${TH}text-align:right;">المجموعة</th>
-      <th style="${TH}">الأيام</th>
-      <th style="${TH}">الوقت</th>
-      <th style="${TH}">السعر الشهري</th>
-      <th style="${TH}">عدد الطلاب</th>
-      <th style="${TH}">الإجمالي الشهري</th>
-    </tr>
-  `
-
   const totalsRow = `
     <tr style="background:#eef2ff;font-weight:800;">
       <td style="${TD}" colspan="5">الإجمالي العام</td>
@@ -186,21 +177,39 @@ function summaryTableBlock(grades: Grade[]): Block[] {
     </tr>
   `
 
-  return [
-    {
-      html: `
-        <div style="margin-bottom:16px;">
-          <div style="font-size:17px;font-weight:800;color:#111827;margin-bottom:8px;">📋 ملخص جميع المجموعات</div>
-          <table style="${TABLE}">${head}${rows.join("")}${totalsRow}</table>
-        </div>
-      `,
-    },
-  ]
+  // دفعات من 16 صفاً — رأس الجدول يتكرر في كل دفعة، والإجمالي في الأخيرة
+  const CHUNK = 16
+  const chunks: string[][] = []
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    chunks.push(rows.slice(i, i + CHUNK))
+  }
+
+  return chunks.map((rowsChunk, ci) => ({
+    html: `
+      <div style="margin-bottom:16px;">
+        ${ci === 0 ? `<div style="font-size:17px;font-weight:800;color:#111827;margin-bottom:8px;">📋 ملخص جميع المجموعات</div>` : ""}
+        <table style="${TABLE}">${SUMMARY_HEAD}${rowsChunk.join("")}${ci === chunks.length - 1 ? totalsRow : ""}</table>
+      </div>
+    `,
+  }))
 }
 
 const TABLE = `width:100%;border-collapse:collapse;font-size:12.5px;color:#1f2937;`
 const TH = `padding:8px 8px;border:1px solid #c7d2fe;font-size:12.5px;font-weight:800;background:#4f46e5;color:#ffffff;`
 const TD = `padding:7px 8px;border:1px solid #e5e7eb;`
+
+/** رأس جدول الملخص (يتكرر في كل دفعة) */
+const SUMMARY_HEAD = `
+  <tr style="background:#4f46e5;color:#ffffff;">
+    <th style="${TH}text-align:right;">الصف</th>
+    <th style="${TH}text-align:right;">المجموعة</th>
+    <th style="${TH}">الأيام</th>
+    <th style="${TH}">الوقت</th>
+    <th style="${TH}">السعر الشهري</th>
+    <th style="${TH}">عدد الطلاب</th>
+    <th style="${TH}">الإجمالي الشهري</th>
+  </tr>
+`
 
 /** بطاقة مجموعة تفصيلية (نسخة المدرس) — معرّفة على دفعات طلاب */
 function groupDetailBlocks(
@@ -279,7 +288,10 @@ function groupDetailBlocks(
   }))
 }
 
-/** قسم صف كامل — نسخة الطلاب (المواعيد فقط) */
+/**
+ * قسم صف كامل — نسخة الطلاب (المواعيد فقط).
+ * يُقسَّم على دفعات عند كثرة المجموعات حتى لا يتجاوز ارتفاع صفحة A4.
+ */
 function studentGradeBlocks(grade: Grade): Block[] {
   if (grade.groups.length === 0) return []
   const rows = grade.groups
@@ -290,32 +302,37 @@ function studentGradeBlocks(grade: Grade): Block[] {
         <td style="${STD}text-align:center;white-space:nowrap;">${esc(timeRange(g.startTime, g.endTime))}</td>
       </tr>
     `)
-    .join("")
 
-  return [
-    {
-      html: `
-        <div style="border:2px solid #a7f3d0;border-radius:14px;overflow:hidden;margin-bottom:16px;">
-          <div style="background:linear-gradient(90deg,#059669,#10b981);color:#ffffff;padding:9px 14px;font-size:15px;font-weight:800;">
-            📘 ${esc(grade.name)}
-          </div>
-          <table style="${STABLE}">
-            <tr style="background:#ecfdf5;color:#065f46;">
-              <th style="${STH}text-align:right;">المجموعة</th>
-              <th style="${STH}">أيام الحصة</th>
-              <th style="${STH}">الوقت</th>
-            </tr>
-            ${rows}
-          </table>
+  const CHUNK = 16
+  const chunks: string[][] = []
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    chunks.push(rows.slice(i, i + CHUNK))
+  }
+
+  return chunks.map((rowsChunk, ci) => ({
+    html: `
+      <div style="border:2px solid #a7f3d0;border-radius:14px;overflow:hidden;margin-bottom:16px;">
+        <div style="background:linear-gradient(90deg,#059669,#10b981);color:#ffffff;padding:9px 14px;font-size:15px;font-weight:800;">
+          📘 ${esc(grade.name)}${ci > 0 ? ` — تكملة (${ci + 1})` : ""}
         </div>
-      `,
-    },
-  ]
+        <table style="${STABLE}">${GRADE_HEAD}${rowsChunk.join("")}</table>
+      </div>
+    `,
+  }))
 }
 
 const STABLE = `width:100%;border-collapse:collapse;font-size:14px;color:#1f2937;`
 const STH = `padding:9px 10px;border:1px solid #a7f3d0;font-weight:800;`
 const STD = `padding:9px 10px;border:1px solid #e5e7eb;`
+
+/** رأس جدول الصف للطلاب (يتكرر في كل دفعة) */
+const GRADE_HEAD = `
+  <tr style="background:#ecfdf5;color:#065f46;">
+    <th style="${STH}text-align:right;">المجموعة</th>
+    <th style="${STH}">أيام الحصة</th>
+    <th style="${STH}">الوقت</th>
+  </tr>
+`
 
 function studentNoteBlock(): Block {
   return {
@@ -342,7 +359,12 @@ function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePr
   const heights: number[] = []
   for (const b of blocks) {
     measurer.innerHTML = b.html
-    heights.push(measurer.firstElementChild?.getBoundingClientRect().height || 0)
+    // الكتلة قد تحتوي أكثر من عنصر جذر (بطاقة + جدول) — نجمع ارتفاعاتها كلها
+    let total = 0
+    measurer.querySelectorAll(":scope > *").forEach(el => {
+      total += el.getBoundingClientRect().height
+    })
+    heights.push(total)
   }
   measurer.remove()
 
@@ -390,7 +412,7 @@ export function buildSchedulePagesHtml(opts: SchedulePrintOptions): { html: stri
   const blocks: Block[] = []
   if (opts.mode === "teacher") {
     const balances = buildBalanceMap(students)
-    blocks.push(...summaryTableBlock(grades))
+    blocks.push(...summaryTableBlocks(grades))
     for (const grade of grades) {
       for (const group of grade.groups) {
         blocks.push(...groupDetailBlocks(grade, group, students, balances))
@@ -400,7 +422,8 @@ export function buildSchedulePagesHtml(opts: SchedulePrintOptions): { html: stri
     for (const grade of grades) {
       blocks.push(...studentGradeBlocks(grade))
     }
-    blocks.push(studentNoteBlock())
+    // ملاحظة الختام تظهر فقط عند وجود أقسام فعلية — أما الجدول الفارغ فيعرض رسالة "لا توجد مجموعات"
+    if (blocks.length > 0) blocks.push(studentNoteBlock())
   }
 
   const pages = paginate(blocks, opts.mode, opts)

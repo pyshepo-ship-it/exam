@@ -47,6 +47,7 @@ import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear
 import {
   findScheduleConflicts,
   buildConflictMessage,
+  isTimeAfter,
   type ScheduleConflict,
 } from "@/lib/schedule"
 import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
@@ -257,6 +258,12 @@ export default function GradesPage() {
   const saveGroup = () => {
     if (!groupForm.name.trim() || groupForm.days.length === 0 || !groupForm.startTime || !groupForm.endTime) {
       toast.error("يرجى ملء جميع الحقول المطلوبة")
+      return
+    }
+
+    // ---- تحقق: وقت النهاية يجب أن يكون بعد وقت البداية ----
+    if (!isTimeAfter(groupForm.startTime, groupForm.endTime)) {
+      toast.error("وقت النهاية يجب أن يكون بعد وقت البداية")
       return
     }
 
@@ -846,6 +853,16 @@ export default function GradesPage() {
               </div>
             </div>
 
+            {/* تنبيه فوري: وقت النهاية قبل البداية */}
+            {groupForm.startTime && groupForm.endTime && !isTimeAfter(groupForm.startTime, groupForm.endTime) && (
+              <div className="rounded-xl border-2 border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3">
+                <p className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2 text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  وقت النهاية يجب أن يكون بعد وقت البداية — عدّل الوقت قبل الحفظ
+                </p>
+              </div>
+            )}
+
             {/* تنبيه فوري: منع تسجيل مجموعتين في نفس الموعد */}
             {liveConflicts.length > 0 && (
               <motion.div
@@ -899,7 +916,7 @@ export default function GradesPage() {
             </Button>
             <Button 
               onClick={saveGroup}
-              disabled={liveConflicts.length > 0}
+              disabled={liveConflicts.length > 0 || (!!groupForm.startTime && !!groupForm.endTime && !isTimeAfter(groupForm.startTime, groupForm.endTime))}
               title={liveConflicts.length > 0 ? "الموعد محجوز لمجموعة أخرى — غيّر اليوم أو الوقت" : undefined}
               className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >

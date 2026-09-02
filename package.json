@@ -11,7 +11,8 @@
     "test:logic": "node scripts/logic-test.mjs",
     "test:deep": "node scripts/system-deep-audit.mjs",
     "test:schedule": "node scripts/schedule-test.mjs",
-    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/schedule-test.mjs && node scripts/system-deep-audit.mjs"
+    "test:schedule-print": "node scripts/schedule-print-test.mjs",
+    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/schedule-test.mjs && node scripts/schedule-print-test.mjs && node scripts/system-deep-audit.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
@@ -46,6 +47,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
+    "jsdom": "^30.0.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

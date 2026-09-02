@@ -5,7 +5,7 @@
 //  3) نشر الجدول في الصفحة الرئيسية (الإعلانات ولوحة الشرف) وكإعلان
 // ============================================================
 
-import { Grade, Group, Announcement, getGrades, getAnnouncements, saveAnnouncements, getSetting, saveSetting, getStoredAcademicYear } from "./data-storage"
+import { Grade, Group, Announcement, getAnnouncements, saveAnnouncements, getSetting, saveSetting, getStoredAcademicYear } from "./data-storage"
 import { formatTime12 } from "./utils"
 
 // ------------------------------------------------------------
@@ -21,6 +21,27 @@ export interface ScheduleConflict {
   gradeName: string
 }
 
+/**
+ * توحيد صيغة الوقت إلى HH:mm (ساعة برقومين) قبل أي مقارنة نصية،
+ * حمايةً من بيانات قديمة بصيغة "9:00" حيث المقارنة النصية تخفق.
+ */
+export function normalizeTime(t: string): string {
+  if (!t || !t.includes(":")) return t || ""
+  const [hStr, mStr] = t.split(":")
+  const h = parseInt(hStr, 10)
+  const m = parseInt(mStr || "0", 10)
+  if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return t
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+}
+
+/** هل الوقت الثاني بعد الأول فعلاً؟ (للتحقق أن النهاية بعد البداية) */
+export function isTimeAfter(start: string, end: string): boolean {
+  const s = normalizeTime(start)
+  const e = normalizeTime(end)
+  if (!s || !e || !s.includes(":") || !e.includes(":")) return false
+  return e > s
+}
+
 /** هل يتقاطع مجالان زمنيان بصيغة HH:mm (24 ساعة)؟ */
 export function timesOverlap(
   aStart: string,
@@ -29,7 +50,12 @@ export function timesOverlap(
   bEnd: string
 ): boolean {
   if (!aStart || !aEnd || !bStart || !bEnd) return false
-  return aStart < bEnd && bStart < aEnd
+  const as = normalizeTime(aStart)
+  const ae = normalizeTime(aEnd)
+  const bs = normalizeTime(bStart)
+  const be = normalizeTime(bEnd)
+  if (!as || !ae || !bs || !be) return false
+  return as < be && bs < ae
 }
 
 /**
@@ -50,9 +76,8 @@ export function findScheduleConflicts(
   const conflicts: ScheduleConflict[] = []
   for (const grade of grades) {
     for (const group of grade.groups) {
-      // استبعاد المجموعة نفسها عند التعديل
+      // استبعاد المجموعة نفسها عند التعديل (حتى لا تتعارض مع ذاتها)
       if (exclude?.groupId && group.id === exclude.groupId) continue
-      if (exclude?.gradeId && grade.id === exclude.gradeId && exclude?.groupId && group.id === exclude.groupId) continue
 
       const sharedDays = candidate.days.filter(d => group.days?.includes(d))
       if (sharedDays.length === 0) continue
@@ -205,7 +230,3 @@ export function removeScheduleAnnouncement(): Announcement[] {
   return updated
 }
 
-/** جلب الصفوف من التخزين (اختصار) */
-export function loadGrades(): Grade[] {
-  return getGrades()
-}
