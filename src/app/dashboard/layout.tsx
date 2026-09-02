@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { motion, AnimatePresence } from "framer-motion"
 import {
+  Bell,
   BookOpen,
   Calendar,
   Users,
@@ -24,7 +25,6 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { pullAllData } from "@/lib/supabase/sync"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
-import { TeacherSignature } from "@/components/teacher-signature"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -33,6 +33,7 @@ const menuItems = [
   { href: "/dashboard", label: "الرئيسية", icon: Home, color: "from-blue-500 to-indigo-600" },
   { href: "/dashboard/grades", label: "الصفوف والمواعيد", icon: Calendar, color: "from-purple-500 to-pink-600" },
   { href: "/dashboard/students", label: "الطلاب", icon: Users, color: "from-green-500 to-emerald-600" },
+  { href: "/dashboard/requests", label: "طلبات الطلاب", icon: Bell, color: "from-orange-500 to-red-600" },
   { href: "/dashboard/payments", label: "التحصيل الشهري", icon: DollarSign, color: "from-yellow-500 to-orange-600" },
   { href: "/dashboard/exams", label: "الاختبارات", icon: FileText, color: "from-red-500 to-rose-600" },
   { href: "/dashboard/attendance", label: "الحضور والغياب", icon: ClipboardCheck, color: "from-teal-500 to-cyan-600" },
@@ -51,6 +52,36 @@ export default function DashboardLayout({
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const [userEmail, setUserEmail] = useState<string>('')
+  // عداد الطلبات الجديدة (تسجيل + نقل + استفسارات بانتظار الرد) — شارة إشعار حية
+  const [requestsBadge, setRequestsBadge] = useState(0)
+
+  useEffect(() => {
+    const computeBadge = () => {
+      try {
+        const regs = (JSON.parse(localStorage.getItem("registrationRequests") || "[]") as { status?: string }[])
+        const transfers = (JSON.parse(localStorage.getItem("groupTransferRequests") || "[]") as { status?: string }[])
+        const inquiries = (JSON.parse(localStorage.getItem("inquiries") || "[]") as { status?: string; messages?: { from?: string }[] }[])
+        const pending = regs.filter(r => r.status === "pending").length + transfers.filter(t => t.status === "pending").length
+        const awaiting = inquiries.filter(t => {
+          if (t.status !== "open") return false
+          const msgs = t.messages || []
+          const last = msgs[msgs.length - 1]
+          return last && last.from === "student"
+        }).length
+        setRequestsBadge(pending + awaiting)
+      } catch {
+        setRequestsBadge(0)
+      }
+    }
+    computeBadge()
+    // تحديث دوري خفيف + عند رجوع التركيز للتبويب
+    const timer = window.setInterval(computeBadge, 8000)
+    window.addEventListener("focus", computeBadge)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", computeBadge)
+    }
+  }, [pathname])
 
   // يُنشأ عميل Supabase داخل المتصفح فقط (داخل التأثيرات/المعالجات)،
   // لتفادي تعطُّل البناء (prerender) عند عدم وجود متغيرات البيئة.
@@ -174,6 +205,11 @@ export default function DashboardLayout({
               >
                 <Icon className={`w-5 h-5 ${isActive ? "" : "group-hover:scale-110"} transition-transform`} />
                 <span className="font-medium">{item.label}</span>
+                {item.href === "/dashboard/requests" && requestsBadge > 0 && (
+                  <span className="mr-auto bg-red-500 text-white text-[11px] font-extrabold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center shadow">
+                    {requestsBadge}
+                  </span>
+                )}
               </Link>
             )
           })}
@@ -252,6 +288,11 @@ export default function DashboardLayout({
                     >
                       <Icon className="w-5 h-5" />
                       <span className="font-medium">{item.label}</span>
+                      {item.href === "/dashboard/requests" && requestsBadge > 0 && (
+                        <span className="mr-auto bg-red-500 text-white text-[11px] font-extrabold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center shadow">
+                          {requestsBadge}
+                        </span>
+                      )}
                     </Link>
                   )
                 })}
@@ -304,7 +345,6 @@ export default function DashboardLayout({
         {/* Page Content */}
         <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           {children}
-          <TeacherSignature />
         </div>
       </main>
     </div>

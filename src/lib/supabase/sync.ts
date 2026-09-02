@@ -60,6 +60,12 @@ const DB_TABLES = [
   "shared_files",
   "important_links",
   "year_archives",
+  "manual_grades",
+  "registration_requests",
+  "group_transfer_requests",
+  "student_history",
+  "student_accounts",
+  "inquiries",
 ] as const;
 
 function nil<T>(v: T | null | undefined): T | undefined {
@@ -112,24 +118,28 @@ export const toStudentRow = (s: any) => ({
   id: s.id,
   name: s.name || "طالب بدون اسم",
   phone: s.phone || null,
+  email: s.email || null,
   grade_id: s.gradeId || null,
   group_id: s.groupId || null,
   status: s.status,
   notes: s.notes || null,
   created_at: s.createdAt || new Date().toISOString(),
   updated_at: s.updatedAt || s.createdAt || new Date().toISOString(),
+  inquiry_blocked: s.inquiryBlocked === true,
 });
 
 export const fromStudentRow = (row: any) => ({
   id: row.id,
   name: row.name,
   phone: nil(row.phone),
+  email: nil(row.email),
   gradeId: row.grade_id,
   groupId: row.group_id,
   status: row.status,
   notes: nil(row.notes),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  inquiryBlocked: row.inquiry_blocked === true || undefined,
 });
 
 const toDueRow = (d: any) => ({
@@ -200,6 +210,13 @@ export const toExamRow = (e: any) => ({
     allowOnline: !!e.allowOnline,
     autoHonorBoard: !!e.autoHonorBoard,
     honorMinPercent: e.honorMinPercent ?? 100,
+    availabilityMode: e.availabilityMode || "always",
+    availableFrom: e.availableFrom || null,
+    availableUntil: e.availableUntil || null,
+    targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
+    answerVisibility: e.answerVisibility || "never",
+    maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
+    reviewOpen: !!e.reviewOpen,
   },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
@@ -227,6 +244,13 @@ export const fromExamRow = (row: any) => {
     allowOnline: wrapped ? !!q.allowOnline : false,
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
     honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
+    availabilityMode: wrapped ? (q.availabilityMode || "always") : "always",
+    availableFrom: wrapped && q.availableFrom ? q.availableFrom : undefined,
+    availableUntil: wrapped && q.availableUntil ? q.availableUntil : undefined,
+    targetGroupIds: wrapped && Array.isArray(q.targetGroupIds) ? q.targetGroupIds : [],
+    answerVisibility: wrapped ? (q.answerVisibility || "never") : "never",
+    reviewOpen: wrapped ? !!q.reviewOpen : false,
+    maxAttempts: wrapped && q.maxAttempts && q.maxAttempts > 0 ? q.maxAttempts : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -283,6 +307,8 @@ const toAnnouncementRow = (a: any) => ({
   title: a.title,
   body: a.body,
   pinned: !!a.pinned,
+  // الصفوف المستهدفة — null = إعلان عام للجميع
+  target_grade_ids: Array.isArray(a.targetGradeIds) && a.targetGradeIds.length > 0 ? a.targetGradeIds : null,
   created_at: a.createdAt,
 });
 
@@ -291,6 +317,7 @@ const fromAnnouncementRow = (row: any) => ({
   title: row.title,
   body: row.body,
   pinned: row.pinned,
+  targetGradeIds: Array.isArray(row.target_grade_ids) ? row.target_grade_ids : [],
   createdAt: row.created_at,
 });
 
@@ -350,6 +377,131 @@ const fromLinkRow = (row: any) => ({
   addedAt: row.added_at,
 });
 
+// ---------- خرائط بوابة الطلاب ----------
+
+export const toManualGradeRow = (m: any) => ({
+  id: m.id,
+  student_id: m.studentId,
+  grade_id: m.gradeId || null,
+  group_id: m.groupId || null,
+  title: m.title || "تقييم",
+  score: m.score ?? 0,
+  max_score: m.maxScore ?? 0,
+  month: m.month ?? new Date().getMonth() + 1,
+  year: m.year ?? new Date().getFullYear(),
+  notes: m.notes || null,
+  created_at: m.createdAt || new Date().toISOString(),
+});
+
+export const fromManualGradeRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  gradeId: row.grade_id || "",
+  groupId: row.group_id || "",
+  title: row.title,
+  score: Number(row.score),
+  maxScore: Number(row.max_score),
+  month: row.month,
+  year: row.year,
+  notes: nil(row.notes),
+  createdAt: row.created_at,
+});
+
+export const toRegistrationRequestRow = (r: any) => ({
+  id: r.id,
+  name: r.name,
+  phone: r.phone,
+  guardian_phone: r.guardianPhone || null,
+  email: r.email,
+  password_hash: r.passwordHash || "",
+  grade_id: r.gradeId,
+  group_id: r.groupId,
+  status: r.status || "pending",
+  review_note: r.reviewNote || null,
+  linked_student_id: r.linkedStudentId || null,
+  created_at: r.createdAt || new Date().toISOString(),
+  reviewed_at: r.reviewedAt || null,
+});
+
+export const fromRegistrationRequestRow = (row: any) => ({
+  id: row.id,
+  name: row.name,
+  phone: row.phone || "",
+  email: row.email,
+  passwordHash: row.password_hash || "",
+  gradeId: row.grade_id,
+  groupId: row.group_id,
+  status: row.status || "pending",
+  reviewNote: nil(row.review_note),
+  linkedStudentId: nil(row.linked_student_id),
+  createdAt: row.created_at,
+  reviewedAt: nil(row.reviewed_at),
+});
+
+export const toGroupTransferRequestRow = (t: any) => ({
+  id: t.id,
+  student_id: t.studentId,
+  student_name: t.studentName || "",
+  from_group_id: t.fromGroupId,
+  to_grade_id: t.toGradeId,
+  to_group_id: t.toGroupId,
+  status: t.status || "pending",
+  review_note: t.reviewNote || null,
+  created_at: t.createdAt || new Date().toISOString(),
+  reviewed_at: t.reviewedAt || null,
+});
+
+export const fromGroupTransferRequestRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  studentName: row.student_name || "",
+  fromGroupId: row.from_group_id,
+  toGradeId: row.to_grade_id,
+  toGroupId: row.to_group_id,
+  status: row.status || "pending",
+  reviewNote: nil(row.review_note),
+  createdAt: row.created_at,
+  reviewedAt: nil(row.reviewed_at),
+});
+
+export const toStudentHistoryRow = (h: any) => ({
+  id: h.id,
+  student_id: h.studentId,
+  type: h.type,
+  title: h.title,
+  detail: h.detail || null,
+  date: h.date,
+  created_at: h.createdAt || new Date().toISOString(),
+});
+
+export const fromStudentHistoryRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  type: row.type,
+  title: row.title,
+  detail: nil(row.detail),
+  date: row.date,
+  createdAt: row.created_at,
+});
+
+export const toStudentAccountRow = (a: any) => ({
+  id: a.id || a.email,
+  email: a.email,
+  student_id: a.studentId,
+  active: a.active !== false,
+  created_at: a.createdAt || new Date().toISOString(),
+  password_hash: a.passwordHash || null,
+});
+
+export const fromStudentAccountRow = (row: any) => ({
+  id: row.id || row.email,
+  email: row.email,
+  studentId: row.student_id,
+  active: row.active !== false,
+  createdAt: row.created_at,
+  passwordHash: row.password_hash || undefined,
+});
+
 export const toArchiveRow = (a: YearArchiveShape) => ({
   id: a.academicYear,
   academic_year: a.academicYear,
@@ -384,13 +536,26 @@ function setLocal(key: string, rows: unknown[]) {
 }
 
 function warnSyncError(err: unknown) {
+  const e = err as any
   console.warn("Supabase sync error:", {
-    table: (err as any)?.table,
-    code: (err as any)?.code,
-    message: (err as any)?.message,
-    details: (err as any)?.details,
-    hint: (err as any)?.hint,
-  });
+    table: e?.table,
+    code: e?.code,
+    message: e?.message,
+    details: e?.details,
+    hint: e?.hint,
+  })
+  // تفسير عربي مباشر لأكثر الأخطاء شيوعاً — يظهر في Console تحت التفاصيل
+  const msg = String(e?.message || "")
+  const code = String(e?.code || "")
+  if (code === "42501" || msg.includes("row-level security")) {
+    console.warn("⚠️ سبب الفشل المحتمل: جلسة المدرس منتهية أو سياسات ناقصة — سجّل الدخول من جديد وتأكد من تنفيذ 010_repair_align.sql")
+  } else if (code === "PGRST204" || msg.includes("Could not find the")) {
+    console.warn("⚠️ سبب الفشل المحتمل: عمود ناقص في جدول قاعدة البيانات — نفّذ supabase/migrations/010_repair_align.sql ثم أعد المحاولة")
+  } else if (code === "42P01") {
+    console.warn("⚠️ سبب الفشل المحتمل: جدول غير موجود في قاعدة البيانات — نفّذ supabase/migrations/010_repair_align.sql")
+  } else if (code === "23503") {
+    console.warn("⚠️ سبب الفشل المحتمل: السجل مرتبط بصف ناقص (مثلاً مجموعة محذوفة) — ستُنظف تلقائياً في المزامنة القادمة")
+  }
   const table = (err as any)?.table ? ` [جدول: ${(err as any).table}]` : "";
   const message = `تعذر الحفظ في قاعدة البيانات${table}: ${explainSupabaseError(err)}`;
   if (lastWarned === message) return;
@@ -453,6 +618,13 @@ async function pushAllOrdered(): Promise<void> {
   await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
   await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
   await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
+  // جداول بوابة الطلاب (بعد الطلاب لأن student_accounts مرتبط بهم)
+  await pushManualGrades(localRows(STORAGE_KEYS.MANUAL_GRADES) as any[]);
+  await pushRegistrationRequests(localRows(STORAGE_KEYS.REGISTRATION_REQUESTS) as any[]);
+  await pushGroupTransferRequests(localRows(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS) as any[]);
+  await pushStudentHistory(localRows(STORAGE_KEYS.STUDENT_HISTORY) as any[]);
+  await pushStudentAccounts(localRows(STORAGE_KEYS.STUDENT_ACCOUNTS) as any[]);
+  await pushInquiries(localRows(STORAGE_KEYS.INQUIRIES) as any[]);
 }
 
 /** جدولة مزامنة فورية (متسلسلة — مع إعادة محاولة ذكية عند خطأ التبعيات) */
@@ -578,6 +750,110 @@ export function pushImportantLinks(rows: any[]) {
 export function pushYearArchives(rows: YearArchiveShape[]) {
   return pushRows("year_archives", rows.map(toArchiveRow));
 }
+
+export function pushManualGrades(rows: any[]) {
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  return pushRows("manual_grades", rows.filter((m) => studentIds.has(m.studentId)).map(toManualGradeRow));
+}
+export function pushRegistrationRequests(rows: any[]) {
+  return pushRows("registration_requests", rows.map(toRegistrationRequestRow));
+}
+export function pushGroupTransferRequests(rows: any[]) {
+  return pushRows("group_transfer_requests", rows.map(toGroupTransferRequestRow));
+}
+export function pushStudentHistory(rows: any[]) {
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  return pushRows("student_history", rows.filter((h) => studentIds.has(h.studentId)).map(toStudentHistoryRow));
+}
+export function pushStudentAccounts(rows: any[]) {
+  return pushRows("student_accounts", rows.map(toStudentAccountRow));
+}
+
+// ============================================================
+// الاستفسارات — سؤال واحد من الطالب ورد المعلم عليه
+// ============================================================
+export const toInquiryRow = (t: any) => ({
+  id: t.id,
+  student_id: t.studentId,
+  student_name: t.studentName || "",
+  grade_id: t.gradeId || null,
+  group_id: t.groupId || null,
+  messages: Array.isArray(t.messages) ? t.messages : [],
+  status: t.status || "open",
+  created_at: t.createdAt || new Date().toISOString(),
+  updated_at: t.updatedAt || t.createdAt || new Date().toISOString(),
+});
+
+export const fromInquiryRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  studentName: row.student_name,
+  gradeId: nil(row.grade_id),
+  groupId: nil(row.group_id),
+  messages: Array.isArray(row.messages) ? row.messages : [],
+  status: row.status || "open",
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+export function pushInquiries(rows: any[]) {
+  return pushRows("inquiries", rows.map(toInquiryRow));
+}
+
+/** جلب أحدث طلب تسجيل ببريد معين — لمصالحة الحالة على جهاز الطالب بعد الموافقة من جهاز آخر */
+export async function fetchRegistrationRequestByEmail(email: string): Promise<any | null> {
+  const sb = getSupabase()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from("registration_requests")
+      .select("*")
+      .eq("email", (email || "").trim().toLowerCase())
+    if (error || !data || data.length === 0) return null
+    const rows = (data as any[])
+      .map(fromRegistrationRequestRow)
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+    return rows[rows.length - 1]
+  } catch (e) {
+    console.warn("fetchRegistrationRequestByEmail:", e)
+    return null
+  }
+}
+
+/** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
+export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
+  const sb = getSupabase()
+  if (!sb) return localRows<any>(STORAGE_KEYS.INQUIRIES)
+  try {
+    const { data, error } = await sb.from("inquiries").select("*").eq("student_id", studentId)
+    if (error) {
+      console.warn("fetchStudentInquiries:", error)
+      return localRows<any>(STORAGE_KEYS.INQUIRIES)
+    }
+    return (data as any[] || []).map(fromInquiryRow)
+  } catch (e) {
+    console.warn("fetchStudentInquiries:", e)
+    return localRows<any>(STORAGE_KEYS.INQUIRIES)
+  }
+}
+
+/** الطالب يرسل استفساراً جديداً — حفظ محلي أولاً ثم إدراج في Supabase */
+export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; error?: string }> {
+  const local = localRows<any>(STORAGE_KEYS.INQUIRIES)
+  try {
+    localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify([...local, thread]))
+  } catch { /* تجاهل */ }
+  const sb = getSupabase()
+  if (!sb) return { ok: true }
+  const { error } = await sb.from("inquiries").insert(toInquiryRow(thread))
+  if (error) {
+    console.warn("submitInquiryThread:", error)
+    // تراجع — الطالب يعيد إرسال استفساره دون اعتراض «لديك استفسار مفتوح»
+    try { localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify(local)) } catch { /* تجاهل */ }
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
 const toAttemptRow = (a: any) => ({
   id: a.id,
   exam_id: a.examId,
@@ -591,6 +867,7 @@ const toAttemptRow = (a: any) => ({
   started_at: a.startedAt || new Date().toISOString(),
   submitted_at: a.submittedAt || new Date().toISOString(),
   duration_seconds: a.durationSeconds ?? 0,
+  manual_override: a.manualOverride ? { score: a.manualOverride.score, reason: a.manualOverride.reason || null, at: a.manualOverride.at } : null,
 });
 
 const fromAttemptRow = (row: any) => ({
@@ -606,6 +883,9 @@ const fromAttemptRow = (row: any) => ({
   startedAt: row.started_at,
   submittedAt: row.submitted_at,
   durationSeconds: Number(row.duration_seconds) || 0,
+  manualOverride: row.manual_override && typeof row.manual_override === "object"
+    ? { score: Number(row.manual_override.score) || 0, reason: row.manual_override.reason || undefined, at: row.manual_override.at || "" }
+    : undefined,
 });
 
 export function pushExamAttempts(rows: any[]) {
@@ -656,6 +936,12 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       linksRes,
       archivesRes,
       settingsRes,
+      manualGradesRes,
+      regRequestsRes,
+      transferReqRes,
+      studentHistoryRes,
+      studentAccountsRes,
+      inquiriesRes,
     ] = await Promise.all([
       sb.from("grades").select("*"),
       sb.from("groups").select("*"),
@@ -671,6 +957,12 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       sb.from("important_links").select("*"),
       sb.from("year_archives").select("*"),
       sb.from("app_settings").select("key,value"),
+      sb.from("manual_grades").select("*"),
+      sb.from("registration_requests").select("*"),
+      sb.from("group_transfer_requests").select("*"),
+      sb.from("student_history").select("*"),
+      sb.from("student_accounts").select("*"),
+      sb.from("inquiries").select("*"),
     ]);
 
     const all = [
@@ -689,6 +981,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       archivesRes,
       settingsRes,
     ];
+    // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — نتعامل معها بمرونة
+    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes, inquiriesRes];
     for (const res of all) {
       if (res.error) throw res.error;
     }
@@ -738,6 +1032,33 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
         setLocal(t.key, t.rows.map(t.fromRow));
       }
       remoteIds[t.db] = new Set(t.rows.map((r) => r.id as string));
+    }
+
+    // جداول بوابة الطلاب (مع مرونة إن لم يكن الجدول موجوداً بعد)
+    const portalTables: { key: string; res: any; fromRow: (r: any) => any }[] = [
+      { key: STORAGE_KEYS.MANUAL_GRADES, res: manualGradesRes, fromRow: fromManualGradeRow },
+      { key: STORAGE_KEYS.REGISTRATION_REQUESTS, res: regRequestsRes, fromRow: fromRegistrationRequestRow },
+      { key: STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, res: transferReqRes, fromRow: fromGroupTransferRequestRow },
+      { key: STORAGE_KEYS.STUDENT_HISTORY, res: studentHistoryRes, fromRow: fromStudentHistoryRow },
+      { key: STORAGE_KEYS.STUDENT_ACCOUNTS, res: studentAccountsRes, fromRow: fromStudentAccountRow },
+      { key: STORAGE_KEYS.INQUIRIES, res: inquiriesRes, fromRow: fromInquiryRow },
+    ];
+    for (const t of portalTables) {
+      if (t.res.error) continue; // الجدول غير موجود بعد — سيُنشأ بتشغيل ترحيل 008
+      const rows = (t.res.data as any[]) || [];
+      if (rows.length === 0) continue;
+      setLocal(t.key, rows.map(t.fromRow));
+    }
+    for (const [t, db] of [
+      [manualGradesRes, "manual_grades"],
+      [regRequestsRes, "registration_requests"],
+      [transferReqRes, "group_transfer_requests"],
+      [studentHistoryRes, "student_history"],
+      [studentAccountsRes, "student_accounts"],
+    ] as [any, string][]) {
+      if (!t.error && Array.isArray(t.data)) {
+        remoteIds[db] = new Set((t.data as any[]).map((r) => r.id as string));
+      }
     }
 
     // الأرشيف
@@ -800,7 +1121,8 @@ export interface PublicData {
   files: ReturnType<typeof fromSharedFileRow>[];
   links: ReturnType<typeof fromLinkRow>[];
   grades: { id: string; name: string }[];
-  groups: { id: string; gradeId: string; name: string }[];
+  /** حقول الجدول الآمنة فقط: بدون أسعار أو أعداد طلاب */
+  groups: { id: string; gradeId: string; name: string; days: string[]; startTime: string; endTime: string }[];
   settings: Record<string, string>;
   exams: ReturnType<typeof fromExamRow>[];
 }
@@ -824,6 +1146,29 @@ export async function submitPublicHonoree(h: any): Promise<void> {
   }
 }
 
+/** جلب صف طالب واحد بالمعرف — مسار دخول الطالب من جهازه (لا يحمل قائمة الطلاب) */
+export async function fetchStudentById(studentId: string): Promise<any | null> {
+  const sb = getSupabase()
+  if (!sb || !studentId) return null
+  const { data, error } = await sb.from("students").select("*").eq("id", studentId).maybeSingle()
+  if (error || !data) return null
+  return fromStudentRow(data)
+}
+
+/** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
+export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
+  const sb = getSupabase();
+  if (!sb) return null;
+  const { data, error } = await sb
+    .from("exam_attempt_counts")
+    .select("attempts")
+    .eq("exam_id", examId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error) return null;
+  return (data as any)?.attempts ?? 0;
+}
+
 export async function fetchPublicData(): Promise<PublicData | null> {
   const sb = getSupabase();
   if (!sb) return null;
@@ -834,7 +1179,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     sb.from("shared_files").select("*"),
     sb.from("important_links").select("*"),
     sb.from("grades").select("id,name"),
-    sb.from("groups").select("id,grade_id,name"),
+    // حقول الجدول الآمنة فقط (أيام + أوقات) — لا أسعار ولا أعداد طلاب
+    sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
     sb.from("app_settings").select("key,value"),
     sb.from("exams").select("*"),
   ]);
@@ -855,10 +1201,176 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     files: (files.data as any[]).map(fromSharedFileRow),
     links: (links.data as any[]).map(fromLinkRow),
     grades: (grades.data as any[]).map((g) => ({ id: g.id, name: g.name })),
-    groups: (groups.data as any[]).map((g) => ({ id: g.id, gradeId: g.grade_id, name: g.name })),
+    groups: (groups.data as any[]).map((g) => ({
+      id: g.id,
+      gradeId: g.grade_id,
+      name: g.name,
+      days: Array.isArray(g.days) ? g.days : [],
+      startTime: g.start_time || "",
+      endTime: g.end_time || "",
+    })),
     settings: settingsMap,
     exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
   };
+}
+
+// ============================================================
+// بوابة الطلاب — إدخال عام (بدون تسجيل دخول) وقراءة بيانات الطالب
+// ============================================================
+
+/** إرسال طلب تسجيل جديد من بوابة الطالب (يعمل مع وبدون Supabase) */
+export async function submitRegistrationRequest(request: any): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) {
+    // وضع محلي خالص (بدون Supabase) — للتطوير فقط؛ الموقع المنشور لا يمر من هنا
+    const local = localRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS)
+    localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify([...local, request]))
+    return { ok: true }
+  }
+  // الموقع المنشور: الطلب يذهب إلى Supabase مباشرة — لا تخزين محلي للبيانات على جهاز الطالب
+  const { error } = await sb.from("registration_requests").insert(toRegistrationRequestRow(request))
+  if (error) {
+    console.warn("submitRegistrationRequest:", error)
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
+
+/** إرسال طلب انضمام لمجموعة أخرى من بوابة الطالب */
+export async function submitGroupTransferRequest(request: any): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) {
+    // وضع التطوير المحلي فقط (بلا Supabase)
+    const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
+    localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify([...local, request]))
+    return { ok: true }
+  }
+  // سحابي خالص: الطلب يذهب لقاعدة البيانات مباشرة — لا نسخة على جهاز الطالب
+  const { error } = await sb.from("group_transfer_requests").insert(toGroupTransferRequestRow(request))
+  if (error) {
+    console.warn("submitGroupTransferRequest:", error)
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
+
+export interface StudentPortalData {
+  student: any
+  gradeName: string
+  groupName: string
+  groupStartTime: string
+  groupEndTime: string
+  groupDays: string[]
+  manualGrades: any[]
+  examAttempts: any[]
+  dues: any[]
+  payments: any[]
+  attendance: any[]
+  honorees: any[]
+  /** كل متفوقي صفه — للوحة الشرف داخل البوابة */
+  gradeHonorees: any[]
+  history: any[]
+  transferRequests: any[]
+  /** إعلانات صفه فقط */
+  announcements: any[]
+  /** اختبارات صفه/مجموعته فقط */
+  exams: any[]
+  /** مجموعات صفه (لطلب النقل) */
+  gradeGroups: { id: string; name: string; days: string[]; startTime: string; endTime: string }[]
+}
+
+/**
+ * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة عامة — بياناته فقط تُعرض).
+ * تعتمد على سياسات القراءة العامة الموجودة في المخطط.
+ */
+export async function fetchStudentPortalData(studentId: string): Promise<StudentPortalData | null> {
+  const sb = getSupabase()
+  if (!sb) return null
+
+  try {
+    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
+      await Promise.all([
+        sb.from("students").select("*"),
+        sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
+        sb.from("grades").select("id,name"),
+        sb.from("manual_grades").select("*"),
+        sb.from("exam_attempts").select("*"),
+        sb.from("dues").select("*"),
+        sb.from("payments").select("*"),
+        sb.from("attendance").select("*"),
+        sb.from("honorees").select("*"),
+        sb.from("student_history").select("*"),
+        sb.from("group_transfer_requests").select("*"),
+        sb.from("announcements").select("*"),
+        sb.from("exams").select("*"),
+      ])
+
+    if (studentsRes.error) return null
+    const student = (studentsRes.data as any[]).find((s) => s.id === studentId)
+    if (!student) return null
+
+    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.group_id)
+    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.grade_id)
+
+    const attempts = attemptsRes.error ? [] : (attemptsRes.data as any[] || [])
+    const manual = manualRes.error ? [] : (manualRes.data as any[] || [])
+    const dues = duesRes.error ? [] : (duesRes.data as any[] || [])
+    const payments = paymentsRes.error ? [] : (paymentsRes.data as any[] || [])
+    const att = attRes.error ? [] : (attRes.data as any[] || [])
+    const hon = honRes.error ? [] : (honRes.data as any[] || [])
+    const hist = histRes.error ? [] : (histRes.data as any[] || [])
+    const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
+    const anns = annRes.error ? [] : (annRes.data as any[] || [])
+    const examRows = examsRes.error ? [] : (examsRes.data as any[] || [])
+
+    // مجموعات صفه (لطلب النقل + جدول مواعيده)
+    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.grade_id)
+    const gradeGroupIds = new Set(gradeGroupsAll.map((g) => g.id))
+
+    return {
+      student: fromStudentRow(student),
+      gradeName: grade?.name || "",
+      groupName: group?.name || "",
+      groupStartTime: group?.start_time || "",
+      groupEndTime: group?.end_time || "",
+      groupDays: Array.isArray(group?.days) ? group.days : [],
+      manualGrades: manual.filter((m) => m.student_id === studentId).map(fromManualGradeRow),
+      examAttempts: attempts.filter((a) => a.student_id === studentId).map(fromAttemptRow),
+      dues: dues.filter((d) => d.student_id === studentId).map(fromDueRow),
+      payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
+      attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),
+      honorees: hon.filter((h) => h.student_id === studentId).map(fromHonoreeRow),
+      // لوحة شرف صفه: متفوقو مجموعات صفه فقط
+      gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
+      history: hist.filter((h) => h.student_id === studentId).map(fromStudentHistoryRow),
+      transferRequests: transfers.filter((t) => t.student_id === studentId).map(fromGroupTransferRequestRow),
+      // إعلانات صفه فقط (المستهدف فارغ = عام)
+      announcements: anns
+        .map(fromAnnouncementRow)
+        .filter((a: any) => {
+          const targets = a.targetGradeIds || []
+          return targets.length === 0 || targets.includes(student.grade_id)
+        }),
+      // اختبارات صفه/مجموعته فقط
+      exams: examRows
+        .map(fromExamRow)
+        .filter((e: any) => !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
+        .filter((e: any) => {
+          const targets = e.targetGroupIds || []
+          return targets.length === 0 || targets.includes(student.group_id)
+        }),
+      gradeGroups: gradeGroupsAll.map((g) => ({
+        id: g.id,
+        name: g.name,
+        days: Array.isArray(g.days) ? g.days : [],
+        startTime: g.start_time || "",
+        endTime: g.end_time || "",
+      })),
+    }
+  } catch (e) {
+    console.warn("fetchStudentPortalData:", e)
+    return null
+  }
 }
 
 // ============================================================
@@ -1075,10 +1587,17 @@ export function explainSupabaseError(err: any): string {
       "الحل: شغّل ملف supabase/migrations/005_fix_id_types.sql في Supabase ← SQL Editor."
     )
   }
+  if (/new row violates row-level security/i.test(raw)) {
+    return (
+      "سياسة الحماية (RLS) لا تسمح بهذا الإدراج — سياسة إدراج الزوار ناقصة على هذا الجدول. " +
+      "الحل: شغّل supabase/migrations/012_anon_submit_fix.sql ثم أعد المحاولة."
+    )
+  }
   if (/permission denied/i.test(raw) || code === "42501") {
     return (
-      "صلاحيات قاعدة البيانات ناقصة (permission denied). " +
-      "الحل: افتح Supabase ← SQL Editor وشغّل ملف supabase/migrations/004_fix_permissions.sql ثم أعد الفحص."
+      "صلاحيات الجداول ناقصة للزوار/المدرس. " +
+      "الحل: شغّل supabase/migrations/012_anon_submit_fix.sql (يشمل ويحل محل 004 القديم) ثم أعد المحاولة. " +
+      "وإن استمر الخطأ: سجّل الخروج ثم الدخول من جديد."
     )
   }
   if (/does not exist/i.test(raw) || code === "42P01") {
@@ -1087,9 +1606,9 @@ export function explainSupabaseError(err: any): string {
       "الحل: شغّل ملف supabase/schema.sql في Supabase ← SQL Editor."
     )
   }
-  if (/row-level security|violates row-level/i.test(raw) || code === "42501") {
+  if (/row-level security|violates row-level/i.test(raw)) {
     return (
-      "سياسة الحماية (RLS) تمنع الكتابة. تأكد من تسجيل الدخول، ثم شغّل supabase/schema.sql مجدداً."
+      "سياسة الحماية (RLS) تمنع الكتابة. تأكد من تسجيل الدخول، ثم شغّل supabase/migrations/012_anon_submit_fix.sql."
     )
   }
   if (/JWT|not authenticated|invalid token|session/i.test(raw)) {

@@ -1,6 +1,8 @@
 /**
  * الإعدادات الافتراضية لتوقيع المعلمة وخاتمة الصفحات والاختبارات
  */
+import { queuePush, pushSetting } from "./supabase/sync"
+
 export const DEFAULT_TEACHER_SIGNATURE_LINE = "مع تمنياتي لكم بالتوفيق والنجاح"
 export const DEFAULT_TEACHER_NAME = "أ/ ضحى العربي"
 
@@ -15,10 +17,11 @@ export const getTeacherSignatureLine = (): string => {
   return localStorage.getItem("teacherSignatureLine") || DEFAULT_TEACHER_SIGNATURE_LINE
 }
 
-/** حفظ عبارة التمني المخصصة في الإعدادات */
+/** حفظ عبارة التمني المخصصة في الإعدادات (وتُزامن مع Supabase لتظهر للطلاب) */
 export const setTeacherSignatureLine = (line: string): void => {
   if (typeof window === "undefined") return
   localStorage.setItem("teacherSignatureLine", line)
+  queuePush(() => pushSetting("teacherSignatureLine", line))
 }
 
 /** قراءة اسم المعلمة / اللقب المخصص من الإعدادات */
@@ -27,8 +30,9 @@ export const getTeacherName = (): string => {
   return localStorage.getItem("teacherName") || DEFAULT_TEACHER_NAME
 }
 
-/** حفظ اسم المعلمة / اللقب المخصص في الإعدادات */
+/** حفظ اسم المعلمة / اللقب المخصص في الإعدادات (وتُزامن مع Supabase لتظهر للطلاب) */
 export const setTeacherName = (name: string): void => {
   if (typeof window === "undefined") return
   localStorage.setItem("teacherName", name)
+  queuePush(() => pushSetting("teacherName", name))
 }

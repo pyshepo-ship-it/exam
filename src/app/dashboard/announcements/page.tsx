@@ -18,6 +18,7 @@ import {
   Home,
   UserPlus,
   X,
+  CalendarClock,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -25,6 +26,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
+import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
 import {
   Dialog,
   DialogContent,
@@ -92,7 +94,7 @@ export default function AnnouncementsPage() {
   // ---- Dialogs ----
   const [announcementDialogOpen, setAnnouncementDialogOpen] = useState(false)
   const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null)
-  const [announcementForm, setAnnouncementForm] = useState({ title: "", body: "" })
+  const [announcementForm, setAnnouncementForm] = useState({ title: "", body: "", targetGradeIds: [] as string[] })
 
   const [honorDialogOpen, setHonorDialogOpen] = useState(false)
   const [honorForm, setHonorForm] = useState({
@@ -103,6 +105,7 @@ export default function AnnouncementsPage() {
     reason: "متميز في امتحانات هذا الشهر",
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
+    days: 30,
   })
 
   const [fileDialogOpen, setFileDialogOpen] = useState(false)
@@ -117,6 +120,14 @@ export default function AnnouncementsPage() {
 
   const [linkDialogOpen, setLinkDialogOpen] = useState(false)
   const [linkForm, setLinkForm] = useState({ title: "", url: "" })
+
+  // نشر جدول المجموعات للطلاب (الصفحة الرئيسية + إعلان)
+  const [schedulePublishOpen, setSchedulePublishOpen] = useState(false)
+
+  const refreshScheduleData = () => {
+    setGrades(getGrades())
+    setAnnouncements(getAnnouncements())
+  }
 
   // Load data
   useEffect(() => {
@@ -147,10 +158,10 @@ export default function AnnouncementsPage() {
   const openAnnouncementDialog = (a?: Announcement) => {
     if (a) {
       setEditingAnnouncement(a)
-      setAnnouncementForm({ title: a.title, body: a.body })
+      setAnnouncementForm({ title: a.title, body: a.body, targetGradeIds: a.targetGradeIds || [] })
     } else {
       setEditingAnnouncement(null)
-      setAnnouncementForm({ title: "", body: "" })
+      setAnnouncementForm({ title: "", body: "", targetGradeIds: [] })
     }
     setAnnouncementDialogOpen(true)
   }
@@ -164,7 +175,7 @@ export default function AnnouncementsPage() {
     if (editingAnnouncement) {
       updated = announcements.map(a =>
         a.id === editingAnnouncement.id
-          ? { ...a, title: announcementForm.title.trim(), body: announcementForm.body.trim() }
+          ? { ...a, title: announcementForm.title.trim(), body: announcementForm.body.trim(), targetGradeIds: announcementForm.targetGradeIds }
           : a
       )
       toast.success("تم تحديث الإعلان بنجاح")
@@ -175,6 +186,7 @@ export default function AnnouncementsPage() {
           id: Date.now().toString(),
           title: announcementForm.title.trim(),
           body: announcementForm.body.trim(),
+          targetGradeIds: announcementForm.targetGradeIds,
           pinned: false,
           createdAt: new Date().toISOString(),
         },
@@ -218,6 +230,7 @@ export default function AnnouncementsPage() {
       reason: "متميز في امتحانات هذا الشهر",
       month: currentMonth,
       year: currentYear,
+      days: 30,
     })
     setHonorDialogOpen(true)
   }
@@ -254,6 +267,7 @@ export default function AnnouncementsPage() {
         reason: honorForm.reason.trim(),
         month: honorForm.month,
         year: honorForm.year,
+        days: honorForm.days > 0 ? honorForm.days : undefined,
         createdAt: new Date().toISOString(),
       },
     ]
@@ -405,12 +419,21 @@ export default function AnnouncementsPage() {
             يظهر كل ما تضيفه هنا مباشرة على الصفحة الرئيسية للموقع
           </p>
         </div>
-        <Link href="/">
-          <Button variant="outline" className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950">
-            <Home className="w-4 h-4" />
-            <span>عرض الصفحة الرئيسية</span>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() => setSchedulePublishOpen(true)}
+            className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 shadow-lg"
+          >
+            <CalendarClock className="w-4 h-4" />
+            <span>نشر جدول المجموعات للطلاب</span>
           </Button>
-        </Link>
+          <Link href="/">
+            <Button variant="outline" className="border-indigo-500 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950">
+              <Home className="w-4 h-4" />
+              <span>عرض الصفحة الرئيسية</span>
+            </Button>
+          </Link>
+        </div>
       </motion.div>
 
       {/* Tabs */}
@@ -736,7 +759,7 @@ export default function AnnouncementsPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingAnnouncement ? "تعديل الإعلان" : "إعلان جديد"}</DialogTitle>
-            <DialogDescription>سيظهر هذا الإعلان على الصفحة الرئيسية للموقع</DialogDescription>
+            <DialogDescription>سيظهر على الصفحة الرئيسية وفي بوابة كل طالب حسب الصفوف المستهدفة</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
@@ -757,6 +780,39 @@ export default function AnnouncementsPage() {
                 rows={4}
                 className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
               />
+            </div>
+            <div>
+              <Label>الصفوف المستهدفة</Label>
+              <p className="text-xs text-gray-500 mb-2">
+                اتركها فارغة ليظهر للجميع (عام) — أو اختر صفاً أو أكثر: سؤال الصف السادس يظهر لطلاب الصف السادس فقط ولا يظهر للباقي بأي شكل
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {grades.map(g => {
+                  const active = announcementForm.targetGradeIds.includes(g.id)
+                  return (
+                    <button
+                      key={g.id}
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm(prev => ({
+                          ...prev,
+                          targetGradeIds: active
+                            ? prev.targetGradeIds.filter(id => id !== g.id)
+                            : [...prev.targetGradeIds, g.id],
+                        }))
+                      }
+                      className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                        active
+                          ? "bg-indigo-600 text-white shadow"
+                          : "bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300"
+                      }`}
+                    >
+                      {active ? "✓ " : ""}{g.name}
+                    </button>
+                  )
+                })}
+                {grades.length === 0 && <p className="text-xs text-amber-600">لا توجد صفوف — أضف صفوفاً أولاً للاستهداف</p>}
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -831,30 +887,66 @@ export default function AnnouncementsPage() {
               </Select>
             </div>
 
-            {honorForm.groupId && groupStudents.length > 0 && (
+            {honorForm.groupId && (
               <div>
-                <Label>اختيار من طلاب المجموعة (اختياري)</Label>
-                <Select value={honorForm.studentId} onValueChange={pickStudent}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="اختر طالباً" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groupStudents.map(s => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>اختيار الطالب من قائمة المجموعة</Label>
+                {groupStudents.length > 0 ? (
+                  <Select value={honorForm.studentId} onValueChange={pickStudent}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="اختر اسم الطالب" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groupStudents.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-2.5">
+                    لا يوجد طلاب مسجلون في هذه المجموعة بعد — اكتب الاسم يدوياً في الحقل أدناه
+                  </p>
+                )}
               </div>
             )}
 
             <div>
-              <Label>اسم الطالب *</Label>
+              <Label>اسم الطالب * {honorForm.studentId && <span className="text-xs text-green-600">(مختار من القائمة — يمكنك تعديله)</span>}</Label>
               <Input
                 placeholder="أدخل اسم الطالب"
                 value={honorForm.studentName}
                 onChange={e => setHonorForm(prev => ({ ...prev, studentName: e.target.value, studentId: "" }))}
                 className="mt-1"
               />
+            </div>
+
+            <div>
+              <Label>مدة الظهور في لوحة الشرف (بالأيام)</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input
+                  type="number"
+                  min={1}
+                  value={honorForm.days || ""}
+                  onChange={e => setHonorForm(prev => ({ ...prev, days: parseInt(e.target.value) || 0 }))}
+                  className="w-28"
+                />
+                {[7, 14, 30, 60].map(d => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setHonorForm(prev => ({ ...prev, days: d }))}
+                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                      honorForm.days === d
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
+                    }`}
+                  >
+                    {d} يوم
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5">
+                يظهر اسم الطالب من الآن لمدة {honorForm.days || 0} يوماً في لوحة الشرف ثم يختفي تلقائياً (الافتراضي 30 يوماً).
+              </p>
             </div>
 
             <div>
@@ -1071,6 +1163,14 @@ export default function AnnouncementsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* حوار نشر جدول المجموعات للطلاب (الصفحة الرئيسية + الإعلانات) */}
+      <SchedulePublishDialog
+        open={schedulePublishOpen}
+        onOpenChange={setSchedulePublishOpen}
+        grades={grades}
+        onChanged={refreshScheduleData}
+      />
     </div>
   )
 }

@@ -18,6 +18,11 @@ import {
   Link2,
   Globe,
   Printer,
+ClipboardList,
+Timer,
+  Settings2,
+  EyeOff,
+  SlidersHorizontal,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -66,6 +71,10 @@ import {
   renderCompleteParts,
   getUnderlinedWords,
 } from "@/lib/exam-templates"
+import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
+import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
+import { forcePushAll } from "@/lib/supabase/sync"
+import { Switch } from "@/components/ui/switch"
 import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
 import { ScienceIcon } from "@/components/exam/science-ornaments"
 
@@ -76,6 +85,20 @@ export default function ExamsPage() {
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [editingExam, setEditingExam] = useState<Exam | null>(null)
   const [previewExam, setPreviewExam] = useState<Exam | null>(null)
+  const [resultsExam, setResultsExam] = useState<Exam | null>(null)
+  const [panelExam, setPanelExam] = useState<Exam | null>(null)
+  const [panelForm, setPanelForm] = useState({
+    allowOnline: false,
+    availabilityMode: "always" as 'always' | 'scheduled',
+    availableFrom: "",
+    availableUntil: "",
+    targetGroupIds: [] as string[],
+    maxAttempts: "0",
+    reviewOpen: false,
+  })
+  const [overrideTarget, setOverrideTarget] = useState<{ attemptId: string; name: string; current: number; total: number } | null>(null)
+  const [overrideScore, setOverrideScore] = useState("")
+  const [overrideReason, setOverrideReason] = useState("")
   const [expandedQuestions, setExpandedQuestions] = useState<string[]>([])
 
   const [examForm, setExamForm] = useState({
@@ -95,6 +118,11 @@ export default function ExamsPage() {
     allowOnline: false,
     autoHonorBoard: false,
     honorMinPercent: 100,
+    availabilityMode: "always" as 'always' | 'scheduled',
+    availableFrom: "",
+    availableUntil: "",
+    targetGroupIds: [] as string[],
+    answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
   useEffect(() => {
@@ -103,7 +131,86 @@ export default function ExamsPage() {
   }, [])
 
   // مجموعات الصف المختار فقط — لا تظهر مجموعات صف آخر أبداً
+  // ===== لوحة تحكم الظهور والمحاولات لاختبار بعينه =====
+  const openPanel = (exam: Exam) => {
+    setPanelExam(exam)
+    setPanelForm({
+      allowOnline: !!exam.allowOnline,
+      availabilityMode: exam.availabilityMode || "always",
+      availableFrom: (exam.availableFrom || "").slice(0, 16),
+      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      reviewOpen: !!exam.reviewOpen,
+      targetGroupIds: exam.targetGroupIds || [],
+      maxAttempts: String(exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0),
+    })
+  }
+
+  const savePanel = () => {
+    if (!panelExam) return
+    const maxN = Math.max(0, parseInt(panelForm.maxAttempts || "0", 10) || 0)
+    const updatedExams = exams.map(e =>
+      e.id === panelExam.id
+        ? {
+            ...e,
+            allowOnline: panelForm.allowOnline,
+            availabilityMode: panelForm.allowOnline ? panelForm.availabilityMode : undefined,
+            availableFrom: panelForm.allowOnline && panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
+              ? new Date(panelForm.availableFrom).toISOString() : undefined,
+            availableUntil: panelForm.allowOnline && panelForm.availabilityMode === "scheduled" && panelForm.availableUntil
+              ? new Date(panelForm.availableUntil).toISOString() : undefined,
+            targetGroupIds: panelForm.allowOnline ? panelForm.targetGroupIds : undefined,
+            maxAttempts: maxN > 0 ? maxN : undefined,
+            reviewOpen: panelForm.reviewOpen,
+            updatedAt: new Date().toISOString(),
+          }
+        : e
+    )
+    setExams(updatedExams)
+    saveExams(updatedExams)
+    setPanelExam(null)
+    toast.success("تم حفظ لوحة التحكم — تظهر التغييرات للطلاب فوراً")
+    forcePushAll().catch(() => {})
+  }
+
+  // فتح فوري لمدة محددة من الآن (ساعات)
+  const quickOpenHours = (hours: number) => {
+    const from = new Date()
+    const until = new Date(from.getTime() + hours * 3600 * 1000)
+    const fmt = (d: Date) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+    setPanelForm(prev => ({
+      ...prev,
+      allowOnline: true,
+      availabilityMode: "scheduled",
+      availableFrom: fmt(from),
+      availableUntil: fmt(until),
+    }))
+    toast.success(`سيُفتح الاختبار الآن لمدة ${hours >= 24 ? `${hours / 24} يوم` : `${hours} ساعة`}`)
+  }
+
   const groupsOfSelectedGrade = getGroupsOfGrade(grades, examForm.gradeId)
+
+  // محاولات اختبار النتائج المفتوح (من التخزين المباشر لتتبع التعديلات فوراً)
+  const resultsAttempts = resultsExam ? getExamAttempts().filter(a => a.examId === resultsExam.id) : []
+
+  const applyOverride = () => {
+    if (!overrideTarget || !resultsExam) return
+    const score = parseFloat(overrideScore)
+    if (isNaN(score) || score < 0 || score > overrideTarget.total) {
+      toast.error(`أدخل درجة بين 0 و ${overrideTarget.total}`)
+      return
+    }
+    const all = getExamAttempts()
+    const updated = all.map(a =>
+      a.id === overrideTarget.attemptId
+        ? { ...a, manualOverride: { score, reason: overrideReason.trim() || undefined, at: new Date().toISOString() } }
+        : a
+    )
+    saveExamAttempts(updated)
+    toast.success(`تم تعديل درجة ${overrideTarget.name} إلى ${score} — تظهر في تقريره فوراً`)
+    setOverrideTarget(null)
+    setOverrideScore("")
+    setOverrideReason("")
+  }
 
   const toggleQuestion = (questionId: string) => {
     setExpandedQuestions(prev =>
@@ -409,6 +516,11 @@ export default function ExamsPage() {
     allowOnline: false,
     autoHonorBoard: false,
     honorMinPercent: 100,
+    availabilityMode: "always" as 'always' | 'scheduled',
+    availableFrom: "",
+    availableUntil: "",
+    targetGroupIds: [] as string[],
+    answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
   const openCreateDialog = (exam?: Exam) => {
@@ -431,6 +543,11 @@ export default function ExamsPage() {
         allowOnline: !!exam.allowOnline,
         autoHonorBoard: !!exam.autoHonorBoard,
         honorMinPercent: exam.honorMinPercent ?? 100,
+        availabilityMode: exam.availabilityMode || "always",
+        availableFrom: (exam.availableFrom || "").slice(0, 16),
+        availableUntil: (exam.availableUntil || "").slice(0, 16),
+        targetGroupIds: exam.targetGroupIds || [],
+        answerVisibility: exam.answerVisibility || "never",
       })
     } else {
       setEditingExam(null)
@@ -441,15 +558,15 @@ export default function ExamsPage() {
   }
 
   const saveExam = () => {
-    if (!examForm.gradeId || !examForm.title) {
-      toast.error("يرجى ملء جميع الحقول المطلوبة")
+    if (!examForm.title) {
+      toast.error("يرجى إدخال عنوان الاختبار")
       return
     }
     const totalMarks = getExamTotalMarks(examForm.questions)
     const examData: Exam = {
       id: editingExam?.id || Date.now().toString(),
-      gradeId: examForm.gradeId,
-      groupId: examForm.groupId || undefined,
+      gradeId: examForm.gradeId === "__all" ? "" : examForm.gradeId,
+      groupId: examForm.gradeId === "__all" ? undefined : (examForm.groupId || undefined),
       title: examForm.title,
       month: examForm.month,
       unit: examForm.unit || undefined,
@@ -464,6 +581,13 @@ export default function ExamsPage() {
       allowOnline: examForm.allowOnline,
       autoHonorBoard: examForm.autoHonorBoard,
       honorMinPercent: examForm.honorMinPercent,
+      availabilityMode: examForm.allowOnline ? examForm.availabilityMode : undefined,
+      availableFrom: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableFrom
+        ? new Date(examForm.availableFrom).toISOString() : undefined,
+      availableUntil: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableUntil
+        ? new Date(examForm.availableUntil).toISOString() : undefined,
+      targetGroupIds: examForm.allowOnline ? examForm.targetGroupIds : undefined,
+      answerVisibility: examForm.allowOnline ? examForm.answerVisibility : undefined,
       createdAt: editingExam?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -490,7 +614,7 @@ export default function ExamsPage() {
     setPreviewDialogOpen(true)
   }
 
-  const getGradeName = (gradeId: string) => grades.find(g => g.id === gradeId)?.name || "غير محدد"
+  const getGradeName = (gradeId: string) => (!gradeId ? "عام — كل الصفوف" : grades.find(g => g.id === gradeId)?.name || "غير محدد")
   const getGroupName = (groupId: string) => {
     for (const grade of grades) {
       const group = grade.groups.find(g => g.id === groupId)
@@ -617,18 +741,53 @@ export default function ExamsPage() {
                           زخارف
                         </Badge>
                       )}
-                      {exam.allowOnline && (
+                      {exam.allowOnline ? (
                         <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                           <Globe className="w-3 h-3 ml-1" />
                           منشور للطلاب
                         </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                          <EyeOff className="w-3 h-3 ml-1" />
+                          مخفي من الطلاب
+                        </Badge>
                       )}
+                      {!!exam.maxAttempts && exam.maxAttempts > 0 && (
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                          المحاولات: {exam.maxAttempts} لكل طالب
+                        </Badge>
+                      )}
+                      {(() => {
+                        const av = examAvailability(exam)
+                        if (!exam.allowOnline) return null
+                        return av.open ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300">
+                            <Timer className="w-3 h-3 ml-1" />
+                            متاح الآن
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                            <Timer className="w-3 h-3 ml-1" />
+                            مغلق الآن
+                          </Badge>
+                        )
+                      })()}
                     </div>
                     <div className="flex items-center gap-2">
                       <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="flex-1">
                         <Eye className="w-4 h-4" />
                         <span>معاينة</span>
                       </Button>
+                      {exam.allowOnline && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="نتائج الطلاب وتعديل الدرجات يدوياً"
+                          onClick={() => setResultsExam(exam)}
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                        </Button>
+                      )}
                       {exam.allowOnline && (
                         <Button
                           variant="outline"
@@ -645,6 +804,15 @@ export default function ExamsPage() {
                           <Link2 className="w-4 h-4" />
                         </Button>
                       )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title="لوحة تحكم الظهور والمحاولات"
+                        onClick={() => openPanel(exam)}
+                        className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                      >
+                        <Settings2 className="w-4 h-4" />
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)}>
                         <Edit2 className="w-4 h-4" />
                       </Button>
@@ -703,22 +871,15 @@ export default function ExamsPage() {
                     <SelectTrigger className="mt-1">
                       <SelectValue placeholder="اختر الصف أولاً" />
                     </SelectTrigger>
-                    <SelectContent>
-                      {grades.length === 0 ? (
-                        <SelectItem value="__none" disabled>لا توجد صفوف — أضف صفاً أولاً</SelectItem>
-                      ) : (
-                        grades.map(grade => (
-                          <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
+                    <SelectContent>  <SelectItem value="__all">عام — كل الصفوف</SelectItem>
+                      {grades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
                   <Label>المجموعة (اختياري)</Label>
                   <Select
                     value={examForm.groupId || "all"}
-                    disabled={!examForm.gradeId}
+                    disabled={!examForm.gradeId || examForm.gradeId === "__all"}
                     onValueChange={(val) =>
                       setExamForm(prev => ({ ...prev, groupId: val === "all" ? "" : val }))
                     }
@@ -727,7 +888,7 @@ export default function ExamsPage() {
                       <SelectValue placeholder={examForm.gradeId ? "كل المجموعات" : "اختر الصف أولاً"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {!examForm.gradeId ? (
+                      {!examForm.gradeId || examForm.gradeId === "__all" ? (
                         <SelectItem value="__none" disabled>اختر الصف أولاً</SelectItem>
                       ) : (
                         <>
@@ -897,6 +1058,123 @@ export default function ExamsPage() {
                     </div>
                   </div>
                 </label>
+              )}
+
+              {examForm.allowOnline && (
+                <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-4">
+                  {/* الإتاحة الزمنية */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">إتاحة الاختبار</p>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {([
+                        { key: 'always' as const, label: 'مفتوح دائماً' },
+                        { key: 'scheduled' as const, label: 'فترة محددة' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setExamForm(prev => ({ ...prev, availabilityMode: opt.key }))}
+                          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                            examForm.availabilityMode === opt.key
+                              ? 'bg-indigo-600 text-white shadow'
+                              : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {examForm.availabilityMode === 'scheduled' && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs">يُفتح في</Label>
+                          <Input
+                            type="datetime-local"
+                            value={examForm.availableFrom}
+                            onChange={(e) => setExamForm(prev => ({ ...prev, availableFrom: e.target.value }))}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs">يُغلق في</Label>
+                          <Input
+                            type="datetime-local"
+                            value={examForm.availableUntil}
+                            onChange={(e) => setExamForm(prev => ({ ...prev, availableUntil: e.target.value }))}
+                            className="mt-1"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* المجموعات المستهدفة */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">المجموعات المستهدفة</p>
+                    <p className="text-xs text-gray-500 mb-2">اتركها فارغة ليظهر الاختبار لكل مجموعات الصف — العزل تام: لا يراه طالب من صف آخر إطلاقاً</p>
+                    <div className="flex flex-wrap gap-2">
+                      {groupsOfSelectedGrade.map(g => {
+                        const active = examForm.targetGroupIds.includes(g.id)
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setExamForm(prev => ({
+                              ...prev,
+                              targetGroupIds: active
+                                ? prev.targetGroupIds.filter(id => id !== g.id)
+                                : [...prev.targetGroupIds, g.id],
+                            }))}
+                            className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all ${
+                              active
+                                ? 'bg-emerald-600 text-white shadow'
+                                : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                            }`}
+                          >
+                            {active ? '✓ ' : ''}{g.name}
+                          </button>
+                        )
+                      })}
+                      {examForm.gradeId === "__all" && (
+                        <p className="text-xs text-emerald-600">اختبار عام — يظهر لطلاب كل الصفوف ولا تحتاج لتحديد مجموعات</p>
+                      )}
+                      {groupsOfSelectedGrade.length === 0 && examForm.gradeId !== "__all" && (
+                        <p className="text-xs text-amber-600">اختر الصف أولاً لعرض مجموعاته</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* إظهار الإجابة الصحيحة */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-1">إظهار الإجابة الصحيحة للطالب</p>
+                    <div className="flex flex-wrap gap-2">
+                      {([
+                        { key: 'never' as const, label: 'مغلقة نهائياً', desc: 'لا يرى الطالب الإجابات أبداً' },
+                        { key: 'afterEach' as const, label: 'بعد الإجابة على السؤال', desc: 'يظهر الصحيح/الخطأ فوراً' },
+                        { key: 'atEnd' as const, label: 'في نهاية الاختبار', desc: 'مراجعة كاملة بعد التسليم' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => setExamForm(prev => ({ ...prev, answerVisibility: opt.key }))}
+                          title={opt.desc}
+                          className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
+                            examForm.answerVisibility === opt.key
+                              ? 'bg-purple-600 text-white shadow'
+                              : 'bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-2">
+                      {examForm.answerVisibility === 'never' && 'الأكثر أماناً — لا يمكن للطالب معرفة الإجابات بأي شكل'}
+                      {examForm.answerVisibility === 'afterEach' && 'تنبيه: الإجابات الصحيحة تكون ظاهرة أثناء الاختبار نفسه'}
+                      {examForm.answerVisibility === 'atEnd' && 'آمن نسبياً — المراجعة تظهر بعد تسليم الاختبار فقط'}
+                    </p>
+                  </div>
+                </div>
               )}
             </section>
 
@@ -1503,6 +1781,308 @@ export default function ExamsPage() {
             >
               <Download className="w-4 h-4" />
               <span>تحميل PDF</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== نتائج الاختبار: قائمة المحاولات + التعديل اليدوي للدرجات ===== */}
+      <Dialog open={!!resultsExam} onOpenChange={(o) => !o && setResultsExam(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-xl">
+              <ClipboardList className="w-6 h-6 text-indigo-600" />
+              نتائج: {resultsExam?.title}
+            </DialogTitle>
+            <DialogDescription>
+              اضغط «تعديل الدرجة» إذا شعرت أن التصحيح الآلي لم يكن عادلاً — الدرجة المعدلة تظهر للطالب وفي تقريره فوراً
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            {resultsAttempts.length === 0 ? (
+              <p className="text-center text-gray-500 py-8">لا توجد محاولات بعد — تظهر هنا فور أداء الطلاب للاختبار</p>
+            ) : (
+              resultsAttempts.slice().reverse().map(a => {
+                const finalScore = effectiveAttemptScore(a)
+                const overridden = !!a.manualOverride
+                return (
+                  <div key={a.id} className={`rounded-xl border p-3 ${overridden ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20" : "border-gray-200 dark:border-gray-800"}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="font-bold text-gray-900 dark:text-white">
+                          {a.studentName}
+                          {overridden && (
+                            <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-400">
+                          {a.submittedAt ? new Date(a.submittedAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : ""}
+                          {a.durationSeconds ? ` — مدة ${Math.round(a.durationSeconds / 60)} دقيقة` : ""}
+                        </p>
+                        {overridden && a.manualOverride?.reason && (
+                          <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
+                          {finalScore} / {a.totalMarks || 0}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setOverrideTarget({ attemptId: a.id, name: a.studentName, current: finalScore, total: a.totalMarks || 0 })
+                            setOverrideScore(String(finalScore))
+                            setOverrideReason(a.manualOverride?.reason || "")
+                          }}
+                        >
+                          تعديل الدرجة
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== حوار تعديل درجة محاولة ===== */}
+      <Dialog open={!!overrideTarget} onOpenChange={(o) => !o && setOverrideTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تعديل درجة «{overrideTarget?.name}»</DialogTitle>
+            <DialogDescription>
+              الدرجة الآلية كانت {overrideTarget?.current} من {overrideTarget?.total} — أدخل الدرجة التي تراها عادلة
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <Label>الدرجة الجديدة (من {overrideTarget?.total})</Label>
+              <Input
+                type="number"
+                min={0}
+                max={overrideTarget?.total || 0}
+                value={overrideScore}
+                onChange={e => setOverrideScore(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            <div>
+              <Label>سبب التعديل (اختياري — يظهر في تقرير الطالب)</Label>
+              <Input
+                value={overrideReason}
+                onChange={e => setOverrideReason(e.target.value)}
+                placeholder="مثال: الإجابة صحيحة معنوياً واختلفت في الصياغة"
+                className="mt-1"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOverrideTarget(null)}>إلغاء</Button>
+            <Button onClick={applyOverride} className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white">
+              حفظ الدرجة المعدلة
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* لوحة تحكم الظهور والمحاولات */}
+      <Dialog open={!!panelExam} onOpenChange={open => { if (!open) setPanelExam(null) }}>
+        <DialogContent className="max-w-lg max-h-[92vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5 text-indigo-600" />
+              لوحة تحكم الاختبار
+            </DialogTitle>
+            <p className="text-sm text-gray-500">
+              {panelExam?.title} — {getGradeName(panelExam?.gradeId || "")}
+            </p>
+          </DialogHeader>
+
+          {panelExam && (
+            <div className="space-y-5 py-2">
+              {/* الإظهار للطلاب */}
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-800 p-3">
+                <div>
+                  <p className="font-bold text-sm text-gray-900 dark:text-white">إظهار الاختبار للطلاب</p>
+                  <p className="text-xs text-gray-500">
+                    {panelForm.allowOnline ? "يظهر لصفه ومجموعاته المستهدفة في بوابة الطالب" : "مخفي تماماً — لا يراه أي طالب"}
+                  </p>
+                </div>
+                <Switch checked={panelForm.allowOnline} onCheckedChange={v => setPanelForm(prev => ({ ...prev, allowOnline: v }))} />
+              </div>
+
+              {/* فتح المراجعة للجميع — مرحلة ما بعد الاختبار */}
+              <div className="flex items-center justify-between gap-3 rounded-xl border-2 border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3">
+                <div>
+                  <p className="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5">
+                    <Eye className="w-4 h-4 text-amber-600" />
+                    تم الامتحان — فتح المراجعة للجميع
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {panelForm.reviewOpen
+                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم والأجوبة الصحيحة ودرجاتهم في أي وقت"
+                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار"}
+                  </p>
+                </div>
+                <Switch checked={panelForm.reviewOpen} onCheckedChange={v => setPanelForm(prev => ({ ...prev, reviewOpen: v }))} />
+              </div>
+
+              {panelForm.allowOnline && (
+                <>
+                  {/* المجموعات المستهدفة */}
+                  <div className="space-y-2">
+                    <p className="font-bold text-sm text-gray-900 dark:text-white">يظهر لمجموعات:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {getGroupsOfGrade(grades, panelExam.gradeId).map(g => {
+                        const on = panelForm.targetGroupIds.includes(g.id)
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setPanelForm(prev => ({
+                              ...prev,
+                              targetGroupIds: on
+                                ? prev.targetGroupIds.filter(x => x !== g.id)
+                                : [...prev.targetGroupIds, g.id],
+                            }))}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                              on
+                                ? "bg-indigo-600 text-white border-indigo-600"
+                                : "border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300"
+                            }`}
+                          >
+                            {g.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {panelForm.targetGroupIds.length === 0
+                        ? "لا مجموعات محددة → يظهر لكل مجموعات الصف"
+                        : `يظهر لـ ${panelForm.targetGroupIds.length} مجموعة فقط`}
+                    </p>
+                  </div>
+
+                  {/* أوقات الظهور */}
+                  <div className="space-y-2">
+                    <p className="font-bold text-sm text-gray-900 dark:text-white">أوقات الظهور</p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant={panelForm.availabilityMode === "always" ? "default" : "outline"}
+                        onClick={() => setPanelForm(prev => ({ ...prev, availabilityMode: "always" }))}
+                        className="flex-1"
+                      >
+                        فور النشر — دائماً متاح
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={panelForm.availabilityMode === "scheduled" ? "default" : "outline"}
+                        onClick={() => setPanelForm(prev => ({ ...prev, availabilityMode: "scheduled" }))}
+                        className="flex-1"
+                      >
+                        فترة محددة
+                      </Button>
+                    </div>
+
+                    {panelForm.availabilityMode === "scheduled" && (
+                      <div className="space-y-3 rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <Label className="text-xs">يفتح في</Label>
+                            <Input
+                              type="datetime-local"
+                              dir="ltr"
+                              value={panelForm.availableFrom}
+                              onChange={e => setPanelForm(prev => ({ ...prev, availableFrom: e.target.value }))}
+                              className="mt-1"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">يُغلق في</Label>
+                            <Input
+                              type="datetime-local"
+                              dir="ltr"
+                              value={panelForm.availableUntil}
+                              onChange={e => setPanelForm(prev => ({ ...prev, availableUntil: e.target.value }))}
+                              className="mt-1"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-gray-500 mb-1.5">فتح سريع من الآن لمدة:</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { label: "ساعة", h: 1 },
+                              { label: "6 ساعات", h: 6 },
+                              { label: "24 ساعة", h: 24 },
+                              { label: "3 أيام", h: 72 },
+                              { label: "أسبوع", h: 168 },
+                            ].map(q => (
+                              <Button key={q.h} size="sm" variant="outline" className="h-7 text-xs" onClick={() => quickOpenHours(q.h)}>
+                                {q.label}
+                              </Button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* عدد مرات الاجتياز */}
+              <div className="space-y-2">
+                <p className="font-bold text-sm text-gray-900 dark:text-white">عدد مرات اجتياز الاختبار لكل طالب</p>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="number"
+                    min={0}
+                    dir="ltr"
+                    value={panelForm.maxAttempts}
+                    onChange={e => setPanelForm(prev => ({ ...prev, maxAttempts: e.target.value }))}
+                    className="w-24"
+                  />
+                  <p className="text-xs text-gray-500">
+                    {parseInt(panelForm.maxAttempts || "0", 10) > 0
+                      ? `يستطيع كل طالب أداءه ${panelForm.maxAttempts} مرة — بعدها يُقفل`
+                      : "0 = بلا حد على عدد المحاولات"}
+                  </p>
+                </div>
+                <p className="text-xs text-gray-400">
+                  المحاولات المسجلة حتى الآن لهذا الاختبار: {getExamAttempts().filter(a => a.examId === panelExam.id).length}
+                </p>
+              </div>
+
+              {/* حالة الإتاحة الحالية */}
+              {(() => {
+                const av = examAvailability(panelExam)
+                return (
+                  <div className={`rounded-xl border p-3 text-sm font-bold ${
+                    panelForm.allowOnline && av.open
+                      ? "bg-green-50 dark:bg-green-950/30 border-green-300 dark:border-green-800 text-green-700 dark:text-green-300"
+                      : "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+                  }`}>
+                    {!panelForm.allowOnline
+                      ? "الحالة الآن: مخفي من الطلاب"
+                      : av.open
+                      ? "الحالة الآن: متاح للأداء ✅"
+                      : `الحالة الآن: مغلق — ${av.reason || ""}`}
+                  </div>
+                )
+              })()}
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPanelExam(null)}>تراجع</Button>
+            <Button onClick={savePanel} className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+              <Settings2 className="w-4 h-4" />
+              <span>حفظ لوحة التحكم</span>
             </Button>
           </DialogFooter>
         </DialogContent>

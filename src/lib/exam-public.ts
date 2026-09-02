@@ -119,6 +119,24 @@ export function sealExamForStudent(exam: Exam): { view: Exam; token: string } {
   }
 }
 
+/**
+ * فك ختم مفتاح التصحيح بعد انتهاء الاختبار (وضع atEnd) أو عند تفويض الإظهار
+ * أثناء الاختبار (وضع afterEach — بقرار صريح من المعلم). يعيد spec بالمعرفات.
+ */
+export function decodeSealForReview(token: string, examId: string): Record<string, { choiceId?: string; text?: string; isTrue?: boolean }> {
+  try {
+    const bin = atob(token.split("").reverse().join(""))
+    const bytes = Uint8Array.from(bin, ch => ch.charCodeAt(0))
+    const envelope = JSON.parse(new TextDecoder().decode(bytes))
+    if (!envelope || envelope.eid !== examId || !envelope.sig) return {}
+    const specJson = JSON.stringify(envelope.spec)
+    if (computeExamHash(envelope.eid, envelope.ca, specJson) !== envelope.sig) return {}
+    return envelope.spec || {}
+  } catch {
+    return {}
+  }
+}
+
 export function gradeSealedExam(
   view: Exam,
   token: string,

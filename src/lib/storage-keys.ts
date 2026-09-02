@@ -14,4 +14,11 @@ export const STORAGE_KEYS = {
   IMPORTANT_LINKS: "importantLinks",
   CURRENT_ACADEMIC_YEAR: "currentAcademicYear",
   YEAR_ARCHIVES: "yearArchives",
+  // بوابة الطلاب
+  MANUAL_GRADES: "manualGrades",
+  REGISTRATION_REQUESTS: "registrationRequests",
+  GROUP_TRANSFER_REQUESTS: "groupTransferRequests",
+  STUDENT_HISTORY: "studentHistory",
+  STUDENT_ACCOUNTS: "studentAccounts",
+  INQUIRIES: "inquiries",
 } as const

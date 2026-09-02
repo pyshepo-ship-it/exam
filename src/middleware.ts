@@ -47,6 +47,13 @@ export async function middleware(req: NextRequest) {
 
   // إذا لم يكن المستخدم مسجلاً ويحاول دخول مسارات لوحة التحكم المحمية
   if (!user && req.nextUrl.pathname.startsWith('/dashboard')) {
+    // الطالب (جلسة البوابة) لا يراه لوحة المدرس إطلاقاً — يُعاد لبوابته
+    if (req.cookies.get('studentPortalSession')?.value) {
+      const studentUrl = req.nextUrl.clone()
+      studentUrl.pathname = '/student'
+      studentUrl.search = ''
+      return NextResponse.redirect(studentUrl)
+    }
     const redirectUrl = req.nextUrl.clone()
     redirectUrl.pathname = '/login'
     redirectUrl.searchParams.set(`redirectedFrom`, req.nextUrl.pathname)

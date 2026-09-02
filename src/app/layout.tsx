@@ -4,7 +4,7 @@ import { ThemeProvider } from "@/components/providers/theme-provider";
 import { ToastProvider } from "@/components/providers/toast-provider";
 
 export const metadata: Metadata = {
-  title: "نظام إدارة الدروس الخصوصية",
+  title: "أ/ ضحى العربي",
   description: "نظام شخصي لإدارة الدروس الخصوصية والاختبارات والتحصيل المالي",
 };
 

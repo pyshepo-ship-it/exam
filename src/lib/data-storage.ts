@@ -21,12 +21,96 @@ export interface Student {
   id: string
   name: string
   phone?: string
+  /** البريد الإلكتروني (يُحدث تلقائياً عند الموافقة على طلب تسجيل من بوابة الطالب) */
+  email?: string
   gradeId: string
   groupId: string
   status: 'active' | 'inactive'
   notes?: string
+  /** إغلاق قناة الاستفسار لهذا الطالب تماماً — قرار المعلم */
+  inquiryBlocked?: boolean
   createdAt: string
   updatedAt: string
+}
+
+/** درجة يدوية يسجلها المعلم للطالب (قسم الدرجات اليدوية) */
+export interface ManualGrade {
+  id: string
+  studentId: string
+  gradeId: string
+  groupId: string
+  /** عنوان التقييم مثل: اختبار الشهر الأول / مشاركة صفية */
+  title: string
+  score: number
+  /** الدرجة الكلية */
+  maxScore: number
+  month: number
+  year: number
+  notes?: string
+  createdAt: string
+}
+
+/**
+ * طلب تسجيل من بوابة الطالب.
+ * لا يستطيع الطالب تسجيل الدخول إلا بعد موافقة المعلم على طلبه،
+ * وعند الموافقة يُربط ببيانات الطالب اليدوية (أو يُنشأ طالب جديد).
+ */
+export interface RegistrationRequest {
+  id: string
+  name: string
+  phone: string
+  /** هاتف ولي الأمر (إجباري عند التسجيل) */
+  guardianPhone: string
+  email: string
+  /** بصمة كلمة المرور SHA-256 (لا تُخزَّن كلمة المرور نفسها أبداً) */
+  passwordHash: string
+  gradeId: string
+  groupId: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewNote?: string
+  /** معرف الطالب الذي رُبط به الطلب بعد الموافقة */
+  linkedStudentId?: string
+  createdAt: string
+  reviewedAt?: string
+}
+
+/** طلب انضمام طالب إلى مجموعة أخرى (بنفس صفه) */
+export interface GroupTransferRequest {
+  id: string
+  studentId: string
+  studentName: string
+  fromGroupId: string
+  toGradeId: string
+  toGroupId: string
+  status: 'pending' | 'approved' | 'rejected'
+  reviewNote?: string
+  createdAt: string
+  reviewedAt?: string
+}
+
+export type StudentHistoryType = 'account' | 'transfer' | 'honor' | 'payment' | 'grade' | 'exam' | 'attendance'
+
+/** سجل نشاط الطالب — يظهر في تقريره وسجل حسابه */
+export interface StudentHistoryEvent {
+  id: string
+  studentId: string
+  type: StudentHistoryType
+  title: string
+  detail?: string
+  date: string
+  createdAt: string
+}
+
+/** حساب بوابة الطالب (ربط البريد بالطالب + حالة تفعيل الدخول) */
+export interface StudentAccount {
+  id: string // = email
+  email: string
+  studentId: string
+  /** منع الطالب من تسجيل الدخول دون حذف بياناته */
+  active: boolean
+  /** بصمة كلمة المرور الحالية — تُحدَّث عند إعادة التعيين من المعلم */
+  passwordHash?: string
+  createdAt: string
 }
 
 export interface Due {
@@ -77,6 +161,20 @@ export interface Exam {
   autoHonorBoard?: boolean
   /** الحد الأدنى للنسبة المئوية للترشيح (100 = الدرجة الكاملة) */
   honorMinPercent?: number
+  /** إتاحة الاختبار للطلاب: دائماً مفتوح أو خلال فترة يحددها المعلم */
+  availabilityMode?: 'always' | 'scheduled'
+  /** بداية الإتاحة (ISO) — عند الوضع المجدول */
+  availableFrom?: string
+  /** نهاية الإتاحة (ISO) — عند الوضع المجدول */
+  availableUntil?: string
+  /** المجموعات المستهدفة من الاختبار — فارغ = كل مجموعات الصف */
+  targetGroupIds?: string[]
+  /** أقصى عدد مرات اجتياز لكل طالب — 0 أو غير محدد = بلا حد */
+  maxAttempts?: number
+  /** إظهار الإجابة الصحيحة للطالب: لا أبداً / بعد كل سؤال / في نهاية الاختبار */
+  answerVisibility?: 'never' | 'afterEach' | 'atEnd'
+  /** المراجعة مفتوحة للجميع — بعد امتحان جميع الطلاب: يرى الطالب أسئلة الاختبار وأجوبته والأجوبة الصحيحة ودرجته في أي وقت */
+  reviewOpen?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -171,6 +269,12 @@ export interface ExamAttempt {
   startedAt: string
   submittedAt: string
   durationSeconds: number
+  /** تعديل يدوي من المعلم لتقدير الدرجة إذا شعر أن التصحيح الآلي غير عادل */
+  manualOverride?: {
+    score: number
+    reason?: string
+    at: string
+  }
 }
 
 // ---- الإعلانات ولوحة الشرف والملفات والروابط ----
@@ -180,7 +284,29 @@ export interface Announcement {
   title: string
   body: string
   pinned: boolean
+  /** الصفوف المستهدفة — فارغ = إعلان عام للجميع */
+  targetGradeIds?: string[]
   createdAt: string
+}
+
+/** رسالة داخل استفسار طالب (ليست محادثة مفتوحة — رسالة واحدة ورد عليها) */
+export interface InquiryMessage {
+  from: 'student' | 'teacher'
+  text: string
+  at: string
+}
+
+/** استفسار طالب: يرسل استفساراً واحداً ويرد المعلم، ويبقى مفتوحاً للرد التالي أو يُغلق */
+export interface InquiryThread {
+  id: string
+  studentId: string
+  studentName: string
+  gradeId?: string
+  groupId?: string
+  messages: InquiryMessage[]
+  status: 'open' | 'closed'
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Honoree {
@@ -191,6 +317,8 @@ export interface Honoree {
   reason: string
   month: number // 1-12
   year: number
+  /** مدة الظهور في لوحة الشرف بالأيام (الافتراضي 30) — إن تُرك فارغاً يُعرض طوال الشهر المحدد */
+  days?: number
   examId?: string
   score?: number
   autoPromoted?: boolean
@@ -259,7 +387,49 @@ import {
   pushYearArchives,
   pushSetting,
   pushExamAttempts,
+  pushManualGrades,
+  pushRegistrationRequests,
+  pushGroupTransferRequests,
+  pushStudentHistory,
+  pushStudentAccounts,
+  pushInquiries,
 } from "./supabase/sync"
+
+/**
+ * ترتيب الصفوف حسب المرحلة الدراسية المستخرجة من الاسم العربي
+ * (الأول، الثاني... العاشر) — ما لا يحمل اسماً ترتيبياً يبقى في آخر القائمة
+ * بنفس ترتيبه النسبي. الترتيب ثابت (stable) ولا يعيد خلط المتساوين.
+ */
+export function sortGradesByLevel<T extends { name: string }>(grades: T[]): T[] {
+  // أولاً المركبة (الحادي عشر...) ثم المفردة — لأن «الثاني» جزء من «الثاني عشر»
+  const ORDINALS: [string, number][] = [
+    ["الحادي عشر", 11],
+    ["الثاني عشر", 12],
+    ["الاول", 1], ["الثاني", 2], ["الثالث", 3], ["الرابع", 4], ["الخامس", 5],
+    ["السادس", 6], ["السابع", 7], ["الثامن", 8], ["التاسع", 9], ["العاشر", 10],
+  ]
+  const levelOf = (name: string): number => {
+    // طبّع الاسم: إزالة التطويل وتوحيد الهمزات والألف
+    const n = (name || "").replace(/\u0640/g, "").replace(/[أإآ]/g, "ا")
+    let ordinal = 0
+    for (const [word, value] of ORDINALS) {
+      const w = word.replace(/[أإآ]/g, "ا")
+      if (n.includes(w)) {
+        ordinal = value
+        break
+      }
+    }
+    if (ordinal === 0) return 999
+    // المرحلة تحدد الإزاحة: الابتدائي 1-6، الإعدادي 7-9، الثانوي 10-12
+    if (n.includes("الثانوي")) return 9 + ordinal
+    if (n.includes("الاعدادي")) return 6 + ordinal
+    return ordinal
+  }
+  return grades
+    .map((g, i) => ({ g, i, level: levelOf(g.name) }))
+    .sort((a, b) => (a.level - b.level) || (a.i - b.i))
+    .map(x => x.g)
+}
 
 // Helper functions
 export const getFromStorage = <T>(key: string): T[] => {
@@ -363,6 +533,59 @@ export const saveImportantLinks = (items: ImportantLink[]): void => {
   queuePush(() => pushImportantLinks(items))
 }
 
+// الدرجات اليدوية
+export const getManualGrades = (): ManualGrade[] => getFromStorage<ManualGrade>(STORAGE_KEYS.MANUAL_GRADES)
+export const saveManualGrades = (items: ManualGrade[]): void => {
+  saveToStorage(STORAGE_KEYS.MANUAL_GRADES, items)
+  queuePush(() => pushManualGrades(items))
+}
+
+// طلبات التسجيل
+export const getRegistrationRequests = (): RegistrationRequest[] => getFromStorage<RegistrationRequest>(STORAGE_KEYS.REGISTRATION_REQUESTS)
+export const saveRegistrationRequests = (items: RegistrationRequest[]): void => {
+  saveToStorage(STORAGE_KEYS.REGISTRATION_REQUESTS, items)
+  queuePush(() => pushRegistrationRequests(items))
+}
+
+// طلبات نقل المجموعة
+export const getGroupTransferRequests = (): GroupTransferRequest[] => getFromStorage<GroupTransferRequest>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
+export const saveGroupTransferRequests = (items: GroupTransferRequest[]): void => {
+  saveToStorage(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, items)
+  queuePush(() => pushGroupTransferRequests(items))
+}
+
+// سجل نشاط الطلاب
+export const getStudentHistory = (): StudentHistoryEvent[] => getFromStorage<StudentHistoryEvent>(STORAGE_KEYS.STUDENT_HISTORY)
+export const saveStudentHistory = (items: StudentHistoryEvent[]): void => {
+  saveToStorage(STORAGE_KEYS.STUDENT_HISTORY, items)
+  queuePush(() => pushStudentHistory(items))
+}
+
+/** إضافة حدث لسجل نشاط طالب (اختصار) */
+export const addStudentHistoryEvent = (event: Omit<StudentHistoryEvent, 'id' | 'createdAt'>): StudentHistoryEvent => {
+  const full: StudentHistoryEvent = {
+    ...event,
+    id: `h-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+  }
+  saveStudentHistory([...getStudentHistory(), full])
+  return full
+}
+
+// حسابات بوابة الطلاب
+export const getStudentAccounts = (): StudentAccount[] => getFromStorage<StudentAccount>(STORAGE_KEYS.STUDENT_ACCOUNTS)
+
+// ---------- الاستفسارات ----------
+export const getInquiries = (): InquiryThread[] => getFromStorage<InquiryThread>(STORAGE_KEYS.INQUIRIES)
+export const saveInquiries = (items: InquiryThread[]): void => {
+  saveToStorage(STORAGE_KEYS.INQUIRIES, items)
+  queuePush(() => pushInquiries(items))
+}
+export const saveStudentAccounts = (items: StudentAccount[]): void => {
+  saveToStorage(STORAGE_KEYS.STUDENT_ACCOUNTS, items)
+  queuePush(() => pushStudentAccounts(items))
+}
+
 // ---- إدارة العام الدراسي ----
 
 /**
@@ -414,7 +637,9 @@ export const saveYearArchives = (archives: YearArchive[]): void => {
 // إعدادات عامة (مفتاح/قيمة) — مثل رقم واتساب التواصل
 export const getSetting = (key: string, fallback = ""): string => {
   if (typeof window === "undefined") return fallback
-  return localStorage.getItem(key) || fallback
+  // ملاحظة: القيمة الفارغة "" مقصودة (مثلاً إغلاق التسجيل) — لا تُستبدل بالافتراضي
+  const v = localStorage.getItem(key)
+  return v === null ? fallback : v
 }
 
 export const saveSetting = (key: string, value: string): void => {
@@ -496,8 +721,16 @@ export const deleteYearArchive = (academicYear: string): void => {
 
 // ---- لوحة الشرف: helpers ----
 
-/** هل الدخول في لوحة الشرف معروض حالياً؟ (يُعرض طوال الشهر والعام المحددين) */
+/**
+ * هل المكرَّم معروض حالياً في لوحة الشرف؟
+ *  - إن حدد المعلم مدة بالأيام (الافتراضي عند الإضافة 30): يُعرض من لحظة الإضافة حتى انتهاء المدة.
+ *  - السجلات القديمة (بدون مدة): تُعرض طوال الشهر والعام المحددين (السلوك السابق).
+ */
 export const isHonoreeActive = (honoree: Honoree, now: Date = new Date()): boolean => {
+  if (honoree.days && honoree.days > 0 && honoree.createdAt) {
+    const end = new Date(honoree.createdAt).getTime() + honoree.days * 24 * 60 * 60 * 1000
+    return now.getTime() <= end
+  }
   return honoree.month === now.getMonth() + 1 && honoree.year === now.getFullYear()
 }
 

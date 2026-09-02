@@ -18,7 +18,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useRouter } from "next/navigation"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import toast from "react-hot-toast"
-import { TeacherSignature } from "@/components/teacher-signature"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -117,7 +116,7 @@ export default function LoginPage() {
                 <BookOpen className="w-8 h-8 text-white" />
               </div>
             </div>
-            <CardTitle className="text-3xl font-bold">نظام إدارة الدروس</CardTitle>
+            <CardTitle className="text-3xl font-bold">أ/ ضحى العربي</CardTitle>
             <CardDescription>
               {!showForgotPassword 
                 ? "سجل دخولك للوصول إلى لوحة التحكم" 
@@ -241,7 +240,6 @@ export default function LoginPage() {
 
           </CardContent>
         </Card>
-        <TeacherSignature compact className="mt-6" />
       </motion.div>
     </div>
   )

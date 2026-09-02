@@ -24,22 +24,17 @@ src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
-// بدائل محلية
+// بدائل محلية — مفاتيح التخزين تُقرأ من الملف الحقيقي (أي مفاتيح جديدة تُلتقط تلقائياً)
 src =
   weekdays + "\n" +
-  `const STORAGE_KEYS = ${JSON.stringify({
-    GRADES: "grades", STUDENTS: "students", DUES: "dues", PAYMENTS: "payments",
-    EXAMS: "exams", SESSIONS: "sessions", ATTENDANCE: "attendance",
-    EXAM_ATTEMPTS: "examAttempts",
-    ANNOUNCEMENTS: "announcements", HONOREES: "honorees", SHARED_FILES: "sharedFiles",
-    IMPORTANT_LINKS: "importantLinks", CURRENT_ACADEMIC_YEAR: "currentAcademicYear",
-    YEAR_ARCHIVES: "yearArchives",
-  })};\n` +
+  readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "") + "\n" +
   `const queuePush = () => {};\n` +
   [
     "pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
     "pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles",
     "pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts",
+    "pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests",
+    "pushStudentHistory","pushStudentAccounts",
   ].map((f) => `const ${f} = () => Promise.resolve();`).join("\n") +
   "\n" + src
 
@@ -200,6 +195,48 @@ t("المكرَّم يظهر في شهره فقط", () => {
   const h = { id: "h", studentName: "أحمد", groupId: "g", reason: "تفوق", month: 9, year: 2026, createdAt: "" }
   eq(mod.isHonoreeActive(h, new Date("2026-09-10")), true, "سبتمبر:")
   eq(mod.isHonoreeActive(h, new Date("2026-10-10")), false, "أكتوبر:")
+})
+t("مدة الأيام تتحكم في الظهور (افتراضي 30 يوم من لحظة الإضافة)", () => {
+  const base = new Date("2026-09-01T10:00:00Z")
+  const withDays = { id: "hd", studentName: "سارة", groupId: "g", reason: "مشاركة", month: 9, year: 2026, days: 30, createdAt: base.toISOString() }
+  eq(mod.isHonoreeActive(withDays, new Date("2026-09-20T10:00:00Z")), true, "اليوم 19 من 30:")
+  eq(mod.isHonoreeActive(withDays, new Date("2026-10-02T10:01:00Z")), false, "بعد 30 يوماً + دقيقة:")
+  eq(mod.isHonoreeActive(withDays, new Date("2026-10-10")), false, "بعد المدة في شهر آخر:")
+  const seven = { ...withDays, days: 7 }
+  eq(mod.isHonoreeActive(seven, new Date("2026-09-07T10:00:00Z")), true, "آخر لحظة من 7 أيام:")
+  eq(mod.isHonoreeActive(seven, new Date("2026-09-09T10:00:00Z")), false, "بعد 7 أيام:")
+  // بدون days → السلوك القديم (الشهر كاملاً)
+  const legacy = { id: "hl", studentName: "كريم", groupId: "g", reason: "تفوق", month: 9, year: 2026, createdAt: base.toISOString() }
+  eq(mod.isHonoreeActive(legacy, new Date("2026-09-30")), true, "بدون days — نهاية الشهر:")
+})
+
+console.log("\n\x1b[1mسيناريو 7-ب: ترتيب الصفوف حسب المرحلة\x1b[0m")
+t("sortGradesByLevel يرتب بالاسم العربي: الرابع → السادس → الثانوي → الخامس في الآخر", () => {
+  const input = [
+    { name: "الصف السادس" },
+    { name: "الصف الرابع" },
+    { name: "الصف الثالث الثانوي" },
+    { name: "الصف الأول" },
+    { name: "مجموعة خاصة" },
+    { name: "الصف الخامس" },
+  ]
+  const out = mod.sortGradesByLevel(input)
+  const names = out.map(g => g.name)
+  const idx = (n) => names.indexOf(n)
+  eq(idx("الصف الأول") < idx("الصف الرابع"), true, "الأول قبل الرابع")
+  eq(idx("الصف الرابع") < idx("الصف السادس"), true, "الرابع قبل السادس")
+  eq(idx("الصف السادس") < idx("الصف الثالث الثانوي"), true, "السادس (6) قبل الثالث الثانوي (12)")
+  eq(idx("الصف الخامس") < idx("الصف الثالث الثانوي"), true, "الخامس (5) قبل الثانوي (12) — المرحلة تحدد")
+  eq(idx("الصف الثالث الثانوي") < idx("مجموعة خاصة"), true, "غير المسماي ترتيبياً في الآخر")
+})
+t("الترتيب ثابت للمتساويين (لا يخلط المجموعات الخاصة ببعضها)", () => {
+  const input = [
+    { name: "فريقA" },
+    { name: "فريقB" },
+    { name: "فريقC" },
+  ]
+  const out = mod.sortGradesByLevel(input).map(g => g.name)
+  eq(out.join("|"), "فريقA|فريقB|فريقC", "نفس الترتيب النسبي:")
 })
 
 console.log("\n\x1b[1mسيناريو 8: getAllGroups يربط الصف بالمجموعة\x1b[0m")

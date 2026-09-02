@@ -89,10 +89,12 @@ CREATE TABLE students (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   phone TEXT,
+  email TEXT,
   grade_id TEXT REFERENCES grades(id) ON DELETE SET NULL,
   group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'active',
   notes TEXT,
+  inquiry_blocked BOOLEAN DEFAULT FALSE,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
