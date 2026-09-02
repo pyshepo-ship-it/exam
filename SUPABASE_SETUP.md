@@ -60,6 +60,8 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGc...
 ```
 
+**مهم**: لا تفعّل خيار **Contains secret values** لهذين المتغيرين. هما عامّان (`NEXT_PUBLIC_`) ويجب أن يظهرا في كود المتصفح. تفعيل الخيار يجعل Netlify يفشل البناء عند فحص الأسرار.
+
 8. اضغط **Deploy site**
 
 ### 6️⃣ إعداد Netlify في Supabase
@@ -168,6 +170,18 @@ https://your-site-name.netlify.app
 - تأكد من إضافة المتغيرات البيئية
 - تحقق من **Deploy logs** في Netlify
 - تأكد من صحة المفاتيح
+
+### "Secrets scanning found secrets in build"
+
+Netlify يفحص مخرجات البناء عن قيم المتغيرات البيئية. مفاتيح `NEXT_PUBLIC_SUPABASE_URL` و `NEXT_PUBLIC_SUPABASE_ANON_KEY` عامة عمداً (Next.js يضعها في كود المتصفح، وSupabase يعتمد على RLS للحماية).
+
+المشروع يعطّل فحص هذين المفتاحين عبر `SECRETS_SCAN_OMIT_KEYS` في `netlify.toml`. لا تعطّل فحص الأسرار بالكامل (`SECRETS_SCAN_ENABLED=false`).
+
+إذا استمر الفشل، أضف نفس المتغير في Netlify Dashboard:
+
+```
+SECRETS_SCAN_OMIT_KEYS=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY
+```
 
 ---
 
