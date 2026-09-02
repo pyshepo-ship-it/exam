@@ -148,6 +148,15 @@ function writeRateMap(map: Record<string, RateEntry>): void {
   try { localStorage.setItem(RATE_LIMITS_KEY, JSON.stringify(map)) } catch { /* تجاهل */ }
 }
 
+/** فحص الحد فقط دون زيادة العداد — الزيادة تتم عند نجاح العملية فقط */
+function checkRate(bucket: string, max: number, windowMs: number): boolean {
+  if (typeof window === "undefined") return true
+  const entry = readRateMap()[bucket]
+  const now = Date.now()
+  if (!entry || now - entry.windowStart >= windowMs) return true
+  return entry.count < max
+}
+
 /** يسمح بعملية داخل نافذة زمنية — ويزيد العداد إن سمح */
 function consumeRate(bucket: string, max: number, windowMs: number): boolean {
   if (typeof window === "undefined") return true
@@ -191,12 +200,18 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
   }
 
-  // حدود الطلبات: حماية من إغراق النظام بطلبات وهمية
-  if (!consumeRate("reg-device", 1, 10 * 60 * 1000)) {
-    return { ok: false, error: `أرسلت طلباً حديثاً — انتظر ${minutesLeftInWindow("reg-device", 10 * 60 * 1000)} دقيقة قبل المحاولة مرة أخرى` }
+  // حماية من الإغراق فقط — وليست عرقلة لإعادة المحاولة:
+  // أكثر من 5 محاولات في نفس الدقيقة، أو 20 محاولة في الساعة من نفس الجهاز.
+  // مهم: العدّاد لا يزيد إلا عند نجاح الإرسال — أي خطأ (تحقق أو قاعدة بيانات)
+  // لا يحسب ولا يحظر الطالب من إعادة المحاولة فوراً.
+  if (!checkRate("reg-device-min", 5, 60 * 1000)) {
+    return { ok: false, error: `محاولات كثيرة جداً — انتظر ${minutesLeftInWindow("reg-device-min", 60 * 1000)} دقيقة ثم حاول مجدداً` }
   }
-  if (!consumeRate("reg-global", 20, 60 * 60 * 1000)) {
-    return { ok: false, error: "عدد كبير من طلبات التسجيل في الساعة — يرجى المحاولة لاحقاً" }
+  if (!checkRate("reg-device-hour", 20, 60 * 60 * 1000)) {
+    return { ok: false, error: `محاولات كثيرة خلال الساعة — انتظر ${minutesLeftInWindow("reg-device-hour", 60 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+  }
+  if (!checkRate("reg-global", 100, 60 * 60 * 1000)) {
+    return { ok: false, error: "عدد كبير جداً من طلبات التسجيل في الساعة — يرجى المحاولة لاحقاً" }
   }
   const name = (input.name || "").trim()
   const phone = normalizeDigits((input.phone || "")).replace(/[\s-]/g, "")
@@ -254,11 +269,16 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
 
   const res = await submitRegistrationRequest(request)
   if (!res.ok) {
+    // فشل الإرسال لا يُحسب ضمن الحد — الطالب يعيد المحاولة فوراً
     return { ok: false, error: `تعذر إرسال الطلب: ${res.error}` }
   }
+  // نجاح الإرسال فقط يزيد عدّادات الحماية
+  consumeRate("reg-device-min", 5, 60 * 1000)
+  consumeRate("reg-device-hour", 20, 60 * 60 * 1000)
+  consumeRate("reg-global", 100, 60 * 60 * 1000)
   return {
     ok: true,
-    message: "تم إرسال طلب التسجيل بنجاح ✅ — سيتمكنك من تسجيل الدخول بعد موافقة المعلم على طلبك",
+    message: "تم إرسال طلب التسجيل بنجاح ✅ — انتظر موافقة المعلم ثم سجّل الدخول بنفس البريد وكلمة المرور",
   }
 }
 

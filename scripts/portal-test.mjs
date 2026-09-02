@@ -445,13 +445,27 @@ SA.removeStudentPortalAccount(saraId)
 eq("حذف الحساب يزيل ربط البريد", !DS.getStudentAccounts().some(a => a.studentId === saraId))
 
 // ============================================================
-section("سيناريو 8-ب: حدود الطلبات (الحماية من الإغراق)")
+section("سيناريو 8-ب: حدود الطلبات (حماية من الإغراق دون عرقلة إعادة المحاولة)")
 
 SA.resetRateLimits()
-await SA.registerStudentAccount({ name: "طالب الحد الأول", phone: "01200000021", guardianPhone: "01200000091", email: "limit1@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
-const limit2 = await SA.registerStudentAccount({ name: "طالب الحد الثاني", phone: "01200000022", guardianPhone: "01200000092", email: "limit2@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
-eq("طلب ثانٍ بعد 10 دقائق أقل → محجوب (حد الجهاز)", limit2.ok === false && /انتظر/.test(limit2.error || ""), limit2.error || "")
+// الفشل (خطأ تحقق) لا يحسب ضمن الحد — ولا يمنع إعادة المحاولة
+for (let i = 0; i < 3; i++) {
+  await SA.registerStudentAccount({ name: "طالب فاشل بالتحقق", phone: "01200000071", guardianPhone: "", email: `fail-attempt-${i}@test.com`, password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+}
+const ordNames = ["الأول", "الثاني", "الثالث", "الرابع", "الخامس"]
+let okCount = 0
+let lastMsg = ""
+for (let i = 0; i < 5; i++) {
+  const r = await SA.registerStudentAccount({ name: `طالب الحد ${ordNames[i]}`, phone: `0120000008${i}`, guardianPhone: `0120000009${i}`, email: `limit-ok-${i}@test.com`, password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+  if (r.ok) { okCount++; lastMsg = r.message || "" }
+}
+eq("الفشل لا يحسب: 5 تسجيلات ناجحة متتالية مسموحة (لا قيد 10 دقائق)", okCount === 5, `نجح ${okCount}`)
+eq("رسالة النجاح توضح انتظار موافقة المعلم", /موافقة المعلم/.test(lastMsg))
+const sixth = await SA.registerStudentAccount({ name: "طالب الحد السادس", phone: "01200000086", guardianPhone: "01200000096", email: "limit-ok-6@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+eq("المحاولة السادسة في نفس الدقيقة → محجوبة (حماية الإغراق فقط)", sixth.ok === false && /محاولات كثيرة/.test(sixth.error || ""), sixth.error || "")
 SA.resetRateLimits()
+const afterReset = await SA.registerStudentAccount({ name: "طالب بعد التصفير", phone: "01200000087", guardianPhone: "01200000097", email: "limit-after-reset@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+eq("بعد تصفير الحد → التسجيل يعمل فوراً برسالة انتظار الموافقة", afterReset.ok === true && /موافقة المعلم/.test(afterReset.message || ""), afterReset.error || "")
 
 // حد محاولات الدخول الفاشلة: 5/15 دقيقة
 const mohamedMail = "mohamed@test.com"

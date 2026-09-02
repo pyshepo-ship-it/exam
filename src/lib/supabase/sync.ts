@@ -837,8 +837,8 @@ export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
 
 /** الطالب يرسل استفساراً جديداً — حفظ محلي أولاً ثم إدراج في Supabase */
 export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; error?: string }> {
+  const local = localRows<any>(STORAGE_KEYS.INQUIRIES)
   try {
-    const local = localRows<any>(STORAGE_KEYS.INQUIRIES)
     localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify([...local, thread]))
   } catch { /* تجاهل */ }
   const sb = getSupabase()
@@ -846,6 +846,8 @@ export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; e
   const { error } = await sb.from("inquiries").insert(toInquiryRow(thread))
   if (error) {
     console.warn("submitInquiryThread:", error)
+    // تراجع — الطالب يعيد إرسال استفساره دون اعتراض «لديك استفسار مفتوح»
+    try { localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify(local)) } catch { /* تجاهل */ }
     return { ok: false, error: explainSupabaseError(error) }
   }
   return { ok: true }
@@ -1216,6 +1218,8 @@ export async function submitRegistrationRequest(request: any): Promise<{ ok: boo
   const { error } = await sb.from("registration_requests").insert(toRegistrationRequestRow(request))
   if (error) {
     console.warn("submitRegistrationRequest:", error)
+    // تراجع عن الحفظ المحلي — حتى لا يُعتبر البريد «مستخدماً» ويستطيع الطالب إعادة المحاولة فوراً
+    try { localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify(local)) } catch { /* تجاهل */ }
     return { ok: false, error: explainSupabaseError(error) }
   }
   return { ok: true }
@@ -1226,12 +1230,16 @@ export async function submitGroupTransferRequest(request: any): Promise<{ ok: bo
   const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
   const next = [...local, request]
   localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify(next))
+  const rollbackLocal = () => {
+    try { localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify(local)) } catch { /* تجاهل */ }
+  }
 
   const sb = getSupabase()
   if (!sb) return { ok: true }
   const { error } = await sb.from("group_transfer_requests").insert(toGroupTransferRequestRow(request))
   if (error) {
     console.warn("submitGroupTransferRequest:", error)
+    rollbackLocal()
     return { ok: false, error: explainSupabaseError(error) }
   }
   return { ok: true }
