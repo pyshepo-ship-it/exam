@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS students (
   group_id TEXT REFERENCES groups(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'active',
   notes TEXT,
+  inquiry_blocked BOOLEAN DEFAULT FALSE,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

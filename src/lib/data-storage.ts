@@ -27,6 +27,8 @@ export interface Student {
   groupId: string
   status: 'active' | 'inactive'
   notes?: string
+  /** إغلاق قناة الاستفسار لهذا الطالب تماماً — قرار المعلم */
+  inquiryBlocked?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -106,6 +108,8 @@ export interface StudentAccount {
   studentId: string
   /** منع الطالب من تسجيل الدخول دون حذف بياناته */
   active: boolean
+  /** بصمة كلمة المرور الحالية — تُحدَّث عند إعادة التعيين من المعلم */
+  passwordHash?: string
   createdAt: string
 }
 

@@ -20,6 +20,14 @@ ALTER TABLE announcements
 ALTER TABLE registration_requests
   ADD COLUMN IF NOT EXISTS guardian_phone TEXT;
 
+-- كلمة المرور بصمة SHA-256 (إعادة التعيين من المعلم)
+ALTER TABLE student_accounts
+  ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+-- إغلاق قناة الاستفسار لطالب معيّن (قرار المعلم)
+ALTER TABLE students
+  ADD COLUMN IF NOT EXISTS inquiry_blocked BOOLEAN DEFAULT FALSE;
+
 -- 3) التعديل اليدوي لدرجة الاختبار
 ALTER TABLE exam_attempts
   ADD COLUMN IF NOT EXISTS manual_override JSONB;

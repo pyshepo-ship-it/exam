@@ -17,6 +17,12 @@ import {
   MessageCircleQuestion,
   Reply,
   Lock,
+  Loader2,
+  KeyRound,
+  Copy,
+  ShieldQuestion,
+  VolumeX,
+  Volume2,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -44,15 +50,21 @@ import {
 } from "@/lib/data-storage"
 import {
   approveRegistrationRequest,
+  approveRegistrationRequestAsNew,
+  approveRegistrationRequestWithStudent,
   rejectRegistrationRequest,
   approveGroupTransferRequest,
   rejectGroupTransferRequest,
   findMatchingStudent,
+  fulfillRecoveryByTeacher,
 } from "@/lib/student-accounts"
+import { forcePushAll } from "@/lib/supabase/sync"
 import {
   getInquiries,
   teacherReplyInquiry,
   teacherCloseInquiry,
+  isInquiryChannelClosed,
+  setStudentInquiryChannel,
 } from "@/lib/inquiries"
 import type { InquiryThread } from "@/lib/data-storage"
 
@@ -73,6 +85,30 @@ export default function RequestsPage() {
   const [inquiries, setInquiries] = useState<InquiryThread[]>([])
   const [replyTarget, setReplyTarget] = useState<InquiryThread | null>(null)
   const [replyText, setReplyText] = useState("")
+  // حوار القرار عند وجود تشابه بالاسم فقط (دمج أو جديد أو رفض)
+  const [decisionTarget, setDecisionTarget] = useState<RegistrationRequest | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  // استرجاع كلمة مرور طالب
+  const [recoveryBusyId, setRecoveryBusyId] = useState<string | null>(null)
+  const [recoveryResult, setRecoveryResult] = useState<{ name: string; password: string } | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  // سحب الطلبات الجديدة من الموقع قبل عرض القائمة (الطلبات تصل من أجهزة الطلاب)
+  const pullThenRefresh = async () => {
+    setSyncing(true)
+    try {
+      await forcePushAll().catch(() => {})
+      const { pullAllData } = await import("@/lib/supabase/sync")
+      await pullAllData().catch(() => {})
+    } catch { /* تجاهل — الوضع المحلي يعمل بدونها */ }
+    setSyncing(false)
+    refresh()
+  }
+
+  useEffect(() => {
+    pullThenRefresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [rejectTarget, setRejectTarget] = useState<{ kind: "reg" | "transfer"; id: string; name: string } | null>(null)
   const [rejectNote, setRejectNote] = useState("")
 
@@ -117,13 +153,84 @@ export default function RequestsPage() {
     return last && last.from === "student"
   }).length
 
-  const handleApproveReg = (r: RegistrationRequest) => {
-    const res = approveRegistrationRequest(r.id)
+  const afterApprove = async (res: { ok: boolean; message: string }) => {
     if (res.ok) {
       toast.success(res.message, { duration: 6000 })
+      // مزامنة فورية: الطالب ينتظر دخوله على جهاز آخر
+      setSyncing(true)
+      try { await forcePushAll() } catch { /* تجاهل */ }
+      setSyncing(false)
       refresh()
     } else {
       toast.error(res.message)
+    }
+  }
+
+  const handleApproveReg = (r: RegistrationRequest) => {
+    // تشابه الاسم فقط (بدون هاتف) → المعلم يقرر: دمج أو طالب جديد أو رفض
+    const match = findMatchingStudent(r)
+    const sameNameOnly = match && (!match.phone || match.phone.replace(/\D/g, "") !== r.phone.replace(/\D/g, ""))
+    if (sameNameOnly) {
+      setDecisionTarget(r)
+      return
+    }
+    const res = approveRegistrationRequest(r.id)
+    afterApprove(res)
+  }
+
+  const decideAsNew = () => {
+    if (!decisionTarget) return
+    const res = approveRegistrationRequestAsNew(decisionTarget.id)
+    setDecisionTarget(null)
+    afterApprove(res)
+  }
+
+  const decideMerge = () => {
+    if (!decisionTarget) return
+    const res = approveRegistrationRequestWithStudent(decisionTarget.id)
+    setDecisionTarget(null)
+    afterApprove(res)
+  }
+
+  const decideReject = () => {
+    if (!decisionTarget) return
+    const res = rejectRegistrationRequest(decisionTarget.id, "البيانات غير مؤكدة — راجع المعلم")
+    setDecisionTarget(null)
+    if (res.ok) {
+      toast.success(res.message)
+      refresh()
+    } else {
+      toast.error(res.message)
+    }
+  }
+
+  // الطالب طلب إعادة تعيين كلمة مروره → المعلم ينشئ كلمة مؤقتة ويسلمها له
+  const handleFulfillRecovery = async (r: RegistrationRequest) => {
+    setRecoveryBusyId(r.id)
+    try {
+      const res = await fulfillRecoveryByTeacher(r.id)
+      if (res.ok) {
+        setRecoveryResult({ name: r.name, password: res.temporaryPassword })
+        setCopied(false)
+        toast.success("تم إنشاء كلمة المرور المؤقتة")
+        await forcePushAll().catch(() => {})
+        refresh()
+      } else {
+        toast.error(res.message)
+      }
+    } finally {
+      setRecoveryBusyId(null)
+    }
+  }
+
+  const copyRecoveryPassword = async () => {
+    if (!recoveryResult) return
+    try {
+      await navigator.clipboard.writeText(recoveryResult.password)
+      setCopied(true)
+      toast.success("تم نسخ كلمة المرور")
+    } catch {
+      toast.error("انسخها يدوياً من الصندوق")
     }
   }
 
@@ -160,11 +267,17 @@ export default function RequestsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">طلبات الطلاب</h1>
-        <p className="text-gray-500 dark:text-gray-400">
-          طلبات التسجيل الجديد وطلبات الانضمام لمجموعات أخرى — لا يستطيع الطالب الدخول أو النقل إلا بعد موافقتك
-        </p>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">طلبات الطلاب</h1>
+          <p className="text-gray-500 dark:text-gray-400">
+            طلبات التسجيل الجديد وطلبات الانضمام لمجموعات أخرى — لا يستطيع الطالب الدخول أو النقل إلا بعد موافقتك
+          </p>
+        </div>
+        <Button variant="outline" onClick={pullThenRefresh} disabled={syncing} className="border-indigo-400 text-indigo-600 shrink-0">
+          {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+          <span>{syncing ? "جاري المزامنة..." : "تحديث الطلبات من الموقع"}</span>
+        </Button>
       </motion.div>
 
       {/* Tabs */}
@@ -197,6 +310,32 @@ export default function RequestsPage() {
       {/* ============ طلبات التسجيل ============ */}
       {tab === "registrations" && (
         <div className="space-y-4">
+          {/* طلبات استرجاع كلمة المرور — تظهر أولاً ولا تُفقد بين الطلبات */}
+          {regRequests.filter(r => (r.reviewNote || "").includes("إعادة تعيين كلمة المرور")).map(r => (
+            <Card key={`rec-${r.id}`} className="bg-violet-50/80 dark:bg-violet-950/30 border-2 border-violet-400 dark:border-violet-800">
+              <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <ShieldQuestion className="w-6 h-6 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-violet-800 dark:text-violet-300">
+                      الطالب «{r.name}» يطلب إعادة تعيين كلمة المرور
+                    </p>
+                    <p className="text-xs text-violet-700/80 dark:text-violet-400/80 mt-0.5">
+                      نسى كلمته — أنشئ كلمة مرور مؤقتة جديدة وأبلغه بها ({r.email})
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={() => handleFulfillRecovery(r)}
+                  disabled={recoveryBusyId === r.id}
+                  className="bg-violet-600 hover:bg-violet-700 text-white shrink-0"
+                >
+                  {recoveryBusyId === r.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                  <span>إنشاء كلمة مرور مؤقتة</span>
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
           {sortedReg.length === 0 ? (
             <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
               <CardContent className="py-12 text-center">
@@ -231,14 +370,20 @@ export default function RequestsPage() {
                         {/* معاينة الربط قبل الموافقة */}
                         {r.status === "pending" && (
                           match ? (
-                            <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-sm">
-                              <p className="font-bold text-blue-800 dark:text-blue-300 flex items-center gap-1.5">
+                            <div className={`rounded-xl border p-3 text-sm ${(!match.phone || match.phone.replace(/\D/g, "") !== r.phone.replace(/\D/g, "")) ? "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800" : "bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800"}`}>
+                              <p className={`font-bold flex items-center gap-1.5 ${(!match.phone || match.phone.replace(/\D/g, "") !== r.phone.replace(/\D/g, "")) ? "text-amber-800 dark:text-amber-300" : "text-blue-800 dark:text-blue-300"}`}>
                                 <Link2 className="w-4 h-4" />
                                 يبدو مطابقاً للطالب المسجل: «{match.name}» {match.phone ? `(هاتفه: ${match.phone})` : ""}
                               </p>
-                              <p className="text-xs text-blue-700/80 dark:text-blue-400/80 mt-1">
-                                عند الموافقة: ستُحدَّث بياناته اليدوية ببيانات الطلب (الاسم/الهاتف/البريد) ويُنقل إلى المجموعة المطلوبة إن اختلف — ويُسجَّل ذلك في سجله.
-                              </p>
+                              {(!match.phone || match.phone.replace(/\D/g, "") !== r.phone.replace(/\D/g, "")) ? (
+                                <p className="text-xs text-amber-700/90 dark:text-amber-400/90 mt-1">
+                                  ⚠️ التشابه **بالاسم فقط** والهاتف مختلف — عند الضغط على موافقة ستختار بنفسك: دمجه بالطالب الموجود، أو قبوله كطالب جديد، أو رفضه.
+                                </p>
+                              ) : (
+                                <p className="text-xs text-blue-700/80 dark:text-blue-400/80 mt-1">
+                                  تطابق الاسم والهاتف — عند الموافقة ستُحدَّث بياناته ويُربط الحساب مباشرة.
+                                </p>
+                              )}
                             </div>
                           ) : (
                             <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 text-sm">
@@ -381,14 +526,20 @@ export default function RequestsPage() {
               })
               .map(t => {
                 const waiting = t.status === "open" && t.messages[t.messages.length - 1]?.from === "student"
+                const channelClosed = isInquiryChannelClosed(t.studentId)
                 return (
-                  <Card key={t.id} className={`bg-white dark:bg-gray-900 border ${waiting ? "border-sky-300 dark:border-sky-800" : "border-gray-200 dark:border-gray-800"}`}>
+                  <Card key={t.id} className={`bg-white dark:bg-gray-900 border ${channelClosed ? "border-red-300 dark:border-red-900" : waiting ? "border-sky-300 dark:border-sky-800" : "border-gray-200 dark:border-gray-800"}`}>
                     <CardContent className="p-5 space-y-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <h3 className="font-bold text-lg text-gray-900 dark:text-white">{t.studentName}</h3>
                         <Badge className={t.status === "closed" ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" : waiting ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300" : "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"}>
                           {t.status === "closed" ? "مغلق 🔒" : waiting ? "بانتظار ردك" : "تم الرد — مفتوح للطالب"}
                         </Badge>
+                        {channelClosed && (
+                          <Badge className="bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300">
+                            قناة الاستفسار مغلقة تماماً ⛔
+                          </Badge>
+                        )}
                         <span className="text-xs text-gray-400">
                           {gradeName(t.gradeId || "")}{t.groupId ? ` — ${groupName(t.groupId)}` : ""}
                         </span>
@@ -441,6 +592,30 @@ export default function RequestsPage() {
                           </Button>
                         </div>
                       )}
+
+                      {/* قفل قناة الاستفسار لهذا الطالب تماماً — قرار يبقى حتى لو فتح استفسارات جديدة */}
+                      <div className="flex items-center justify-between gap-2 pt-1 border-t border-dashed border-gray-200 dark:border-gray-800">
+                        <p className="text-xs text-gray-400">
+                          {channelClosed
+                            ? "لا يستطيع الطالب إرسال أي استفسار جديد حتى تفتح القناة"
+                            : "لإيقاف إزعاج هذا الطالب: أغلق قناته تماماً فلن يستطيع الإرسال إطلاقاً"}
+                        </p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const studentId = t.studentId
+                            const res = setStudentInquiryChannel(studentId, !channelClosed)
+                            if (res.ok) { toast.success(res.message || "تم"); refresh(); forcePushAll().catch(() => {}) } else toast.error(res.error || "تعذر التنفيذ")
+                          }}
+                          className={channelClosed
+                            ? "border-emerald-400 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 shrink-0"
+                            : "border-red-400 text-red-600 hover:bg-red-50 dark:hover:bg-red-950 shrink-0"}
+                        >
+                          {channelClosed ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                          <span>{channelClosed ? "إعادة فتح القناة" : "إغلاق القناة تماماً"}</span>
+                        </Button>
+                      </div>
                     </CardContent>
                   </Card>
                 )
@@ -491,6 +666,59 @@ export default function RequestsPage() {
         </DialogContent>
       </Dialog>
 
+      {/* حوار القرار: تشابه بالاسم فقط — دمج / جديد / رفض */}
+      <Dialog open={!!decisionTarget} onOpenChange={open => !open && setDecisionTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تشابه بالاسم فقط — ماذا تريد أن تفعل؟</DialogTitle>
+            <DialogDescription>
+              الطلب باسم «{decisionTarget?.name}» وهاتف مختلف عن الطالب المسجل «{decisionTarget ? findMatchingStudent(decisionTarget)?.name : ""}» — القرار لك: قد يكونان نفس الطالب بتغيّر رقمه، وقد يكونان طالبين مختلفين بنفس الاسم
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-3">
+            <button
+              onClick={decideMerge}
+              className="w-full text-right rounded-xl border-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 hover:border-blue-500 p-4 transition-all"
+            >
+              <p className="font-extrabold text-blue-700 dark:text-blue-300 flex items-center gap-2">
+                <Link2 className="w-5 h-5" />
+                نفس الطالب — ادمج الطلب ببياناته الموجودة
+              </p>
+              <p className="text-xs text-blue-600/80 dark:text-blue-400/80 mt-1">
+                يُحدّث اسمه وهاتفه وبريده وينتقل لمجموعته المطلوبة — ويُسجَّل الدمج في سجله
+              </p>
+            </button>
+            <button
+              onClick={decideAsNew}
+              className="w-full text-right rounded-xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 hover:border-emerald-500 p-4 transition-all"
+            >
+              <p className="font-extrabold text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                <Sparkles className="w-5 h-5" />
+                طالبان مختلفان — اقبله كطالب جديد
+              </p>
+              <p className="text-xs text-emerald-600/80 dark:text-emerald-400/80 mt-1">
+                يُنشأ طالب مستقل كامل على مجموعته المطلوبة دون المساس ببيانات الطالب الآخر
+              </p>
+            </button>
+            <button
+              onClick={decideReject}
+              className="w-full text-right rounded-xl border-2 border-red-300 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20 hover:border-red-500 p-4 transition-all"
+            >
+              <p className="font-extrabold text-red-700 dark:text-red-300 flex items-center gap-2">
+                <XCircle className="w-5 h-5" />
+                الطلب مشبوه — ارفضه تماماً
+              </p>
+              <p className="text-xs text-red-600/80 dark:text-red-400/80 mt-1">
+                لن يتمكن من الدخول ويمكنه إعادة التقديم بعد توضيح بياناته
+              </p>
+            </button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDecisionTarget(null)}>تراجع</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* حوار الرفض مع سبب */}
       <Dialog open={!!rejectTarget} onOpenChange={open => !open && setRejectTarget(null)}>
         <DialogContent>
@@ -524,6 +752,33 @@ export default function RequestsPage() {
             >
               <XCircle className="w-4 h-4" />
               <span>تأكيد الرفض</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* كلمة المرور المؤقتة الناتجة عن الاسترجاع */}
+      <Dialog open={!!recoveryResult} onOpenChange={open => { if (!open) setRecoveryResult(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>كلمة المرور المؤقتة جاهزة ✅</DialogTitle>
+            <DialogDescription>
+              أبلغ الطالب «{recoveryResult?.name}» بدخولها في صفحة دخول الطلاب
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-xl border-2 border-dashed border-violet-400 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 p-5 text-center">
+            <p className="text-xs text-gray-500 mb-1">كلمة المرور المؤقتة</p>
+            <p dir="ltr" className="text-3xl font-mono font-extrabold tracking-widest text-violet-700 dark:text-violet-300 select-all">
+              {recoveryResult?.password}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={copyRecoveryPassword}>
+              {copied ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+              <span>{copied ? "تم النسخ" : "نسخ"}</span>
+            </Button>
+            <Button onClick={() => setRecoveryResult(null)} className="bg-violet-600 hover:bg-violet-700 text-white">
+              تم
             </Button>
           </DialogFooter>
         </DialogContent>

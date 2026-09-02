@@ -11,6 +11,7 @@ import {
   getInquiries as getInquiriesFromStorage,
   saveInquiries,
   getStudents,
+  saveStudents,
 } from "./data-storage"
 
 export { saveInquiries }
@@ -23,10 +24,41 @@ export interface InquiryResult {
   message?: string
 }
 
+// ------------------------------------------------------------
+// قفل قناة الاستفسار لطالب معيّن — قرار المعلم
+// ------------------------------------------------------------
+
+/** هل قناة استفسار الطالب مغلقة تماماً؟ */
+export function isInquiryChannelClosed(studentId: string): boolean {
+  return getStudents().find(s => s.id === studentId)?.inquiryBlocked === true
+}
+
+/** المعلم يغلق/يفتح قناة استفسار طالب */
+export function setStudentInquiryChannel(studentId: string, closed: boolean): InquiryResult {
+  const students = getStudents()
+  const student = students.find(s => s.id === studentId)
+  if (!student) return { ok: false, error: "بيانات الطالب غير موجودة" }
+  saveStudents(
+    students.map(s =>
+      s.id === studentId ? { ...s, inquiryBlocked: closed || undefined, updatedAt: new Date().toISOString() } : s
+    )
+  )
+  return {
+    ok: true,
+    message: closed
+      ? `تم إغلاق قناة الاستفسار للطالب «${student.name}» تماماً`
+      : `تم إعادة فتح قناة الاستفسار للطالب «${student.name}»`,
+  }
+}
+
 const newId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 
 /** هل يمكن للطالب إرسال استفسار/رد الآن؟ */
-export function canStudentSendInquiry(studentId: string): { allowed: boolean; reason?: string; thread?: InquiryThread } {
+export function canStudentSendInquiry(studentId: string): { allowed: boolean; reason?: string; thread?: InquiryThread; channelClosed?: boolean } {
+  // المعلم أغلق القناة لهذا الطالب تماماً — لا إرسال إطلاقاً
+  if (isInquiryChannelClosed(studentId)) {
+    return { allowed: false, reason: "أغلق المعلم قناة الاستفسار الخاصة بك — راجع المعلم مباشرة", channelClosed: true }
+  }
   const threads = getInquiries().filter(t => t.studentId === studentId)
   const open = threads.find(t => t.status === "open")
   if (open) {
@@ -50,6 +82,9 @@ export async function sendStudentInquiry(studentId: string, text: string): Promi
 
   const student = getStudents().find(s => s.id === studentId)
   if (!student) return { ok: false, error: "بيانات الطالب غير موجودة" }
+  if (isInquiryChannelClosed(studentId)) {
+    return { ok: false, error: "أغلق المعلم قناة الاستفسار الخاصة بك — راجع المعلم مباشرة" }
+  }
 
   const state = canStudentSendInquiry(studentId)
   if (!state.allowed) return { ok: false, error: state.reason }

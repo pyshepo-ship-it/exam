@@ -193,9 +193,11 @@ eq("التسجيل مغلق → يُرفض الطلب", !(await SA.registerStude
 SA.setRegistrationOpen(true)
 
 const base = { name: "محمد علي حسن", phone: "01000000001", guardianPhone: "01111111111", email: "Mohamed@Test.com", password: "secret1", confirmPassword: "secret1", gradeId: "g-1", groupId: "gr-1" }
+SA.resetRateLimits()
 eq("بريد بحروف عربية → يُرفض", !(await SA.registerStudentAccount({ ...base, email: "طالب@مدرسة.كوم", phone: "01000000099", guardianPhone: "01111111112" })).ok)
 eq("حروف في رقم الهاتف → يُرفض", !(await SA.registerStudentAccount({ ...base, phone: "010abc23456" })).ok)
 eq("أرقام في الاسم → يُرفض", !(await SA.registerStudentAccount({ ...base, name: "محمد علي 123" })).ok)
+SA.resetRateLimits()
 const arReq0 = await SA.registerStudentAccount({ ...base, phone: "٠١٠٠٠٠٠٠٠٠١", email: "test-arabic-digits@test.com" })
 if (arReq0.ok) {
   const arReqSaved = DS.getRegistrationRequests().find(r => r.email === "test-arabic-digits@test.com")
@@ -213,6 +215,7 @@ eq("مجموعة لا تنتمي للصف → تُرفض", !(await SA.registerSt
 eq("كلمة مرور قصيرة → تُرفض", !(await SA.registerStudentAccount({ ...base, password: "123", confirmPassword: "123" })).ok)
 eq("تأكيد غير مطابق → يُرفض", !(await SA.registerStudentAccount({ ...base, confirmPassword: "different" })).ok)
 
+SA.resetRateLimits()
 const regOk = await SA.registerStudentAccount(base)
 eq("طلب صحيح → يُقبل", regOk.ok === true, regOk.error || "")
 const requests1 = DS.getRegistrationRequests()
@@ -255,6 +258,7 @@ eq("تسجيل الخروج يمسح الجلسة", SA.getPortalSession() === nu
 // ============================================================
 section("سيناريو 3: الموافقة بدون بيانات سابقة → إنشاء طالب فوري")
 
+SA.resetRateLimits()
 const reg2 = await SA.registerStudentAccount({ name: "سارة محمود خالد", phone: "01000000003", guardianPhone: "01111111113", email: "sara@test.com", password: "sara123", confirmPassword: "sara123", gradeId: "g-2", groupId: "gr-3" })
 eq("طلب سارة يُقبل", reg2.ok === true, reg2.error || "")
 const beforeCount = DS.getStudents().length
@@ -272,6 +276,7 @@ SA.portalLogout()
 // ============================================================
 section("سيناريو 4: الرفض وإعادة التقديم وحظر الحساب")
 
+SA.resetRateLimits()
 const reg3 = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
 eq("طلب كريم يُقبل", reg3.ok === true)
 const karimReqId = DS.getRegistrationRequests().find(r => r.email === "karim@test.com").id
@@ -283,10 +288,12 @@ const karimLogin1 = await SA.portalLogin("karim@test.com", "karim123")
 eq("الدخول بعد الرفض → ممنوع (rejected)", karimLogin1.ok === false && karimLogin1.status === "rejected")
 
 // إعادة التقديم بنفس البريد بعد الرفض مسموحة
+SA.resetRateLimits()
 const sameEmail = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
 eq("البريد المستخدم في طلب مرفوض لا يُعاد (فريد نهائياً)", sameEmail.ok === false, "المفروض يُرفض")
 
 // نفس الهاتف بعد رفض حديث → ممنوع (مهلة يومين) — ثم نؤرخ الطلب القديم 3 أيام للخلف فيُسمح
+SA.resetRateLimits()
 const phoneCool = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim2@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
 eq("نفس الهاتف خلال مهلة يومين → ممنوع", phoneCool.ok === false, phoneCool.error || "قبول خاطئ")
 
@@ -294,6 +301,7 @@ const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString()
 DS.saveRegistrationRequests(
   DS.getRegistrationRequests().map(r => (r.email === "karim@test.com" ? { ...r, createdAt: threeDaysAgo } : r))
 )
+SA.resetRateLimits()
 const reg3b = await SA.registerStudentAccount({ name: "كريم فؤاد سيد", phone: "01000000004", guardianPhone: "01111111114", email: "karim2@test.com", password: "karim123", confirmPassword: "karim123", gradeId: "g-1", groupId: "gr-2" })
 eq("بعد مرور مهلة اليومين: نفس الهاتف يُقبل (البريد جديد)", reg3b.ok === true, reg3b.error || "")
 const karimReq2 = DS.getRegistrationRequests().find(r => r.email === "karim2@test.com")
@@ -437,6 +445,30 @@ SA.removeStudentPortalAccount(saraId)
 eq("حذف الحساب يزيل ربط البريد", !DS.getStudentAccounts().some(a => a.studentId === saraId))
 
 // ============================================================
+section("سيناريو 8-ب: حدود الطلبات (الحماية من الإغراق)")
+
+SA.resetRateLimits()
+await SA.registerStudentAccount({ name: "طالب الحد الأول", phone: "01200000021", guardianPhone: "01200000091", email: "limit1@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+const limit2 = await SA.registerStudentAccount({ name: "طالب الحد الثاني", phone: "01200000022", guardianPhone: "01200000092", email: "limit2@test.com", password: "limit123", confirmPassword: "limit123", gradeId: "g-1", groupId: "gr-1" })
+eq("طلب ثانٍ بعد 10 دقائق أقل → محجوب (حد الجهاز)", limit2.ok === false && /انتظر/.test(limit2.error || ""), limit2.error || "")
+SA.resetRateLimits()
+
+// حد محاولات الدخول الفاشلة: 5/15 دقيقة
+const mohamedMail = "mohamed@test.com"
+SA.resetRateLimits()
+let failCount = 0
+for (let i = 0; i < 7; i++) {
+  const r = await SA.portalLogin(mohamedMail, "wrong-pass")
+  if (!r.ok && /محاولات كثيرة/.test(r.error || "")) break
+  failCount++
+}
+eq("بعد 5 محاولات فاشلة → تُقفل المحاولات مؤقتاً", failCount === 5, `فشل قبل القفل: ${failCount}`)
+SA.resetRateLimits()
+const okAfterReset = await SA.portalLogin(mohamedMail, "secret1")
+eq("بعد تصفير الحد → الدخول ينجح طبيعياً", okAfterReset.ok === true)
+SA.portalLogout()
+
+// ============================================================
 section("سيناريو 9: الجلسة — صلاحية 30 يوماً + كوكيز")
 
 const sessLogin = await SA.portalLogin("mohamed@test.com", "secret1")
@@ -564,6 +596,80 @@ DS.saveExamAttempts(attemptsNow)
 const rep3 = SR.collectStudentReport("st-old")
 const gradesPages = SR.buildStudentReportPagesHtml({ report: rep3, type: "grades", mode: "teacher" })
 eq("التقرير يعرض الدرجة المعدلة يدوياً مع الأصلية", gradesPages.html.includes("درجة معدلة يدوياً") && gradesPages.html.includes("19") && gradesPages.html.includes("15"))
+
+// ============================================================
+section("سيناريو 14: إدارة المدرس للحساب — كلمة مرور جديدة وتعديل البريد")
+
+SA.resetRateLimits()
+const recReg = await SA.registerStudentAccount({ name: "طالب الاسترجاع علي", phone: "01200000055", guardianPhone: "01200000095", email: "recover@test.com", password: "oldpass1", confirmPassword: "oldpass1", gradeId: "g-1", groupId: "gr-1" })
+eq("تسجيل طالب الاسترجاع ينجح", recReg.ok === true, recReg.error || "")
+const recOutcome = SA.approveRegistrationRequest(DS.getRegistrationRequests().find(r => r.email === "recover@test.com").id)
+eq("موافقة المدرس تنشئ الطالب", recOutcome.ok === true && !!recOutcome.studentId, recOutcome.message || "")
+const recStudentId = recOutcome.studentId
+
+// إعادة تعيين كلمة المرور من المدرس
+const noAccStudent = DS.getStudents().find(s => !DS.getStudentAccounts().some(a => a.studentId === s.id))
+const noAcc = noAccStudent ? await SA.resetStudentPasswordByTeacher(noAccStudent.id) : { ok: false }
+if (noAccStudent) eq("طالب بلا حساب بوابة → رسالة واضحة", noAcc.ok === false && /التسجيل/.test(noAcc.message || ""))
+
+const reset1 = await SA.resetStudentPasswordByTeacher(recStudentId)
+eq("إعادة التعيين تنجح وتنتج كلمة مؤقتة", reset1.ok === true && /^[a-z0-9]{7}$/.test(reset1.temporaryPassword || ""), reset1.message || "")
+const oldLogin = await SA.portalLogin("recover@test.com", "oldpass1")
+eq("الكلمة القديمة تتوقف عن العمل", oldLogin.ok === false)
+SA.portalLogout()
+const newLogin = await SA.portalLogin("recover@test.com", reset1.ok ? reset1.temporaryPassword : "x")
+eq("الدخول بالكلمة المؤقتة ينجح", newLogin.ok === true)
+SA.portalLogout()
+const accAfterReset = DS.getStudentAccounts().find(a => a.studentId === recStudentId)
+eq("البصمة تُخزَّن ولا تُخزَّن الكلمة نصاً", !!accAfterReset?.passwordHash && accAfterReset.passwordHash !== reset1.temporaryPassword)
+eq("سجل النشاط يوثق إعادة التعيين", DS.getStudentHistory().some(h => h.studentId === recStudentId && h.title === "إعادة إنشاء كلمة المرور"))
+
+// تعديل البريد من المدرس يحدّث حساب الدخول
+const dup = DS.getStudents().find(s => s.id !== recStudentId && DS.getStudentAccounts().some(a => a.studentId === s.id && a.email === "mohamed@test.com"))
+if (dup) {
+  const dupRes = SA.updateStudentByTeacher(recStudentId, { email: "mohamed@test.com" })
+  eq("بريد مستخدم لطالب آخر → يُرفض", dupRes.ok === false && /مستخدم/.test(dupRes.message))
+}
+const emailUpd = SA.updateStudentByTeacher(recStudentId, { email: "recover2@test.com" })
+eq("تعديل البريد ينجح", emailUpd.ok === true, emailUpd.message)
+const accAfterEmail = DS.getStudentAccounts().find(a => a.studentId === recStudentId)
+eq("حساب الدخول انتقل للبريد الجديد", accAfterEmail?.email === "recover2@test.com" && !DS.getStudentAccounts().some(a => a.email === "recover@test.com"))
+const emailLogin = await SA.portalLogin("recover2@test.com", reset1.ok ? reset1.temporaryPassword : "x")
+eq("الدخول بالبريد الجديد يعمل", emailLogin.ok === true)
+SA.portalLogout()
+
+// طلب استرجاع من الطالب
+SA.resetRateLimits()
+const forgot = SA.requestPasswordReset("طالب الاسترجاع علي", "", "01200000055")
+eq("استرجاع بالاسم والهاتف (بدون بريد) ينجح ويعلّم الطلب", forgot.ok === true && (DS.getRegistrationRequests().find(r => r.email === "recover2@test.com")?.reviewNote || "").includes("إعادة تعيين كلمة المرور"), forgot.message || forgot.error || "")
+const wrongWho = SA.requestPasswordReset("اسم غير مسجل نهائياً", "ghost@test.com", "09999999999")
+eq("بيانات غير مطابقة → رفض", wrongWho.ok === false)
+SA.resetRateLimits()
+const forgotByEmail = SA.requestPasswordReset("طالب الاسترجاع علي", "recover2@test.com", "01200000055")
+eq("الاسترجاع بالبريد يعمل أيضاً", forgotByEmail.ok === true)
+
+// تلميح البريد المنسي
+SA.resetRateLimits()
+const hint = SA.remindEmailByName("طالب الاسترجاع علي", "01200000055")
+eq("تلميح البريد يخفي الجزء الأول ويظهر الدومين", hint.ok === true && hint.message.includes("•") && hint.message.includes("@test.com"), hint.message || "")
+const hintNone = SA.remindEmailByName("اسم لا يوجد", "09999999999")
+eq("لا مطابقة → لا تلميح", hintNone.ok === false)
+
+// ============================================================
+section("سيناريو 15: إغلاق قناة الاستفسار لطالب بعينه")
+
+const recBefore = IQ.canStudentSendInquiry(recStudentId)
+eq("القناة مفتوحة افتراضياً", recBefore.allowed === true && recBefore.channelClosed !== true)
+const closeRes = IQ.setStudentInquiryChannel(recStudentId, true)
+eq("المدرس يغلق القناة", closeRes.ok === true)
+const recClosed = IQ.canStudentSendInquiry(recStudentId)
+eq("بعد الإغلاق: لا إرسال مع رسالة القناة", recClosed.allowed === false && recClosed.channelClosed === true && /أغلق المعلم/.test(recClosed.reason || ""))
+const closedSend = await IQ.sendStudentInquiry(recStudentId, "استفسار بعد الإغلاق مباشرة")
+eq("الإرسال محجوب حتى برسالة صالحة", closedSend.ok === false && /أغلق المعلم/.test(closedSend.error || ""))
+eq("علم الإغلاق محفوظ على الطالب", DS.getStudents().find(s => s.id === recStudentId)?.inquiryBlocked === true)
+const reopenRes = IQ.setStudentInquiryChannel(recStudentId, false)
+const recReopened = IQ.canStudentSendInquiry(recStudentId)
+eq("إعادة الفتح تسمح بالإرسال من جديد", reopenRes.ok === true && recReopened.allowed === true && recReopened.channelClosed !== true)
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

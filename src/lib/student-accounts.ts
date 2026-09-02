@@ -126,6 +126,58 @@ export interface RegisterInput {
 /** منع التسجيل أكثر من مرة خلال يومين (48 ساعة) لنفس الهاتف/البريد */
 const REGISTRATION_COOLDOWN_MS = 48 * 60 * 60 * 1000
 
+// ============================================================
+// حدود الطلبات (Rate Limit) — حماية من إغراق النظام بطلبات وهمية
+//  • عالمي: 20 طلب تسجيل كحد أقصى في الساعة + 10 طلبات نقل + 20 استفسار
+//  • لكل جهاز (localStorage): طلب تسجيل واحد كل 10 دقائق، ونقل واحد كل ساعة
+//  • فشل تسجيل الدخول: 5 محاولات كل 15 دقيقة لكل بريد (حماية التخمين)
+// ============================================================
+const RATE_LIMITS_KEY = "studentRateLimits"
+
+interface RateEntry { count: number; windowStart: number }
+
+function readRateMap(): Record<string, RateEntry> {
+  try {
+    return JSON.parse(localStorage.getItem(RATE_LIMITS_KEY) || "{}")
+  } catch {
+    return {}
+  }
+}
+
+function writeRateMap(map: Record<string, RateEntry>): void {
+  try { localStorage.setItem(RATE_LIMITS_KEY, JSON.stringify(map)) } catch { /* تجاهل */ }
+}
+
+/** يسمح بعملية داخل نافذة زمنية — ويزيد العداد إن سمح */
+function consumeRate(bucket: string, max: number, windowMs: number): boolean {
+  if (typeof window === "undefined") return true
+  const map = readRateMap()
+  const entry = map[bucket]
+  const now = Date.now()
+  if (!entry || now - entry.windowStart >= windowMs) {
+    map[bucket] = { count: 1, windowStart: now }
+    writeRateMap(map)
+    return true
+  }
+  if (entry.count >= max) return false
+  entry.count += 1
+  writeRateMap(map)
+  return true
+}
+
+/** تصفير حدود الطلبات (تُستخدم في الاختبارات فقط — الحدود تعمل تلقائياً بخلاف ذلك) */
+export function resetRateLimits(): void {
+  if (typeof window === "undefined") return
+  try { localStorage.removeItem(RATE_LIMITS_KEY) } catch { /* تجاهل */ }
+}
+
+function minutesLeftInWindow(bucket: string, windowMs: number): number {
+  const entry = readRateMap()[bucket]
+  if (!entry) return 0
+  const left = windowMs - (Date.now() - entry.windowStart)
+  return Math.max(1, Math.ceil(left / 60000))
+}
+
 export type RegisterResult =
   | { ok: true; message: string }
   | { ok: false; error: string }
@@ -137,6 +189,14 @@ export type RegisterResult =
 export async function registerStudentAccount(input: RegisterInput): Promise<RegisterResult> {
   if (!isRegistrationOpen()) {
     return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
+  }
+
+  // حدود الطلبات: حماية من إغراق النظام بطلبات وهمية
+  if (!consumeRate("reg-device", 1, 10 * 60 * 1000)) {
+    return { ok: false, error: `أرسلت طلباً حديثاً — انتظر ${minutesLeftInWindow("reg-device", 10 * 60 * 1000)} دقيقة قبل المحاولة مرة أخرى` }
+  }
+  if (!consumeRate("reg-global", 20, 60 * 60 * 1000)) {
+    return { ok: false, error: "عدد كبير من طلبات التسجيل في الساعة — يرجى المحاولة لاحقاً" }
   }
   const name = (input.name || "").trim()
   const phone = normalizeDigits((input.phone || "")).replace(/[\s-]/g, "")
@@ -284,11 +344,23 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   const mail = (email || "").trim().toLowerCase()
   if (!mail || !password) return { ok: false, error: "يرجى إدخال البريد وكلمة المرور" }
 
+  // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد من المدرس)
+  const account = getStudentAccounts().find(a => norm(a.email) === norm(mail))
+
   // أحدث طلب لنفس البريد هو المعتمد (إعادة التقديم بعد الرفض تلغي القديم)
-  const request = getRegistrationRequests()
+  let request = getRegistrationRequests()
     .filter(r => norm(r.email) === norm(mail))
     .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
     .pop()
+  // طلب بحكم الربط: البريد تغيّر من المدرس فلم يجد الطلب بالبريد الجديد
+  let requestIsAuthoritative = true
+  if (!request && account && account.active !== false) {
+    request = getRegistrationRequests()
+      .filter(r => r.linkedStudentId === account.studentId && r.status === "approved")
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+      .pop()
+    requestIsAuthoritative = !!request
+  }
   if (!request) {
     // جهاز جديد تماماً — ربما سجّل من جهاز آخر
     const remote = await fetchRegistrationRequestByEmail(mail)
@@ -300,7 +372,14 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   }
 
   const hash = await sha256Hex(password)
-  if (hash !== request.passwordHash) {
+  const matchesRequest = requestIsAuthoritative && hash === request.passwordHash
+  const matchesAccount = account && account.active !== false && account.passwordHash ? hash === account.passwordHash : false
+  if (!matchesRequest && !matchesAccount) {
+    // حد محاولات التخمين: 5 فشل/15 دقيقة لكل بريد
+    const failBucket = `login-fail:${norm(mail)}`
+    if (!consumeRate(failBucket, 5, 15 * 60 * 1000)) {
+      return { ok: false, error: `محاولات كثيرة بخطأ — انتظر ${minutesLeftInWindow(failBucket, 15 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+    }
     return { ok: false, error: "كلمة المرور غير صحيحة" }
   }
 
@@ -318,7 +397,6 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     return { ok: false, error: `تم رفض طلب التسجيل${request.reviewNote ? `: ${request.reviewNote}` : ""}`, status: "rejected" }
   }
 
-  const account = getStudentAccounts().find(a => norm(a.email) === norm(mail))
   if (account && !account.active) {
     return { ok: false, error: "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
   }
@@ -458,22 +536,7 @@ export function approveRegistrationRequest(requestId: string): ApproveOutcome {
     })
   }
 
-  // ربط الحساب
-  const accounts = getStudentAccounts()
-  const accountId = request.email.trim().toLowerCase()
-  const existingAccount = accounts.find(a => norm(a.email) === norm(accountId))
-  const account: StudentAccount = {
-    id: accountId,
-    email: accountId,
-    studentId: student.id,
-    active: true,
-    createdAt: existingAccount?.createdAt || now,
-  }
-  saveStudentAccounts(
-    existingAccount
-      ? accounts.map(a => (a.id === existingAccount.id ? account : a))
-      : [...accounts, account]
-  )
+  linkAccountToStudent(request, student, now)
 
   // تحديث حالة الطلب
   saveRegistrationRequests(
@@ -492,6 +555,118 @@ export function approveRegistrationRequest(requestId: string): ApproveOutcome {
     studentId: student.id,
     createdNew,
     updatedExisting,
+  }
+}
+
+/** ربط حساب البريد بالطالب (إنشاء أو تحديث) */
+function linkAccountToStudent(request: RegistrationRequest, student: Student, now: string): void {
+  const accounts = getStudentAccounts()
+  const accountId = request.email.trim().toLowerCase()
+  const existingAccount = accounts.find(a => norm(a.email) === norm(accountId))
+  const account: StudentAccount = {
+    id: accountId,
+    email: accountId,
+    studentId: student.id,
+    active: true,
+    createdAt: existingAccount?.createdAt || now,
+  }
+  saveStudentAccounts(
+    existingAccount
+      ? accounts.map(a => (a.id === existingAccount.id ? account : a))
+      : [...accounts, account]
+  )
+}
+
+/**
+ * الموافقة مع فرض إنشاء طالب **جديد** (بدون أي دمج) — عند تشابه الأسماء فقط
+ * والمعلم يرى أنهما طالبان مختلفان.
+ */
+export function approveRegistrationRequestAsNew(requestId: string): ApproveOutcome {
+  const requests = getRegistrationRequests()
+  const request = requests.find(r => r.id === requestId)
+  if (!request) return { ok: false, message: "الطلب غير موجود" }
+  if (request.status === "approved") return { ok: false, message: "الطلب مقبول بالفعل" }
+
+  const now = new Date().toISOString()
+  const student: Student = {
+    id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: request.name.trim(),
+    phone: request.phone.trim(),
+    email: request.email.trim().toLowerCase(),
+    gradeId: request.gradeId,
+    groupId: request.groupId,
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+  }
+  saveStudents([...getStudents(), student])
+  addStudentHistoryEvent({
+    studentId: student.id,
+    type: "account",
+    title: "تسجيل جديد من بوابة الطالب",
+    detail: "اعتبره المعلم طالباً جديداً رغم تشابه الاسم مع طالب آخر",
+    date: now,
+  })
+  linkAccountToStudent(request, student, now)
+  saveRegistrationRequests(
+    requests.map(r =>
+      r.id === requestId
+        ? { ...r, status: "approved" as const, reviewedAt: now, linkedStudentId: student.id }
+        : r
+    )
+  )
+  return {
+    ok: true,
+    message: `تم قبوله كطالب جديد «${student.name}» — أصبح الدخول ممكناً`,
+    studentId: student.id,
+    createdNew: true,
+  }
+}
+
+/**
+ * الموافقة مع الدمج القسري بـ**طالب محدد** — رغم اختلاف الهاتف
+ * (قرار المعلم الصريح: إنه نفس الطالب).
+ */
+export function approveRegistrationRequestWithStudent(requestId: string): ApproveOutcome {
+  const requests = getRegistrationRequests()
+  const request = requests.find(r => r.id === requestId)
+  if (!request) return { ok: false, message: "الطلب غير موجود" }
+  if (request.status === "approved") return { ok: false, message: "الطلب مقبول بالفعل" }
+
+  const match = findMatchingStudent(request)
+  if (!match) return { ok: false, message: "لا يوجد طالب متشابه لدمجه — استخدم القبول كطالب جديد" }
+
+  const now = new Date().toISOString()
+  const student: Student = {
+    ...match,
+    name: request.name.trim(),
+    phone: request.phone.trim(),
+    email: request.email.trim().toLowerCase(),
+    gradeId: request.gradeId,
+    groupId: request.groupId,
+    updatedAt: now,
+  }
+  saveStudents(getStudents().map(s => (s.id === match.id ? student : s)))
+  addStudentHistoryEvent({
+    studentId: student.id,
+    type: "account",
+    title: "دمج طلب تسجيل بالطالب",
+    detail: "قرر المعلم أنه نفس الطالب (رغم اختلاف الهاتف) — تم تحديث بياناته وربط حسابه",
+    date: now,
+  })
+  linkAccountToStudent(request, student, now)
+  saveRegistrationRequests(
+    requests.map(r =>
+      r.id === requestId
+        ? { ...r, status: "approved" as const, reviewedAt: now, linkedStudentId: student.id }
+        : r
+    )
+  )
+  return {
+    ok: true,
+    message: `تم دمج الطلب بالطالب «${student.name}» وتحديث بياناته — أصبح الدخول ممكناً`,
+    studentId: student.id,
+    updatedExisting: true,
   }
 }
 
@@ -613,6 +788,244 @@ export function rejectGroupTransferRequest(requestId: string, note = ""): Approv
 // ------------------------------------------------------------
 // تحكم المعلم في حسابات الطلاب
 // ------------------------------------------------------------
+
+export interface TeacherStudentUpdate {
+  name?: string
+  phone?: string
+  email?: string
+  gradeId?: string
+  groupId?: string
+}
+
+/** المعلم يحدّث بيانات طالب (الاسم/الهاتف/البريد/الصف/المجموعة) ويسجل ما غيّره */
+export function updateStudentByTeacher(
+  studentId: string,
+  patch: TeacherStudentUpdate
+): { ok: boolean; message: string } {
+  const students = getStudents()
+  const student = students.find(s => s.id === studentId)
+  if (!student) return { ok: false, message: "بيانات الطالب غير موجودة" }
+
+  const changes: string[] = []
+  const updated: Student = { ...student, updatedAt: new Date().toISOString() }
+
+  if (patch.name !== undefined && patch.name.trim() && patch.name.trim() !== student.name) {
+    updated.name = patch.name.trim()
+    changes.push(`الاسم إلى «${updated.name}»`)
+  }
+  if (patch.phone !== undefined && patch.phone.trim() && digits(normalizeDigits(patch.phone)) !== digits(student.phone || "")) {
+    updated.phone = patch.phone.trim()
+    changes.push("رقم الهاتف")
+  }
+  if (patch.email !== undefined && patch.email.trim().toLowerCase() !== (student.email || "")) {
+    const mail = patch.email.trim().toLowerCase()
+    if (!isValidEmail(mail)) return { ok: false, message: "البريد الإلكتروني غير صحيح" }
+    // البريد مفتاح الحساب — نحدّث الحساب أيضاً
+    const accounts = getStudentAccounts()
+    const oldAccount = accounts.find(a => a.studentId === studentId)
+    if (oldAccount && oldAccount.email !== mail) {
+      if (accounts.some(a => norm(a.email) === norm(mail) && a.studentId !== studentId)) {
+        return { ok: false, message: "هذا البريد مستخدم بحساب طالب آخر" }
+      }
+      const newAccount: StudentAccount = { ...oldAccount, id: mail, email: mail }
+      saveStudentAccounts([...accounts.filter(a => a.id !== oldAccount.id), newAccount])
+      // الطلب المعتمد المربوط به يحمل البريد القديم — نوحّده حتى يبقى الدخول يعمل
+      saveRegistrationRequests(
+        getRegistrationRequests().map(r =>
+          norm(r.email) === norm(oldAccount.email) && r.status === "approved" ? { ...r, email: mail } : r
+        )
+      )
+      changes.push("البريد الإلكتروني (مع حساب الدخول)")
+    }
+    updated.email = mail
+    if (!oldAccount) changes.push("البريد الإلكتروني")
+  }
+  if (patch.groupId !== undefined && patch.groupId !== student.groupId) {
+    updated.groupId = patch.groupId
+    changes.push("المجموعة")
+    if (patch.gradeId) updated.gradeId = patch.gradeId
+  } else if (patch.gradeId !== undefined && patch.gradeId !== student.gradeId) {
+    updated.gradeId = patch.gradeId
+    changes.push("الصف")
+  }
+
+  if (changes.length === 0) return { ok: true, message: "لا تغييرات" }
+
+  saveStudents(students.map(s => (s.id === studentId ? updated : s)))
+  addStudentHistoryEvent({
+    studentId,
+    type: "account",
+    title: "تعديل بيانات من المعلم",
+    detail: `غيّر: ${changes.join("، ")}`,
+    date: new Date().toISOString(),
+  })
+  return { ok: true, message: `تم تحديث: ${changes.join("، ")}` }
+}
+
+export type ResetPasswordResult =
+  | { ok: true; temporaryPassword: string; message: string }
+  | { ok: false; message: string }
+
+/**
+ * المعلم يعيد إنشاء كلمة مرور جديدة لطالب نسيها — تُنشأ كلمة مؤقتة
+ * (7 خانات) وتُخزَّن بصمتها فقط. المعلم يبلغ الطالب بها ويتغيرها بنفسه لاحقاً.
+ */
+export async function resetStudentPasswordByTeacher(studentId: string): Promise<ResetPasswordResult> {
+  const students = getStudents()
+  const student = students.find(s => s.id === studentId)
+  if (!student) return { ok: false, message: "بيانات الطالب غير موجودة" }
+
+  const accounts = getStudentAccounts()
+  const account = accounts.find(a => a.studentId === studentId)
+  if (!account) return { ok: false, message: "الطالب ليس له حساب بوابة بعد — اطلب منه التسجيل أولاً" }
+
+  // كلمة مؤقتة واضحة الحروف (بدون أحرف متشابهة)
+  const alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+  let temp = ""
+  const arr = new Uint8Array(7)
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(arr)
+    for (let i = 0; i < 7; i++) temp += alphabet[arr[i] % alphabet.length]
+  } else {
+    for (let i = 0; i < 7; i++) temp += alphabet[Math.floor(Math.random() * alphabet.length)]
+  }
+
+  const passwordHash = await sha256Hex(temp)
+  saveStudentAccounts(
+    accounts.map(a => (a.id === account.id ? { ...a, passwordHash, active: true } : a))
+  )
+
+  // طلب التسجيل المعتمد يفحص البصمة أيضاً — نوحّدها حتى يعمل الدخول فوراً
+  saveRegistrationRequests(
+    getRegistrationRequests().map(r =>
+      r.linkedStudentId === studentId && r.status === "approved" ? { ...r, passwordHash } : r
+    )
+  )
+
+  addStudentHistoryEvent({
+    studentId,
+    type: "account",
+    title: "إعادة إنشاء كلمة المرور",
+    detail: "أنشأ المعلم كلمة مرور مؤقتة جديدة بناءً على طلب الطالب",
+    date: new Date().toISOString(),
+  })
+
+  return {
+    ok: true,
+    temporaryPassword: temp,
+    message: `كلمة المرور المؤقتة للطالب «${student.name}» — أبلغه بها، وسيجب تغييرها من صفحته`,
+  }
+}
+
+// ------------------------------------------------------------
+// استرجاع بيانات الدخول (نسيت كلمة المروري / نسيت بريدي)
+// ------------------------------------------------------------
+
+/** ملاحظة تضع على الطلب حين يطلب الطالب إعادة تعيين كلمته — المعلم يراها في قسم الطلبات */
+export const RECOVERY_NOTE = "🔐 الطالب يطلب إعادة تعيين كلمة المرور (نسيت كلمة المروري)"
+
+export type RecoveryRequestResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string }
+
+export interface RecoveryStatus {
+  found: boolean
+  kind?: "reset" | "reminder"
+  studentName?: string
+  /** للمدرس فقط — لا يُعرض للطالب */
+  tempPassword?: string
+  message: string
+}
+
+/** الطالب يطلب إعادة تعيين كلمة مروره — يُحفظ كطلب معلّق يراها المعلم في قسم الطلبات */
+export function requestPasswordReset(name: string, email: string, phone: string): RecoveryRequestResult {
+  const n = norm(name)
+  const mail = (email || "").trim().toLowerCase()
+  const ph = digits(normalizeDigits(phone))
+  if (!n || !ph) return { ok: false, error: "أدخل اسمك ورقم هاتفك (والبريد إن تذكرته)" }
+
+  // حد أقصى 3 طلبات استرجاع/ساعة من نفس الجهاز
+  if (!consumeRate("recovery", 3, 60 * 60 * 1000)) {
+    return { ok: false, error: `محاولات كثيرة — انتظر ${minutesLeftInWindow("recovery", 60 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+  }
+
+  // نجيب من كل المصادر: الطلبات المحلية + السحابة (لو الموقع منشور وجاء الطلب من جهاز آخر)
+  const reqs = getRegistrationRequests()
+  const byEmail = reqs.find(r => norm(r.email) === mail)
+  const byNamePhone = reqs.find(r => norm(r.name) === n && digits(normalizeDigits(r.phone)) === ph)
+  const target = byEmail || byNamePhone
+  if (!target) {
+    return { ok: false, error: "لا توجد بيانات مطابقة — تأكد من الاسم والبريد ورقم الهاتف كما سجلت بهم" }
+  }
+
+  if (target.status === "pending") {
+    return { ok: true, message: "طلبك الأصلي لا يزال قيد المراجعة — انتظر موافقة المعلم أولاً" }
+  }
+  if (target.status === "rejected") {
+    return { ok: false, error: "طلب التسجيل بهذا البريد مرفوض — راجع المعلم أو سجّل من جديد" }
+  }
+
+  // نكتب طلب مراجعة معلّق — المعلم هو من ينشئ كلمة المرور الجديدة ويسلّمها للطالب
+  saveRegistrationRequests(
+    reqs.map(r => (r.id === target.id ? { ...r, reviewNote: RECOVERY_NOTE } : r))
+  )
+  return { ok: true, message: "تم إرسال طلبك للمعلم — راجع المعلم لاستلام كلمة مرور مؤقتة ثم حاول الدخول بها" }
+}
+
+/** الطالب نسى بريده — نبحث بالاسم + الهاتف ونجيب بتلميح (البريد مخفي جزئياً) */
+export function remindEmailByName(name: string, phone: string): { ok: boolean; message: string } {
+  const n = norm(name)
+  const ph = digits(normalizeDigits(phone))
+  if (!n || !ph) return { ok: false, message: "أدخل الاسم ورقم الهاتف" }
+
+  if (!consumeRate("recovery", 3, 60 * 60 * 1000)) {
+    return { ok: false, message: `محاولات كثيرة — انتظر ${minutesLeftInWindow("recovery", 60 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+  }
+
+  const all: { name: string; email: string }[] = []
+  for (const r of getRegistrationRequests()) {
+    if (norm(r.name) === n && digits(normalizeDigits(r.phone)) === ph && r.email) all.push({ name: r.name, email: r.email })
+  }
+  const accounts = getStudentAccounts()
+  const students = getStudents()
+  for (const a of accounts) {
+    const st = students.find(s => s.id === a.studentId)
+    if (st && norm(st.name) === n && digits(normalizeDigits(st.phone || "")) === ph) all.push({ name: st.name, email: a.email })
+  }
+  if (all.length === 0) return { ok: false, message: "لا توجد حساب مطابق لهذا الاسم والهاتف" }
+
+  const unique = Array.from(new Map(all.map(x => [norm(x.email), x])).values())
+  const hints = unique.map(x => {
+    const [user, domain] = x.email.split("@")
+    const shown = user.slice(0, 2) + "•".repeat(Math.max(user.length - 2, 2))
+    return `${shown}@${domain}`
+  })
+  return { ok: true, message: `بريدك المسجَّل يبدأ بـ: ${hints.join(" أو ")} — استخدمه في صفحة الدخول` }
+}
+
+/** المعلم ينشئ كلمة مرور جديدة لطالب بعد طلب استرجاع — ويمسح ملاحظة الطلب */
+export async function fulfillRecoveryByTeacher(requestId: string): Promise<ResetPasswordResult> {
+  const request = getRegistrationRequests().find(r => r.id === requestId)
+  if (!request) return { ok: false, message: "الطلب غير موجود" }
+
+  // الطالب المربوط بالطلب أولاً، وإلا نبحث بالاسم/البريد
+  let studentId = request.linkedStudentId || ""
+  if (!studentId) {
+    const students = getStudents()
+    const st = students.find(s => norm(s.email || "") === norm(request.email)) ||
+      students.find(s => norm(s.name) === norm(request.name))
+    studentId = st?.id || ""
+  }
+  if (!studentId) return { ok: false, message: "لا يوجد طالب مربوط بهذا الطلب — اعتمد الطلب أولاً أو أنشئ الطالب" }
+
+  const res = await resetStudentPasswordByTeacher(studentId)
+  if (res.ok) {
+    saveRegistrationRequests(
+      getRegistrationRequests().map(r => (r.id === requestId ? { ...r, reviewNote: undefined } : r))
+    )
+  }
+  return res
+}
 
 /** منع/تفعيل تسجيل دخول طالب (دون حذف بياناته) */
 export function setStudentPortalActive(studentId: string, active: boolean): ApproveOutcome {

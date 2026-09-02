@@ -124,6 +124,7 @@ export const toStudentRow = (s: any) => ({
   notes: s.notes || null,
   created_at: s.createdAt || new Date().toISOString(),
   updated_at: s.updatedAt || s.createdAt || new Date().toISOString(),
+  inquiry_blocked: s.inquiryBlocked === true,
 });
 
 export const fromStudentRow = (row: any) => ({
@@ -136,6 +137,7 @@ export const fromStudentRow = (row: any) => ({
   notes: nil(row.notes),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
+  inquiryBlocked: row.inquiry_blocked === true || undefined,
 });
 
 const toDueRow = (d: any) => ({
@@ -482,6 +484,7 @@ export const toStudentAccountRow = (a: any) => ({
   student_id: a.studentId,
   active: a.active !== false,
   created_at: a.createdAt || new Date().toISOString(),
+  password_hash: a.passwordHash || null,
 });
 
 export const fromStudentAccountRow = (row: any) => ({
@@ -490,6 +493,7 @@ export const fromStudentAccountRow = (row: any) => ({
   studentId: row.student_id,
   active: row.active !== false,
   createdAt: row.created_at,
+  passwordHash: row.password_hash || undefined,
 });
 
 export const toArchiveRow = (a: YearArchiveShape) => ({
@@ -595,6 +599,13 @@ async function pushAllOrdered(): Promise<void> {
   await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
   await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
   await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
+  // جداول بوابة الطلاب (بعد الطلاب لأن student_accounts مرتبط بهم)
+  await pushManualGrades(localRows(STORAGE_KEYS.MANUAL_GRADES) as any[]);
+  await pushRegistrationRequests(localRows(STORAGE_KEYS.REGISTRATION_REQUESTS) as any[]);
+  await pushGroupTransferRequests(localRows(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS) as any[]);
+  await pushStudentHistory(localRows(STORAGE_KEYS.STUDENT_HISTORY) as any[]);
+  await pushStudentAccounts(localRows(STORAGE_KEYS.STUDENT_ACCOUNTS) as any[]);
+  await pushInquiries(localRows(STORAGE_KEYS.INQUIRIES) as any[]);
 }
 
 /** جدولة مزامنة فورية (متسلسلة — مع إعادة محاولة ذكية عند خطأ التبعيات) */

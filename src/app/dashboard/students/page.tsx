@@ -21,13 +21,18 @@ import {
   CheckCircle,
   AlertCircle,
   Ban,
-  GraduationCap
+  GraduationCap,
+  KeyRound,
+  Copy
 } from "lucide-react"
 import {
   isStudentPortalActive,
   setStudentPortalActive,
   removeStudentPortalAccount,
+  resetStudentPasswordByTeacher,
+  updateStudentByTeacher,
 } from "@/lib/student-accounts"
+import { forcePushAll } from "@/lib/supabase/sync"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -69,6 +74,7 @@ import {
   getStudentBalance,
   getDues,
   getPayments,
+  getStudentAccounts,
 } from "@/lib/data-storage"
 import SampleDataBanner from "@/components/sample-data-banner"
 
@@ -89,10 +95,15 @@ export default function StudentsPage() {
   const [statementDialogOpen, setStatementDialogOpen] = useState(false)
   const [editingStudent, setEditingStudent] = useState<Student | null>(null)
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
+  const [resetTarget, setResetTarget] = useState<Student | null>(null)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetResult, setResetResult] = useState<{ studentName: string; password: string } | null>(null)
+  const [copied, setCopied] = useState(false)
   
   const [form, setForm] = useState({
     name: "",
     phone: "",
+    email: "",
     gradeId: "",
     groupId: "",
     status: "active" as "active" | "inactive",
@@ -125,6 +136,7 @@ export default function StudentsPage() {
       setForm({
         name: student.name,
         phone: student.phone || "",
+        email: student.email || "",
         gradeId: student.gradeId,
         groupId: student.groupId,
         status: student.status,
@@ -135,6 +147,7 @@ export default function StudentsPage() {
       setForm({
         name: "",
         phone: "",
+        email: "",
         gradeId: "",
         groupId: "",
         status: "active",
@@ -177,6 +190,14 @@ export default function StudentsPage() {
             }
           : s
       )
+      // البريد مفتاح حساب الدخول — يُحدَّث عبر المسار الرسمي (حساب + سجل)
+      if ((form.email || "").trim().toLowerCase() !== (editingStudent.email || "")) {
+        const emailRes = updateStudentByTeacher(editingStudent.id, { email: form.email })
+        if (!emailRes.ok) {
+          toast.error(emailRes.message)
+          return
+        }
+      }
       toast.success("تم تحديث بيانات الطالب بنجاح")
     } else {
       // Create
@@ -184,6 +205,7 @@ export default function StudentsPage() {
         id: Date.now().toString(),
         name: form.name,
         phone: form.phone || undefined,
+        email: form.email.trim().toLowerCase() || undefined,
         gradeId: form.gradeId,
         groupId: form.groupId,
         status: form.status,
@@ -241,6 +263,38 @@ export default function StudentsPage() {
     saveStudents(updatedStudents)
     updateGroupStudentCounts(updatedStudents)
     toast.success(newStatus === 'active' ? "تم تفعيل الطالب" : "تم إلغاء تفعيل الطالب")
+  }
+
+  // إنشاء كلمة مرور مؤقتة جديدة لطالب نسيها
+  const confirmPasswordReset = async () => {
+    if (!resetTarget) return
+    setResetBusy(true)
+    try {
+      const res = await resetStudentPasswordByTeacher(resetTarget.id)
+      if (res.ok) {
+        setResetResult({ studentName: resetTarget.name, password: res.temporaryPassword })
+        setCopied(false)
+        setStudents(getStudents())
+        toast.success("تم إنشاء كلمة المرور المؤقتة")
+        forcePushAll().catch(() => {})
+      } else {
+        toast.error(res.message)
+        setResetTarget(null)
+      }
+    } finally {
+      setResetBusy(false)
+    }
+  }
+
+  const copyResetPassword = async () => {
+    if (!resetResult) return
+    try {
+      await navigator.clipboard.writeText(resetResult.password)
+      setCopied(true)
+      toast.success("تم نسخ كلمة المرور")
+    } catch {
+      toast.error("انسخها يدوياً من الصندوق")
+    }
   }
 
   // View details
@@ -565,6 +619,15 @@ export default function StudentsPage() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          onClick={() => { setResetTarget(student); setResetResult(null) }}
+                          title="كلمة مرور جديدة للبوابة (نسيت كلمة المروري)"
+                          className="h-8 w-8 text-violet-600 hover:text-violet-700 hover:bg-violet-50 dark:hover:bg-violet-950"
+                        >
+                          <KeyRound className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           onClick={() => deleteStudent(student.id)}
                           className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
                         >
@@ -611,6 +674,19 @@ export default function StudentsPage() {
                 onChange={(e) => setForm(prev => ({ ...prev, phone: e.target.value }))}
                 className="mt-1"
               />
+            </div>
+            <div>
+              <Label htmlFor="studentEmail">بريد دخول البوابة (اختياري)</Label>
+              <Input
+                id="studentEmail"
+                dir="ltr"
+                type="email"
+                placeholder="student@example.com"
+                value={form.email}
+                onChange={(e) => setForm(prev => ({ ...prev, email: e.target.value }))}
+                className="mt-1"
+              />
+              <p className="text-xs text-gray-400 mt-1">لو عدّلته بعد ما سجّل الطالب، يتحدّث حساب دخوله بنفس البريد</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -781,6 +857,43 @@ export default function StudentsPage() {
                 )
               })()}
 
+              {/* Portal Access */}
+              {(() => {
+                const hasAccount = isStudentPortalActive(selectedStudent.id) || getStudentAccounts().some(a => a.studentId === selectedStudent.id)
+                return (
+                  <div className="rounded-xl border border-violet-200 dark:border-violet-900 bg-violet-50/60 dark:bg-violet-950/30 p-4">
+                    <p className="font-extrabold text-violet-800 dark:text-violet-300 text-sm mb-2 flex items-center gap-2">
+                      <KeyRound className="w-4 h-4" />
+                      الدخول للبوابة
+                    </p>
+                    {hasAccount ? (
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="text-sm text-gray-700 dark:text-gray-300 space-y-1">
+                          <p>
+                            الحساب: <span dir="ltr" className="font-mono font-bold">{selectedStudent.email || "بدون بريد"}</span>
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            لو الطالب نسى كلمته، أنشئ له كلمة مرور مؤقتة جديدة وأبلغه بها
+                          </p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => { setResetTarget(selectedStudent); setResetResult(null); setDetailsDialogOpen(false) }}
+                          className="bg-violet-600 hover:bg-violet-700 text-white"
+                        >
+                          <KeyRound className="w-4 h-4" />
+                          كلمة مرور جديدة
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        لا يوجد له حساب بوابة بعد — سيُنشأ تلقائياً عند الموافقة على طلب تسجيله
+                      </p>
+                    )}
+                  </div>
+                )
+              })()}
+
               {/* Notes */}
               {selectedStudent.notes && (
                 <div className="bg-yellow-50 dark:bg-yellow-950/30 border border-yellow-200 dark:border-yellow-900 rounded-xl p-4">
@@ -924,6 +1037,63 @@ export default function StudentsPage() {
               <span>تحميل PDF</span>
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset Portal Password Dialog */}
+      <Dialog open={!!resetTarget} onOpenChange={open => { if (!open) { setResetTarget(null); setResetResult(null) } }}>
+        <DialogContent className="max-w-md">
+          {!resetResult ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>كلمة مرور جديدة للبوابة</DialogTitle>
+                <DialogDescription>
+                  الطالب: <span className="font-bold text-gray-900 dark:text-white">{resetTarget?.name}</span>
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-4 text-sm text-amber-800 dark:text-amber-300 leading-relaxed">
+                سيتم إنشاء <strong>كلمة مرور مؤقتة جديدة</strong> وكلمته الحالية تتوقف عن العمل فوراً.
+                انسخها وأبلغه بها — ويُستحسن أن يغيّرها من صفحته بعد الدخول.
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setResetTarget(null); setResetResult(null) }}>
+                  تراجع
+                </Button>
+                <Button
+                  onClick={confirmPasswordReset}
+                  disabled={resetBusy}
+                  className="bg-violet-600 hover:bg-violet-700 text-white"
+                >
+                  {resetBusy ? <KeyRound className="w-4 h-4 animate-pulse" /> : <KeyRound className="w-4 h-4" />}
+                  <span>{resetBusy ? "جاري الإنشاء..." : "إنشاء كلمة المرور"}</span>
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>تم إنشاء كلمة المرور المؤقتة ✅</DialogTitle>
+                <DialogDescription>
+                  أبلغ الطالب «{resetResult.studentName}» بدخولها في صفحة دخول الطلاب
+                </DialogDescription>
+              </DialogHeader>
+              <div className="rounded-xl border-2 border-dashed border-violet-400 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 p-5 text-center">
+                <p className="text-xs text-gray-500 mb-1">كلمة المرور المؤقتة</p>
+                <p dir="ltr" className="text-3xl font-mono font-extrabold tracking-widest text-violet-700 dark:text-violet-300 select-all">
+                  {resetResult.password}
+                </p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={copyResetPassword}>
+                  {copied ? <CheckCircle className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+                  <span>{copied ? "تم النسخ" : "نسخ"}</span>
+                </Button>
+                <Button onClick={() => { setResetTarget(null); setResetResult(null) }} className="bg-violet-600 hover:bg-violet-700 text-white">
+                  تم
+                </Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>
