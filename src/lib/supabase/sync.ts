@@ -60,6 +60,11 @@ const DB_TABLES = [
   "shared_files",
   "important_links",
   "year_archives",
+  "manual_grades",
+  "registration_requests",
+  "group_transfer_requests",
+  "student_history",
+  "student_accounts",
 ] as const;
 
 function nil<T>(v: T | null | undefined): T | undefined {
@@ -350,6 +355,128 @@ const fromLinkRow = (row: any) => ({
   addedAt: row.added_at,
 });
 
+// ---------- خرائط بوابة الطلاب ----------
+
+export const toManualGradeRow = (m: any) => ({
+  id: m.id,
+  student_id: m.studentId,
+  grade_id: m.gradeId || null,
+  group_id: m.groupId || null,
+  title: m.title || "تقييم",
+  score: m.score ?? 0,
+  max_score: m.maxScore ?? 0,
+  month: m.month ?? new Date().getMonth() + 1,
+  year: m.year ?? new Date().getFullYear(),
+  notes: m.notes || null,
+  created_at: m.createdAt || new Date().toISOString(),
+});
+
+export const fromManualGradeRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  gradeId: row.grade_id || "",
+  groupId: row.group_id || "",
+  title: row.title,
+  score: Number(row.score),
+  maxScore: Number(row.max_score),
+  month: row.month,
+  year: row.year,
+  notes: nil(row.notes),
+  createdAt: row.created_at,
+});
+
+export const toRegistrationRequestRow = (r: any) => ({
+  id: r.id,
+  name: r.name,
+  phone: r.phone,
+  email: r.email,
+  password_hash: r.passwordHash || "",
+  grade_id: r.gradeId,
+  group_id: r.groupId,
+  status: r.status || "pending",
+  review_note: r.reviewNote || null,
+  linked_student_id: r.linkedStudentId || null,
+  created_at: r.createdAt || new Date().toISOString(),
+  reviewed_at: r.reviewedAt || null,
+});
+
+export const fromRegistrationRequestRow = (row: any) => ({
+  id: row.id,
+  name: row.name,
+  phone: row.phone || "",
+  email: row.email,
+  passwordHash: row.password_hash || "",
+  gradeId: row.grade_id,
+  groupId: row.group_id,
+  status: row.status || "pending",
+  reviewNote: nil(row.review_note),
+  linkedStudentId: nil(row.linked_student_id),
+  createdAt: row.created_at,
+  reviewedAt: nil(row.reviewed_at),
+});
+
+export const toGroupTransferRequestRow = (t: any) => ({
+  id: t.id,
+  student_id: t.studentId,
+  student_name: t.studentName || "",
+  from_group_id: t.fromGroupId,
+  to_grade_id: t.toGradeId,
+  to_group_id: t.toGroupId,
+  status: t.status || "pending",
+  review_note: t.reviewNote || null,
+  created_at: t.createdAt || new Date().toISOString(),
+  reviewed_at: t.reviewedAt || null,
+});
+
+export const fromGroupTransferRequestRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  studentName: row.student_name || "",
+  fromGroupId: row.from_group_id,
+  toGradeId: row.to_grade_id,
+  toGroupId: row.to_group_id,
+  status: row.status || "pending",
+  reviewNote: nil(row.review_note),
+  createdAt: row.created_at,
+  reviewedAt: nil(row.reviewed_at),
+});
+
+export const toStudentHistoryRow = (h: any) => ({
+  id: h.id,
+  student_id: h.studentId,
+  type: h.type,
+  title: h.title,
+  detail: h.detail || null,
+  date: h.date,
+  created_at: h.createdAt || new Date().toISOString(),
+});
+
+export const fromStudentHistoryRow = (row: any) => ({
+  id: row.id,
+  studentId: row.student_id,
+  type: row.type,
+  title: row.title,
+  detail: nil(row.detail),
+  date: row.date,
+  createdAt: row.created_at,
+});
+
+export const toStudentAccountRow = (a: any) => ({
+  id: a.id || a.email,
+  email: a.email,
+  student_id: a.studentId,
+  active: a.active !== false,
+  created_at: a.createdAt || new Date().toISOString(),
+});
+
+export const fromStudentAccountRow = (row: any) => ({
+  id: row.id || row.email,
+  email: row.email,
+  studentId: row.student_id,
+  active: row.active !== false,
+  createdAt: row.created_at,
+});
+
 export const toArchiveRow = (a: YearArchiveShape) => ({
   id: a.academicYear,
   academic_year: a.academicYear,
@@ -578,6 +705,24 @@ export function pushImportantLinks(rows: any[]) {
 export function pushYearArchives(rows: YearArchiveShape[]) {
   return pushRows("year_archives", rows.map(toArchiveRow));
 }
+
+export function pushManualGrades(rows: any[]) {
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  return pushRows("manual_grades", rows.filter((m) => studentIds.has(m.studentId)).map(toManualGradeRow));
+}
+export function pushRegistrationRequests(rows: any[]) {
+  return pushRows("registration_requests", rows.map(toRegistrationRequestRow));
+}
+export function pushGroupTransferRequests(rows: any[]) {
+  return pushRows("group_transfer_requests", rows.map(toGroupTransferRequestRow));
+}
+export function pushStudentHistory(rows: any[]) {
+  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  return pushRows("student_history", rows.filter((h) => studentIds.has(h.studentId)).map(toStudentHistoryRow));
+}
+export function pushStudentAccounts(rows: any[]) {
+  return pushRows("student_accounts", rows.map(toStudentAccountRow));
+}
 const toAttemptRow = (a: any) => ({
   id: a.id,
   exam_id: a.examId,
@@ -656,6 +801,11 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       linksRes,
       archivesRes,
       settingsRes,
+      manualGradesRes,
+      regRequestsRes,
+      transferReqRes,
+      studentHistoryRes,
+      studentAccountsRes,
     ] = await Promise.all([
       sb.from("grades").select("*"),
       sb.from("groups").select("*"),
@@ -671,6 +821,11 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       sb.from("important_links").select("*"),
       sb.from("year_archives").select("*"),
       sb.from("app_settings").select("key,value"),
+      sb.from("manual_grades").select("*"),
+      sb.from("registration_requests").select("*"),
+      sb.from("group_transfer_requests").select("*"),
+      sb.from("student_history").select("*"),
+      sb.from("student_accounts").select("*"),
     ]);
 
     const all = [
@@ -689,6 +844,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       archivesRes,
       settingsRes,
     ];
+    // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — نتعامل معها بمرونة
+    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes];
     for (const res of all) {
       if (res.error) throw res.error;
     }
@@ -738,6 +895,32 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
         setLocal(t.key, t.rows.map(t.fromRow));
       }
       remoteIds[t.db] = new Set(t.rows.map((r) => r.id as string));
+    }
+
+    // جداول بوابة الطلاب (مع مرونة إن لم يكن الجدول موجوداً بعد)
+    const portalTables: { key: string; res: any; fromRow: (r: any) => any }[] = [
+      { key: STORAGE_KEYS.MANUAL_GRADES, res: manualGradesRes, fromRow: fromManualGradeRow },
+      { key: STORAGE_KEYS.REGISTRATION_REQUESTS, res: regRequestsRes, fromRow: fromRegistrationRequestRow },
+      { key: STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, res: transferReqRes, fromRow: fromGroupTransferRequestRow },
+      { key: STORAGE_KEYS.STUDENT_HISTORY, res: studentHistoryRes, fromRow: fromStudentHistoryRow },
+      { key: STORAGE_KEYS.STUDENT_ACCOUNTS, res: studentAccountsRes, fromRow: fromStudentAccountRow },
+    ];
+    for (const t of portalTables) {
+      if (t.res.error) continue; // الجدول غير موجود بعد — سيُنشأ بتشغيل ترحيل 008
+      const rows = (t.res.data as any[]) || [];
+      if (rows.length === 0) continue;
+      setLocal(t.key, rows.map(t.fromRow));
+    }
+    for (const [t, db] of [
+      [manualGradesRes, "manual_grades"],
+      [regRequestsRes, "registration_requests"],
+      [transferReqRes, "group_transfer_requests"],
+      [studentHistoryRes, "student_history"],
+      [studentAccountsRes, "student_accounts"],
+    ] as [any, string][]) {
+      if (!t.error && Array.isArray(t.data)) {
+        remoteIds[db] = new Set((t.data as any[]).map((r) => r.id as string));
+      }
     }
 
     // الأرشيف
@@ -868,6 +1051,121 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     settings: settingsMap,
     exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
   };
+}
+
+// ============================================================
+// بوابة الطلاب — إدخال عام (بدون تسجيل دخول) وقراءة بيانات الطالب
+// ============================================================
+
+/** إرسال طلب تسجيل جديد من بوابة الطالب (يعمل مع وبدون Supabase) */
+export async function submitRegistrationRequest(request: any): Promise<{ ok: boolean; error?: string }> {
+  const local = localRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS)
+  const next = [...local, request]
+  localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify(next))
+
+  const sb = getSupabase()
+  if (!sb) return { ok: true }
+  const { error } = await sb.from("registration_requests").insert(toRegistrationRequestRow(request))
+  if (error) {
+    console.warn("submitRegistrationRequest:", error)
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
+
+/** إرسال طلب انضمام لمجموعة أخرى من بوابة الطالب */
+export async function submitGroupTransferRequest(request: any): Promise<{ ok: boolean; error?: string }> {
+  const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
+  const next = [...local, request]
+  localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify(next))
+
+  const sb = getSupabase()
+  if (!sb) return { ok: true }
+  const { error } = await sb.from("group_transfer_requests").insert(toGroupTransferRequestRow(request))
+  if (error) {
+    console.warn("submitGroupTransferRequest:", error)
+    return { ok: false, error: explainSupabaseError(error) }
+  }
+  return { ok: true }
+}
+
+export interface StudentPortalData {
+  student: any
+  gradeName: string
+  groupName: string
+  groupStartTime: string
+  groupEndTime: string
+  groupDays: string[]
+  manualGrades: any[]
+  examAttempts: any[]
+  dues: any[]
+  payments: any[]
+  attendance: any[]
+  honorees: any[]
+  history: any[]
+  transferRequests: any[]
+}
+
+/**
+ * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة عامة — بياناته فقط تُعرض).
+ * تعتمد على سياسات القراءة العامة الموجودة في المخطط.
+ */
+export async function fetchStudentPortalData(studentId: string): Promise<StudentPortalData | null> {
+  const sb = getSupabase()
+  if (!sb) return null
+
+  try {
+    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes] =
+      await Promise.all([
+        sb.from("students").select("*"),
+        sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
+        sb.from("grades").select("id,name"),
+        sb.from("manual_grades").select("*"),
+        sb.from("exam_attempts").select("*"),
+        sb.from("dues").select("*"),
+        sb.from("payments").select("*"),
+        sb.from("attendance").select("*"),
+        sb.from("honorees").select("*"),
+        sb.from("student_history").select("*"),
+        sb.from("group_transfer_requests").select("*"),
+      ])
+
+    if (studentsRes.error) return null
+    const student = (studentsRes.data as any[]).find((s) => s.id === studentId)
+    if (!student) return null
+
+    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.group_id)
+    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.grade_id)
+
+    const attempts = attemptsRes.error ? [] : (attemptsRes.data as any[] || [])
+    const manual = manualRes.error ? [] : (manualRes.data as any[] || [])
+    const dues = duesRes.error ? [] : (duesRes.data as any[] || [])
+    const payments = paymentsRes.error ? [] : (paymentsRes.data as any[] || [])
+    const att = attRes.error ? [] : (attRes.data as any[] || [])
+    const hon = honRes.error ? [] : (honRes.data as any[] || [])
+    const hist = histRes.error ? [] : (histRes.data as any[] || [])
+    const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
+
+    return {
+      student: fromStudentRow(student),
+      gradeName: grade?.name || "",
+      groupName: group?.name || "",
+      groupStartTime: group?.start_time || "",
+      groupEndTime: group?.end_time || "",
+      groupDays: Array.isArray(group?.days) ? group.days : [],
+      manualGrades: manual.filter((m) => m.student_id === studentId).map(fromManualGradeRow),
+      examAttempts: attempts.filter((a) => a.student_id === studentId).map(fromAttemptRow),
+      dues: dues.filter((d) => d.student_id === studentId).map(fromDueRow),
+      payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
+      attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),
+      honorees: hon.filter((h) => h.student_id === studentId).map(fromHonoreeRow),
+      history: hist.filter((h) => h.student_id === studentId).map(fromStudentHistoryRow),
+      transferRequests: transfers.filter((t) => t.student_id === studentId).map(fromGroupTransferRequestRow),
+    }
+  } catch (e) {
+    console.warn("fetchStudentPortalData:", e)
+    return null
+  }
 }
 
 // ============================================================

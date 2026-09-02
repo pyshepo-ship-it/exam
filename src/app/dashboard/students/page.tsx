@@ -19,8 +19,15 @@ import {
   X,
   FileText,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Ban,
+  GraduationCap
 } from "lucide-react"
+import {
+  isStudentPortalActive,
+  setStudentPortalActive,
+  removeStudentPortalAccount,
+} from "@/lib/student-accounts"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -210,12 +217,13 @@ export default function StudentsPage() {
     saveGrades(updatedGrades)
   }
 
-  // Delete student
+  // Delete student — ينظف حساب البوابة أيضاً حتى لا يبقى للطالب حساب يتيم
   const deleteStudent = (studentId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا الطالب؟")) {
+    if (confirm("هل أنت متأكد من حذف هذا الطالب؟ سيتم أيضاً إلغاء حسابه في بوابة الطلاب إن وجد.")) {
       const updatedStudents = students.filter(s => s.id !== studentId)
       setStudents(updatedStudents)
       saveStudents(updatedStudents)
+      removeStudentPortalAccount(studentId)
       updateGroupStudentCounts(updatedStudents)
       toast.success("تم حذف الطالب بنجاح")
     }
@@ -535,6 +543,24 @@ export default function StudentsPage() {
                           title={student.status === 'active' ? 'إلغاء التفعيل' : 'تفعيل'}
                         >
                           {student.status === 'active' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const active = isStudentPortalActive(student.id)
+                            const res = setStudentPortalActive(student.id, !active)
+                            if (res.ok) {
+                              toast.success(res.message)
+                              setStudents(getStudents())
+                            } else {
+                              toast.error(res.message)
+                            }
+                          }}
+                          title={isStudentPortalActive(student.id) ? "حظر الطالب من الدخول للبوابة" : "السماح له بالدخول للبوابة"}
+                          className={`h-8 w-8 ${isStudentPortalActive(student.id) ? "text-orange-500 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-950" : "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950"}`}
+                        >
+                          {isStudentPortalActive(student.id) ? <Ban className="w-4 h-4" /> : <GraduationCap className="w-4 h-4" />}
                         </Button>
                         <Button
                           variant="ghost"

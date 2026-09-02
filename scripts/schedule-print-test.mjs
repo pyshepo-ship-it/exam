@@ -27,7 +27,7 @@ globalThis.localStorage = {
 
 const utils = readFileSync("src/lib/utils.ts", "utf8").replace(/import[\s\S]*?from\s*"[\w/.-]+"/g, "")
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
-const storageKeys = `const STORAGE_KEYS = { GRADES: "grades", STUDENTS: "students", DUES: "dues", PAYMENTS: "payments", ANNOUNCEMENTS: "announcements", CURRENT_ACADEMIC_YEAR: "currentAcademicYear" };`
+const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")
 
 let ds = readFileSync("src/lib/data-storage.ts", "utf8")
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
@@ -51,7 +51,7 @@ sched = sched
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/data-storage"/, "")
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/utils"/, "")
 
-const stubs = ["queuePush","pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts"]
+const stubs = ["queuePush","pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
   .map(f => `const ${f} = () => Promise.resolve();`).join("\n")
 
 const prelude = utils + "\n" + weekdays + "\n" + storageKeys + "\n" + stubs + "\n"

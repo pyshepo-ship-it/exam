@@ -41,6 +41,7 @@ import {
   Payment,
   Exam,
   Attendance,
+  ManualGrade,
   getGrades,
   getStudents,
   getDues,
@@ -48,7 +49,20 @@ import {
   getExams,
   getAttendance,
   getStudentBalance,
+  getManualGrades,
+  saveManualGrades,
 } from "@/lib/data-storage"
+import {
+  collectStudentReport,
+  buildStudentReportPagesHtml,
+  STUDENT_REPORT_LABELS,
+  StudentReport,
+  StudentReportType,
+} from "@/lib/student-report"
+import { HtmlPrintDialog } from "@/components/html-print-dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Printer, FileText as FileTextIcon, Plus, Trash2, UserRound } from "lucide-react"
 
 const MONTHS = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -65,6 +79,26 @@ export default function ReportsPage() {
   const [selectedMonth, setSelectedMonth] = useState((new Date().getMonth() + 1).toString())
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString())
 
+  // ===== تقرير طالب =====
+  const [srGradeId, setSrGradeId] = useState("")
+  const [srGroupId, setSrGroupId] = useState("")
+  const [srStudentId, setSrStudentId] = useState("")
+  const [srType, setSrType] = useState<StudentReportType>("comprehensive")
+  const [srReport, setSrReport] = useState<StudentReport | null>(null)
+  const [printOpen, setPrintOpen] = useState(false)
+
+  // ===== الدرجات اليدوية =====
+  const [manualGrades, setManualGrades] = useState<ManualGrade[]>([])
+  const [mgForm, setMgForm] = useState({
+    studentId: "",
+    title: "",
+    score: "",
+    maxScore: "100",
+    month: new Date().getMonth() + 1,
+    year: new Date().getFullYear(),
+    notes: "",
+  })
+
   useEffect(() => {
     setGrades(getGrades())
     setStudents(getStudents())
@@ -72,7 +106,66 @@ export default function ReportsPage() {
     setPayments(getPayments())
     setExams(getExams())
     setAttendance(getAttendance())
+    setManualGrades(getManualGrades())
   }, [])
+
+  // الطلاب المؤهلون لتقرير/درجة (حسب الصف والمجموعة المختارين)
+  const srGrade = grades.find(g => g.id === srGradeId)
+  const srGroups = srGrade?.groups || []
+  const srStudents = students.filter(
+    s => (!srGroupId || s.groupId === srGroupId) && (!srGradeId || s.gradeId === srGradeId)
+  )
+
+  const loadStudentReport = (studentId: string) => {
+    const r = collectStudentReport(studentId)
+    setSrReport(r)
+    return r
+  }
+
+  const pickSrStudent = (studentId: string) => {
+    setSrStudentId(studentId)
+    loadStudentReport(studentId)
+  }
+
+  const addManualGrade = () => {
+    if (!mgForm.studentId) { toast.error("اختر الطالب أولاً"); return }
+    if (!mgForm.title.trim()) { toast.error("أدخل عنوان التقييم"); return }
+    const score = parseFloat(mgForm.score)
+    const maxScore = parseFloat(mgForm.maxScore)
+    if (isNaN(score) || isNaN(maxScore) || maxScore <= 0 || score < 0 || score > maxScore) {
+      toast.error("أدخل درجة صحيحة (أقل من أو تساوي الدرجة الكلية)")
+      return
+    }
+    const student = students.find(s => s.id === mgForm.studentId)
+    const item: ManualGrade = {
+      id: `mg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      studentId: mgForm.studentId,
+      gradeId: student?.gradeId || "",
+      groupId: student?.groupId || "",
+      title: mgForm.title.trim(),
+      score,
+      maxScore,
+      month: mgForm.month,
+      year: mgForm.year,
+      notes: mgForm.notes.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    }
+    const updated = [...manualGrades, item]
+    setManualGrades(updated)
+    saveManualGrades(updated)
+    setMgForm(p => ({ ...p, title: "", score: "", notes: "" }))
+    toast.success("تم حفظ الدرجة — تظهر فوراً في تقرير الطالب")
+    if (srStudentId === mgForm.studentId) loadStudentReport(mgForm.studentId)
+  }
+
+  const deleteManualGrade = (id: string) => {
+    if (!confirm("حذف هذه الدرجة؟")) return
+    const updated = manualGrades.filter(m => m.id !== id)
+    setManualGrades(updated)
+    saveManualGrades(updated)
+    toast.success("تم حذف الدرجة")
+    if (srStudentId) loadStudentReport(srStudentId)
+  }
 
   // السنوات المتاحة في التقرير (من البيانات الفعلية + السنة الحالية)
   const reportYears = [...new Set([
@@ -454,8 +547,234 @@ export default function ReportsPage() {
             )}
           </div>
         </motion.div>
+
+        {/* ================== تقرير طالب مفصل ================== */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+          <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <UserRound className="w-5 h-5 text-purple-600" />
+                تقرير طالب مفصل
+              </CardTitle>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                تقرير كامل لطالب واحد (درجاته يدوياً والكترونياً + مدفوعاته + حضوره + مكافآته وسجله) — قابل للطباعة وإرساله لولي الأمر
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div>
+                  <Label>الصف</Label>
+                  <Select value={srGradeId} onValueChange={v => { setSrGradeId(v); setSrGroupId(""); setSrStudentId(""); setSrReport(null) }}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="كل الصفوف" /></SelectTrigger>
+                    <SelectContent>
+                      {grades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>المجموعة</Label>
+                  <Select value={srGroupId} onValueChange={v => { setSrGroupId(v); setSrStudentId(""); setSrReport(null) }}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="كل المجموعات" /></SelectTrigger>
+                    <SelectContent>
+                      {srGroups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>الطالب</Label>
+                  <Select value={srStudentId} onValueChange={pickSrStudent}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder={srStudents.length ? "اختر الطالب" : "لا يوجد طلاب"} /></SelectTrigger>
+                    <SelectContent>
+                      {srStudents.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>نوع التقرير</Label>
+                  <Select value={srType} onValueChange={(v: StudentReportType) => setSrType(v)}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(STUDENT_REPORT_LABELS) as StudentReportType[]).map(k => (
+                        <SelectItem key={k} value={k}>{STUDENT_REPORT_LABELS[k]}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {srReport && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-center">
+                      <p className="text-xs text-blue-600 font-bold">التقييمات اليدوية</p>
+                      <p className="text-xl font-extrabold text-blue-700 dark:text-blue-300">{srReport.manualGrades.length}</p>
+                    </div>
+                    <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 p-3 text-center">
+                      <p className="text-xs text-indigo-600 font-bold">اختبارات إلكترونية</p>
+                      <p className="text-xl font-extrabold text-indigo-700 dark:text-indigo-300">{srReport.examAttempts.length}</p>
+                    </div>
+                    <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 text-center">
+                      <p className="text-xs text-emerald-600 font-bold">الرصيد</p>
+                      <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{srReport.balance.toLocaleString("ar-EG")} ج.م</p>
+                    </div>
+                    <div className="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 p-3 text-center">
+                      <p className="text-xs text-teal-600 font-bold">نسبة الحضور</p>
+                      <p className="text-xl font-extrabold text-teal-700 dark:text-teal-300">{srReport.attendance.rate}%</p>
+                    </div>
+                  </div>
+                  <Button
+                    onClick={() => setPrintOpen(true)}
+                    className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>معاينة وطباعة {STUDENT_REPORT_LABELS[srType]} — {srReport.student.name}</span>
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* ================== تسجيل الدرجات يدوياً ================== */}
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+          <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Plus className="w-5 h-5 text-emerald-600" />
+                تسجيل الدرجات يدوياً
+              </CardTitle>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                خاص بتسجيل الدرجات يدوياً (واجبات، مهارات، تقييمات صفية...) — تُدمج تلقائياً مع نتائج الاختبارات الإلكترونية في تقرير الطالب
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div>
+                  <Label>الطالب</Label>
+                  <Select value={mgForm.studentId} onValueChange={v => setMgForm(p => ({ ...p, studentId: v }))}>
+                    <SelectTrigger className="mt-1"><SelectValue placeholder="اختر الطالب" /></SelectTrigger>
+                    <SelectContent>
+                      {students.map(s => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name} — {grades.find(g => g.id === s.gradeId)?.name || ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>عنوان التقييم</Label>
+                  <Input
+                    value={mgForm.title}
+                    onChange={e => setMgForm(p => ({ ...p, title: e.target.value }))}
+                    placeholder="مثال: واجب الوحدة الثانية"
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>الدرجة / الكلية</Label>
+                  <div className="flex gap-2 mt-1">
+                    <Input
+                      type="number"
+                      value={mgForm.score}
+                      onChange={e => setMgForm(p => ({ ...p, score: e.target.value }))}
+                      placeholder="الدرجة"
+                    />
+                    <Input
+                      type="number"
+                      value={mgForm.maxScore}
+                      onChange={e => setMgForm(p => ({ ...p, maxScore: e.target.value }))}
+                      placeholder="من"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>الشهر</Label>
+                  <Select value={mgForm.month.toString()} onValueChange={v => setMgForm(p => ({ ...p, month: parseInt(v) }))}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {MONTHS.map((m, i) => <SelectItem key={i} value={(i + 1).toString()}>{m}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>السنة</Label>
+                  <Select value={mgForm.year.toString()} onValueChange={v => setMgForm(p => ({ ...p, year: parseInt(v) }))}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[...new Set([mgForm.year, new Date().getFullYear(), new Date().getFullYear() - 1, new Date().getFullYear() + 1])].sort((a, b) => b - a).map(y => (
+                        <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>ملاحظة (اختياري)</Label>
+                  <Input
+                    value={mgForm.notes}
+                    onChange={e => setMgForm(p => ({ ...p, notes: e.target.value }))}
+                    placeholder="ملاحظة تظهر في التقرير"
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={addManualGrade}
+                className="bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white"
+              >
+                <Plus className="w-4 h-4" />
+                <span>حفظ الدرجة</span>
+              </Button>
+
+              {manualGrades.length > 0 && (
+                <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
+                  <p className="font-bold text-sm text-gray-700 dark:text-gray-300 mb-3">
+                    الدرجات المسجلة ({manualGrades.length})
+                  </p>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pl-1">
+                    {[...manualGrades].reverse().map(m => {
+                      const st = students.find(s => s.id === m.studentId)
+                      const pct = m.maxScore > 0 ? Math.round((m.score / m.maxScore) * 100) : 0
+                      return (
+                        <div key={m.id} className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl px-4 py-2.5 border border-gray-100 dark:border-gray-800">
+                          <div className="min-w-0">
+                            <p className="font-bold text-sm text-gray-900 dark:text-white truncate">{st?.name || "طالب محذوف"} — {m.title}</p>
+                            <p className="text-xs text-gray-400">{m.month}/{m.year}{m.notes ? ` — ${m.notes}` : ""}</p>
+                          </div>
+                          <div className="flex items-center gap-3 shrink-0">
+                            <span className={`font-extrabold text-sm ${pct >= 85 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600"}`}>
+                              {m.score} / {m.maxScore}
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => deleteManualGrade(m.id)}
+                              className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950 h-8 w-8"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
       </div>
       </div>
+
+      <HtmlPrintDialog
+        open={printOpen}
+        onOpenChange={setPrintOpen}
+        build={printOpen && srReport ? () => buildStudentReportPagesHtml({ report: srReport, type: srType, mode: "teacher" }) : null}
+        filename={`تقرير-${srReport?.student.name || "الطالب"}-${STUDENT_REPORT_LABELS[srType]}`}
+        title={`${STUDENT_REPORT_LABELS[srType]} — ${srReport?.student.name || ""}`}
+        description="تقرير رسمي بتوقيع المعلم — جاهز للطباعة أو الإرسال لولي الأمر"
+        accentClass="text-emerald-600"
+      />
     </div>
   )
 }

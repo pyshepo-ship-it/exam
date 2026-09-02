@@ -26,6 +26,14 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { GraduationCap, DoorOpen } from "lucide-react"
+import {
+  isRegistrationOpen,
+  setRegistrationOpen,
+  areStudentReportsEnabled,
+  setStudentReportsEnabled,
+} from "@/lib/student-accounts"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -125,6 +133,8 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false)
   const [checking, setChecking] = useState(false)
   const [conn, setConn] = useState<ConnectionCheck | null>(null)
+  const [registrationOpen, setRegistrationOpenState] = useState(true)
+  const [reportsEnabled, setReportsEnabledState] = useState(true)
 
   // فحص حقيقي: كتابة ثم قراءة من Supabase + عدّ السجلات الفعلية داخل قاعدة البيانات
   const runConnectionCheck = async (silent = false) => {
@@ -265,6 +275,8 @@ export default function SettingsPage() {
     setCanRestoreSamples(hasSampleBackup())
     setSupabaseConnected(isSupabaseConfigured())
     if (isSupabaseConfigured()) runConnectionCheck(true)
+    setRegistrationOpenState(isRegistrationOpen())
+    setReportsEnabledState(areStudentReportsEnabled())
     setWhatsappInput(getSetting("whatsappNumber"))
     setSignatureLineInput(getTeacherSignatureLine())
     setTeacherNameInput(getTeacherName())
@@ -737,6 +749,58 @@ export default function SettingsPage() {
                 <Lock className="w-4 h-4" />
                 <span>تغيير كلمة المرور</span>
               </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        {/* بوابة الطلاب */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">
+            <CardHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-emerald-600 flex items-center justify-center shadow-lg">
+                  <GraduationCap className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl">بوابة الطلاب</CardTitle>
+                  <p className="text-sm text-gray-500">التحكم في تسجيل الطلاب وتقاريرهم — رابط التسجيل: /student/register</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <DoorOpen className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">فتح باب التسجيل</p>
+                    <p className="text-sm text-gray-500">عند الإغلاق لا يستطيع طالب جديد إرسال طلب انضمام (الحسابات المعتمدة تظل تعمل)</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={registrationOpen}
+                  onCheckedChange={v => { setRegistrationOpenState(v); setRegistrationOpen(v); toast.success(v ? "تم فتح باب التسجيل" : "تم إغلاق باب التسجيل") }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <GraduationCap className="w-5 h-5 text-purple-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">تفعيل تقارير الطلاب</p>
+                    <p className="text-sm text-gray-500">عند الإيقاف لا يستطيع الطالب طباعة أو تصدير تقريره المفصل من بوابته</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={reportsEnabled}
+                  onCheckedChange={v => { setReportsEnabledState(v); setStudentReportsEnabled(v); toast.success(v ? "تم تفعيل تقارير الطلاب" : "تم إيقاف تقارير الطلاب") }}
+                />
+              </div>
+              <p className="text-xs text-gray-400 px-1">
+                مراجعة طلبات التسجيل والنقل من صفحة «الطلاب ← الطلبات». إدارة كل طالب (حظر/حذف/نقل) من صفحة الطلاب.
+              </p>
             </CardContent>
           </Card>
         </motion.div>

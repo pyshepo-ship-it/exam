@@ -24,22 +24,17 @@ src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
-// بدائل محلية
+// بدائل محلية — مفاتيح التخزين تُقرأ من الملف الحقيقي (أي مفاتيح جديدة تُلتقط تلقائياً)
 src =
   weekdays + "\n" +
-  `const STORAGE_KEYS = ${JSON.stringify({
-    GRADES: "grades", STUDENTS: "students", DUES: "dues", PAYMENTS: "payments",
-    EXAMS: "exams", SESSIONS: "sessions", ATTENDANCE: "attendance",
-    EXAM_ATTEMPTS: "examAttempts",
-    ANNOUNCEMENTS: "announcements", HONOREES: "honorees", SHARED_FILES: "sharedFiles",
-    IMPORTANT_LINKS: "importantLinks", CURRENT_ACADEMIC_YEAR: "currentAcademicYear",
-    YEAR_ARCHIVES: "yearArchives",
-  })};\n` +
+  readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "") + "\n" +
   `const queuePush = () => {};\n` +
   [
     "pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
     "pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles",
     "pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts",
+    "pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests",
+    "pushStudentHistory","pushStudentAccounts",
   ].map((f) => `const ${f} = () => Promise.resolve();`).join("\n") +
   "\n" + src
 

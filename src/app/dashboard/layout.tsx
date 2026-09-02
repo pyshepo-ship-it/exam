@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { motion, AnimatePresence } from "framer-motion"
 import {
+  Bell,
   BookOpen,
   Calendar,
   Users,
@@ -33,6 +34,7 @@ const menuItems = [
   { href: "/dashboard", label: "الرئيسية", icon: Home, color: "from-blue-500 to-indigo-600" },
   { href: "/dashboard/grades", label: "الصفوف والمواعيد", icon: Calendar, color: "from-purple-500 to-pink-600" },
   { href: "/dashboard/students", label: "الطلاب", icon: Users, color: "from-green-500 to-emerald-600" },
+  { href: "/dashboard/requests", label: "طلبات الطلاب", icon: Bell, color: "from-orange-500 to-red-600" },
   { href: "/dashboard/payments", label: "التحصيل الشهري", icon: DollarSign, color: "from-yellow-500 to-orange-600" },
   { href: "/dashboard/exams", label: "الاختبارات", icon: FileText, color: "from-red-500 to-rose-600" },
   { href: "/dashboard/attendance", label: "الحضور والغياب", icon: ClipboardCheck, color: "from-teal-500 to-cyan-600" },

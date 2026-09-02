@@ -206,6 +206,61 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 font-arabic">
+      {/* مؤثرات لوحة الشرف الاحتفالية (CSS خالص — سريعة وخفيفة) */}
+      <style>{`
+        @keyframes honor-spin { to { transform: rotate(360deg); } }
+        @keyframes honor-glow {
+          0%, 100% { box-shadow: 0 0 12px rgba(245, 158, 11, .45), 0 0 26px rgba(245, 158, 11, .18); }
+          50% { box-shadow: 0 0 22px rgba(245, 158, 11, .75), 0 0 46px rgba(245, 158, 11, .32); }
+        }
+        @keyframes honor-shimmer {
+          0% { background-position: 200% center; }
+          100% { background-position: -200% center; }
+        }
+        @keyframes honor-float {
+          0%, 100% { transform: translateY(0) rotate(0deg); opacity: .95; }
+          50% { transform: translateY(-6px) rotate(12deg); opacity: 1; }
+        }
+        @keyframes honor-pop {
+          0% { transform: scale(1); }
+          50% { transform: scale(1.06); }
+          100% { transform: scale(1); }
+        }
+        .honor-ring {
+          position: relative;
+          border-radius: 9999px;
+          padding: 3px;
+          background: conic-gradient(#f59e0b, #ef4444, #a855f7, #3b82f6, #10b981, #f59e0b);
+          animation: honor-spin 4s linear infinite;
+        }
+        .honor-avatar-glow { animation: honor-glow 2.6s ease-in-out infinite; }
+        .honor-name {
+          background: linear-gradient(90deg, #b45309, #d97706, #f59e0b, #d97706, #b45309);
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          animation: honor-shimmer 3.2s linear infinite;
+        }
+        .dark .honor-name {
+          background: linear-gradient(90deg, #fbbf24, #fde047, #fbbf24, #fde047, #fbbf24);
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+        .honor-sparkle {
+          position: absolute;
+          animation: honor-float 2.4s ease-in-out infinite;
+          filter: drop-shadow(0 0 4px rgba(245, 158, 11, .6));
+          pointer-events: none;
+        }
+        .honor-card-pop { animation: honor-pop 3s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          .honor-ring, .honor-avatar-glow, .honor-name, .honor-sparkle, .honor-card-pop { animation: none; }
+          .honor-name { -webkit-text-fill-color: currentColor; background: none; }
+        }
+      `}</style>
       {/* Header */}
       <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-30">
         <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -309,18 +364,20 @@ export default function HomePage() {
                               initial={{ opacity: 0, x: 15 }}
                               animate={{ opacity: 1, x: 0 }}
                               transition={{ delay: gi * 0.08 + i * 0.04 }}
-                              className="flex items-center gap-3 bg-white/85 dark:bg-gray-900/70 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow"
+                              className="honor-card-pop relative flex items-center gap-3 bg-white/85 dark:bg-gray-900/70 rounded-2xl p-4 shadow-sm hover:shadow-md transition-shadow overflow-visible"
                             >
-                              <div className="relative shrink-0">
-                                <div className={`w-14 h-14 rounded-full bg-gradient-to-br ${theme.avatar} flex items-center justify-center text-white text-2xl font-extrabold shadow-lg`}>
+                              <div className="honor-ring relative shrink-0">
+                                <div className={`honor-avatar-glow w-14 h-14 rounded-full bg-gradient-to-br ${theme.avatar} flex items-center justify-center text-white text-2xl font-extrabold`}>
                                   {h.studentName.trim().charAt(0)}
                                 </div>
-                                <span className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow">
+                                <span className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white dark:bg-gray-900 flex items-center justify-center shadow z-10">
                                   <Star className="w-4 h-4 text-amber-500 fill-amber-400" />
                                 </span>
                               </div>
+                              <span className="honor-sparkle text-lg" style={{ top: -4, left: 8, animationDelay: "0s" }}>✨</span>
+                              <span className="honor-sparkle text-sm" style={{ bottom: 2, left: 22, animationDelay: "0.8s" }}>⭐</span>
                               <div className="min-w-0 flex-1">
-                                <p className="font-extrabold text-lg text-gray-900 dark:text-white leading-tight break-words">
+                                <p className="honor-name font-extrabold text-lg leading-tight break-words">
                                   {h.studentName}
                                 </p>
                                 {h.reason && (
@@ -359,11 +416,13 @@ export default function HomePage() {
                             key={h.id}
                             className="flex items-center gap-3 bg-white/85 dark:bg-gray-900/70 rounded-2xl p-4 shadow-sm"
                           >
-                            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-gray-400 to-slate-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg shrink-0">
-                              {h.studentName.trim().charAt(0)}
+                            <div className="honor-ring shrink-0">
+                              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-gray-400 to-slate-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg">
+                                {h.studentName.trim().charAt(0)}
+                              </div>
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="font-extrabold text-lg text-gray-900 dark:text-white break-words">
+                              <p className="honor-name font-extrabold text-lg break-words">
                                 {h.studentName}
                               </p>
                               {h.reason && (

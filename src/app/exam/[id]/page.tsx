@@ -33,6 +33,7 @@ import { gradeSealedExam, sealExamForStudent } from "@/lib/exam-public"
 import { fetchPublicData, submitPublicAttempt, submitPublicHonoree } from "@/lib/supabase/sync"
 import { TeacherSignature } from "@/components/teacher-signature"
 import { TEACHER_NAME } from "@/lib/branding"
+import { getPortalSession } from "@/lib/student-accounts"
 import {
   ARABIC_ORDINALS,
   getQuestionHeader,
@@ -58,7 +59,10 @@ export default function TakeExamPage() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [students, setStudents] = useState<Student[]>([])
 
-  const [studentName, setStudentName] = useState("")
+  const [studentName, setStudentName] = useState(() => {
+    if (typeof window === "undefined") return ""
+    return getPortalSession()?.name || ""
+  })
   const [gradeId, setGradeId] = useState("")
   const [groupId, setGroupId] = useState("")
   const [answers, setAnswers] = useState<Record<string, ExamAttemptAnswer>>({})
@@ -173,11 +177,14 @@ export default function TakeExamPage() {
       : gradeExam(exam, answers)
     setResult(graded)
 
-    const matched = groupStudents.find(s => s.name.trim() === studentName.trim())
+    const portalSession = getPortalSession()
+    const matched =
+      (portalSession && groupStudents.find(s => s.id === portalSession.studentId)) ||
+      groupStudents.find(s => s.name.trim() === studentName.trim())
     const attempt: ExamAttempt = {
       id: `${exam.id}-${Date.now()}`,
       examId: exam.id,
-      studentId: matched?.id,
+      studentId: portalSession?.studentId || matched?.id,
       studentName: studentName.trim(),
       groupId,
       gradeId,

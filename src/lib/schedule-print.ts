@@ -103,7 +103,7 @@ function todayLabel(): string {
 // كتل HTML (كل كتلة تُقاس ثم تُوزَّع على الصفحات)
 // ------------------------------------------------------------
 
-interface Block {
+export interface Block {
   html: string
 }
 
@@ -348,7 +348,15 @@ function studentNoteBlock(): Block {
 // تقسيم الكتل على صفحات A4 بقياس حقيقي للارتفاع
 // ------------------------------------------------------------
 
-function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePrintOptions): string[] {
+/**
+ * مُقسِّم الصفحات العام (يُستخدم أيضاً من تقارير الطلاب):
+ * يقيس ارتفاع كل كتلة فعلياً في المتصفح ثم يوزعها على صفحات A4،
+ * ويمرر محتوى كل صفحة إلى decorate لبناء صفحة كاملة برأسها وتذييلها.
+ */
+export function paginateBlocks(
+  blocks: Block[],
+  decorate: (content: string, pageIndex: number, pageCount: number) => string
+): string[] {
   if (blocks.length === 0) blocks = [{ html: `<div style="padding:40px;text-align:center;color:#9ca3af;font-size:15px;">لا توجد مجموعات بعد — أضف صفوفاً ومجموعات أولاً.</div>` }]
 
   // مساحة القياس خارج الشاشة
@@ -376,7 +384,6 @@ function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePr
     const h = heights[i]
     const mustBreak = used + h > CONTENT_BUDGET && current.length > 0
     if (mustBreak) {
-      // إن كانت الكتلة تابعة لسابقتها (تكملة جدول)، انقل الكتلة السابقة لصفحة جديدة معها
       pagesContent.push(current)
       current = []
       used = 0
@@ -386,19 +393,21 @@ function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePr
   }
   if (current.length > 0) pagesContent.push(current)
 
-  const pageCount = pagesContent.length
-  const accent = mode === "teacher" ? "#4f46e5" : "#059669"
+  return pagesContent.map((content, pi) => decorate(content.join(""), pi, pagesContent.length))
+}
 
-  return pagesContent.map((content, pi) => `
+function paginate(blocks: Block[], mode: "teacher" | "student", opts: SchedulePrintOptions): string[] {
+  const accent = mode === "teacher" ? "#4f46e5" : "#059669"
+  return paginateBlocks(blocks, (content, pi, total) => `
     <div class="exam-page" style="width:${PAGE_W}px;min-height:${PAGE_H}px;background:#ffffff;direction:rtl;box-sizing:border-box;padding:${PAD_Y}px ${PAD_X}px;font-family:${FONT};color:#1f2937;display:flex;flex-direction:column;">
       <div style="flex:0 0 auto;">${pi === 0 ? pageHeaderBlock(mode, opts).html : `<div style="height:8px;"></div>`}</div>
-      <div style="flex:1 1 auto;">${content.join("")}</div>
+      <div style="flex:1 1 auto;">${content}</div>
       <div style="flex:0 0 auto;border-top:2px solid ${accent};margin-top:14px;padding-top:8px;display:flex;align-items:center;justify-content:space-between;font-size:11.5px;color:#6b7280;">
         <div>
           ${esc(opts.signatureLine || getTeacherSignatureLine())}
           <span style="color:${accent};font-weight:800;margin-right:6px;">${esc(opts.teacherName || getTeacherName())}</span>
         </div>
-        <div>صفحة ${pi + 1} من ${pageCount} — ${mode === "teacher" ? "نسخة المدرس التفصيلية" : "جدول الطلاب"}</div>
+        <div>صفحة ${pi + 1} من ${total} — ${mode === "teacher" ? "نسخة المدرس التفصيلية" : "جدول الطلاب"}</div>
       </div>
     </div>
   `)
@@ -454,37 +463,45 @@ function mountOffscreen(id: string, html: string): HTMLElement {
 
 const MOUNT_PREFIX = "schedule-print-mount"
 
-/** تحميل الجدول كملف PDF */
-export async function downloadSchedulePDF(opts: SchedulePrintOptions): Promise<string> {
-  const mountId = `${MOUNT_PREFIX}-${opts.mode}`
-  const { html, pageCount } = buildSchedulePagesHtml(opts)
+/** تحميل أي HTML صفحات (A4) كملف PDF — تُستخدم أيضاً من تقارير الطلاب */
+export async function downloadHtmlAsPDF(mountId: string, html: string, filename: string): Promise<string> {
   mountOffscreen(mountId, html)
-
   try {
     // انتظر تحميل الخط قبل الرسم
     try { await (document as unknown as { fonts?: { ready: Promise<unknown> } }).fonts?.ready } catch { /* تجاهل */ }
-
-    const year = opts.academicYear || getStoredAcademicYear()
-    const filename =
-      opts.mode === "teacher"
-        ? `الجدول-التفصيلي-خاص-بالمدرس-${year}`
-        : `جدول-المواعيد-للطلاب-${year}`
-
     await exportToPDF(mountId, filename, { orientation: "portrait" })
-    return `${filename}.pdf (صفحات: ${pageCount})`
+    return `${filename}.pdf`
   } finally {
     document.getElementById(`wrap-${mountId}`)?.remove()
   }
 }
 
-/** طباعة الجدول مباشرة من المتصفح */
-export function printSchedule(opts: SchedulePrintOptions): void {
-  const mountId = `${MOUNT_PREFIX}-${opts.mode}-print`
-  const { html } = buildSchedulePagesHtml(opts)
+/** طباعة أي HTML صفحات (A4) مباشرة من المتصفح */
+export function printHtml(html: string, mountId: string): void {
   mountOffscreen(mountId, html)
   try {
     printElement(mountId)
   } finally {
     setTimeout(() => document.getElementById(`wrap-${mountId}`)?.remove(), 1500)
   }
+}
+
+/** تحميل الجدول كملف PDF */
+export async function downloadSchedulePDF(opts: SchedulePrintOptions): Promise<string> {
+  const mountId = `${MOUNT_PREFIX}-${opts.mode}`
+  const { html, pageCount } = buildSchedulePagesHtml(opts)
+  const year = opts.academicYear || getStoredAcademicYear()
+  const filename =
+    opts.mode === "teacher"
+      ? `الجدول-التفصيلي-خاص-بالمدرس-${year}`
+      : `جدول-المواعيد-للطلاب-${year}`
+  await downloadHtmlAsPDF(mountId, html, filename)
+  return `${filename}.pdf (صفحات: ${pageCount})`
+}
+
+/** طباعة الجدول مباشرة من المتصفح */
+export function printSchedule(opts: SchedulePrintOptions): void {
+  const mountId = `${MOUNT_PREFIX}-${opts.mode}-print`
+  const { html } = buildSchedulePagesHtml(opts)
+  printHtml(html, mountId)
 }

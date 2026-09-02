@@ -105,6 +105,7 @@ export default function AnnouncementsPage() {
     reason: "متميز في امتحانات هذا الشهر",
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
+    days: 30,
   })
 
   const [fileDialogOpen, setFileDialogOpen] = useState(false)
@@ -228,6 +229,7 @@ export default function AnnouncementsPage() {
       reason: "متميز في امتحانات هذا الشهر",
       month: currentMonth,
       year: currentYear,
+      days: 30,
     })
     setHonorDialogOpen(true)
   }
@@ -264,6 +266,7 @@ export default function AnnouncementsPage() {
         reason: honorForm.reason.trim(),
         month: honorForm.month,
         year: honorForm.year,
+        days: honorForm.days > 0 ? honorForm.days : undefined,
         createdAt: new Date().toISOString(),
       },
     ]
@@ -850,30 +853,66 @@ export default function AnnouncementsPage() {
               </Select>
             </div>
 
-            {honorForm.groupId && groupStudents.length > 0 && (
+            {honorForm.groupId && (
               <div>
-                <Label>اختيار من طلاب المجموعة (اختياري)</Label>
-                <Select value={honorForm.studentId} onValueChange={pickStudent}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="اختر طالباً" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {groupStudents.map(s => (
-                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>اختيار الطالب من قائمة المجموعة</Label>
+                {groupStudents.length > 0 ? (
+                  <Select value={honorForm.studentId} onValueChange={pickStudent}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="اختر اسم الطالب" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groupStudents.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 mt-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-2.5">
+                    لا يوجد طلاب مسجلون في هذه المجموعة بعد — اكتب الاسم يدوياً في الحقل أدناه
+                  </p>
+                )}
               </div>
             )}
 
             <div>
-              <Label>اسم الطالب *</Label>
+              <Label>اسم الطالب * {honorForm.studentId && <span className="text-xs text-green-600">(مختار من القائمة — يمكنك تعديله)</span>}</Label>
               <Input
                 placeholder="أدخل اسم الطالب"
                 value={honorForm.studentName}
                 onChange={e => setHonorForm(prev => ({ ...prev, studentName: e.target.value, studentId: "" }))}
                 className="mt-1"
               />
+            </div>
+
+            <div>
+              <Label>مدة الظهور في لوحة الشرف (بالأيام)</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input
+                  type="number"
+                  min={1}
+                  value={honorForm.days || ""}
+                  onChange={e => setHonorForm(prev => ({ ...prev, days: parseInt(e.target.value) || 0 }))}
+                  className="w-28"
+                />
+                {[7, 14, 30, 60].map(d => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setHonorForm(prev => ({ ...prev, days: d }))}
+                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                      honorForm.days === d
+                        ? "bg-indigo-600 text-white border-indigo-600"
+                        : "bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100"
+                    }`}
+                  >
+                    {d} يوم
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 mt-1.5">
+                يظهر اسم الطالب من الآن لمدة {honorForm.days || 0} يوماً في لوحة الشرف ثم يختفي تلقائياً (الافتراضي 30 يوماً).
+              </p>
             </div>
 
             <div>
