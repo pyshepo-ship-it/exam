@@ -534,13 +534,26 @@ function setLocal(key: string, rows: unknown[]) {
 }
 
 function warnSyncError(err: unknown) {
+  const e = err as any
   console.warn("Supabase sync error:", {
-    table: (err as any)?.table,
-    code: (err as any)?.code,
-    message: (err as any)?.message,
-    details: (err as any)?.details,
-    hint: (err as any)?.hint,
-  });
+    table: e?.table,
+    code: e?.code,
+    message: e?.message,
+    details: e?.details,
+    hint: e?.hint,
+  })
+  // تفسير عربي مباشر لأكثر الأخطاء شيوعاً — يظهر في Console تحت التفاصيل
+  const msg = String(e?.message || "")
+  const code = String(e?.code || "")
+  if (code === "42501" || msg.includes("row-level security")) {
+    console.warn("⚠️ سبب الفشل المحتمل: جلسة المدرس منتهية أو سياسات ناقصة — سجّل الدخول من جديد وتأكد من تنفيذ 010_repair_align.sql")
+  } else if (code === "PGRST204" || msg.includes("Could not find the")) {
+    console.warn("⚠️ سبب الفشل المحتمل: عمود ناقص في جدول قاعدة البيانات — نفّذ supabase/migrations/010_repair_align.sql ثم أعد المحاولة")
+  } else if (code === "42P01") {
+    console.warn("⚠️ سبب الفشل المحتمل: جدول غير موجود في قاعدة البيانات — نفّذ supabase/migrations/010_repair_align.sql")
+  } else if (code === "23503") {
+    console.warn("⚠️ سبب الفشل المحتمل: السجل مرتبط بصف ناقص (مثلاً مجموعة محذوفة) — ستُنظف تلقائياً في المزامنة القادمة")
+  }
   const table = (err as any)?.table ? ` [جدول: ${(err as any).table}]` : "";
   const message = `تعذر الحفظ في قاعدة البيانات${table}: ${explainSupabaseError(err)}`;
   if (lastWarned === message) return;

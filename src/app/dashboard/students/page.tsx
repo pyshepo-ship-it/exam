@@ -191,12 +191,18 @@ export default function StudentsPage() {
           : s
       )
       // البريد مفتاح حساب الدخول — يُحدَّث عبر المسار الرسمي (حساب + سجل)
+      // ملاحظة حرجة: يجب أن تحمل النسخة النهائية البريد نفسه وإلا مُحي فوراً
       if ((form.email || "").trim().toLowerCase() !== (editingStudent.email || "")) {
         const emailRes = updateStudentByTeacher(editingStudent.id, { email: form.email })
         if (!emailRes.ok) {
           toast.error(emailRes.message)
           return
         }
+        updatedStudents = updatedStudents.map(s =>
+          s.id === editingStudent.id
+            ? { ...s, email: form.email.trim().toLowerCase() || undefined }
+            : s
+        )
       }
       toast.success("تم تحديث بيانات الطالب بنجاح")
     } else {
