@@ -214,8 +214,8 @@ export default function TakeExamPage() {
   const unanswered = useMemo(() => {
     if (!exam) return 0
     let n = 0
-    for (const q of exam.questions) {
-      for (const sq of q.subQuestions) {
+    for (const q of exam.questions || []) {
+      for (const sq of q.subQuestions || []) {
         const a = answers[sq.id]
         if (q.questionType === 1 && !a?.choiceId) n++
         else if (q.questionType === 2 && !(a?.text || "").trim()) n++

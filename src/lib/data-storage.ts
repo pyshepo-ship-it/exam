@@ -265,7 +265,13 @@ import {
 export const getFromStorage = <T>(key: string): T[] => {
   if (typeof window === 'undefined') return []
   const data = localStorage.getItem(key)
-  return data ? JSON.parse(data) : []
+  if (!data) return []
+  try {
+    const parsed = JSON.parse(data)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
 export const saveToStorage = <T>(key: string, data: T[]): void => {

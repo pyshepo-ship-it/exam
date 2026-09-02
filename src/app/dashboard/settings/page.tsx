@@ -21,6 +21,7 @@ import {
   MessageCircle,
   Loader2,
   XCircle,
+  PenTool,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -79,6 +80,14 @@ import {
   hasSampleBackup,
   restoreSampleGrades,
 } from "@/lib/data-storage"
+import {
+  DEFAULT_TEACHER_NAME,
+  DEFAULT_TEACHER_SIGNATURE_LINE,
+  getTeacherName,
+  getTeacherSignatureLine,
+  setTeacherName,
+  setTeacherSignatureLine,
+} from "@/lib/branding"
 import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, diagnoseSync, type ConnectionCheck, type SyncReport } from "@/lib/supabase/sync"
 
 export default function SettingsPage() {
@@ -97,6 +106,10 @@ export default function SettingsPage() {
   const [academicYear, setAcademicYear] = useState<string>("")
   const [openYearValue, setOpenYearValue] = useState<string>("")
   const [archives, setArchives] = useState<YearArchive[]>([])
+
+  // إعدادات توقيع المعلم في نهاية الاختبارات والشهادات
+  const [signatureLineInput, setSignatureLineInput] = useState(DEFAULT_TEACHER_SIGNATURE_LINE)
+  const [teacherNameInput, setTeacherNameInput] = useState(DEFAULT_TEACHER_NAME)
 
   const [dataStats, setDataStats] = useState({
     grades: 0,
@@ -140,6 +153,26 @@ export default function SettingsPage() {
     }
     saveSetting("whatsappNumber", digits)
     toast.success("تم حفظ رقم الواتساب — سيظهر في أسفل الصفحة الرئيسية")
+  }
+
+  // حفظ التوقيع المخصص للمعلم
+  const saveTeacherSignature = () => {
+    const line = signatureLineInput.trim() || DEFAULT_TEACHER_SIGNATURE_LINE
+    const name = teacherNameInput.trim() || DEFAULT_TEACHER_NAME
+    setTeacherSignatureLine(line)
+    setTeacherName(name)
+    setSignatureLineInput(line)
+    setTeacherNameInput(name)
+    toast.success("تم حفظ توقيع المعلم بنجاح — سيظهر في جميع الاختبارات والشهادات")
+  }
+
+  // استعادة التوقيع الافتراضي
+  const resetTeacherSignature = () => {
+    setTeacherSignatureLine(DEFAULT_TEACHER_SIGNATURE_LINE)
+    setTeacherName(DEFAULT_TEACHER_NAME)
+    setSignatureLineInput(DEFAULT_TEACHER_SIGNATURE_LINE)
+    setTeacherNameInput(DEFAULT_TEACHER_NAME)
+    toast.success("تم استعادة التوقيع الافتراضي")
   }
 
   // مزامنة يدوية مع Supabase
@@ -233,6 +266,8 @@ export default function SettingsPage() {
     setSupabaseConnected(isSupabaseConfigured())
     if (isSupabaseConfigured()) runConnectionCheck(true)
     setWhatsappInput(getSetting("whatsappNumber"))
+    setSignatureLineInput(getTeacherSignatureLine())
+    setTeacherNameInput(getTeacherName())
 
     // Get user email from Supabase
     if (isSupabaseConfigured()) {
@@ -447,7 +482,7 @@ export default function SettingsPage() {
           الإعدادات
         </h1>
         <p className="text-gray-500 dark:text-gray-400">
-          إدارة إعدادات الحساب والنظام
+          إدارة إعدادات الحساب والنظام والتوقيع
         </p>
       </motion.div>
 
@@ -572,6 +607,98 @@ export default function SettingsPage() {
         )}
       </motion.div>
 
+      {/* ============ توقيع المعلم في الاختبارات والشهادات ============ */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+      >
+        <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 flex items-center justify-center shadow-lg">
+                <PenTool className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <CardTitle className="text-xl">توقيع المعلم في أسفل الاختبارات والشهادات</CardTitle>
+                <p className="text-sm text-gray-500">
+                  تخصيص عبارة التمني واسم المعلم ليظهر في نهاية ورقة الامتحان وأسفل لوحة الشرف
+                </p>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* الحقل الأول: جملة التمني */}
+              <div className="space-y-2">
+                <Label className="font-semibold text-gray-800 dark:text-gray-200">
+                  السطر الأول (جملة التمني والتوفيق)
+                </Label>
+                <Input
+                  placeholder="مع تمنياتي لكم بالتوفيق والنجاح"
+                  value={signatureLineInput}
+                  onChange={(e) => setSignatureLineInput(e.target.value)}
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500">
+                  تظهر باللون الداكن فوق اسم المعلم في ذيل ورقة الامتحان.
+                </p>
+              </div>
+
+              {/* الحقل الثاني: اسم المعلم */}
+              <div className="space-y-2">
+                <Label className="font-semibold text-indigo-700 dark:text-indigo-300">
+                  السطر الثاني (اسم المعلم / اللقب)
+                </Label>
+                <Input
+                  placeholder="أ/ ضحى العربي"
+                  value={teacherNameInput}
+                  onChange={(e) => setTeacherNameInput(e.target.value)}
+                  className="mt-1 border-indigo-200 dark:border-indigo-800 font-bold"
+                />
+                <p className="text-xs text-gray-500">
+                  يظهر باللون الأزرق النيلي العريض والواضح في السطر الثاني.
+                </p>
+              </div>
+            </div>
+
+            {/* معاينة حية للتوقيع */}
+            <div className="p-5 rounded-xl border border-dashed border-indigo-300 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-950/20 text-center">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">
+                معاينة شكل التوقيع في ذيل ورقة الامتحان:
+              </p>
+              <div className="inline-block py-2 px-6 rounded-lg bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xs">
+                <p className="text-[11px] opacity-70 mb-1 text-gray-500">انتهت الأسئلة</p>
+                <p className="text-base font-semibold text-gray-800 dark:text-gray-200">
+                  {signatureLineInput || DEFAULT_TEACHER_SIGNATURE_LINE}
+                </p>
+                <p className="text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">
+                  {teacherNameInput || DEFAULT_TEACHER_NAME}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={resetTeacherSignature}
+                className="border-gray-300 dark:border-gray-700"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>استعادة الافتراضي</span>
+              </Button>
+              <Button
+                onClick={saveTeacherSignature}
+                className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white"
+              >
+                <CheckCircle className="w-4 h-4" />
+                <span>حفظ التوقيع</span>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Account Settings */}
         <motion.div
@@ -674,7 +801,7 @@ export default function SettingsPage() {
                 />
                 <p className="text-xs text-gray-500 mt-2 leading-relaxed">
                   يظهر كزر واتساب أخضر أسفل الصفحة الرئيسية، ويُحفظ في Supabase فتظهر
-                  للطلاب من أي جهاز. اترك الحقل فارغاً لحفظ لإخفاء الزر.
+                  للطلاب من أي جهاز. اترك الحقل فارغاً لإخفاء الزر.
                 </p>
               </div>
               <Button

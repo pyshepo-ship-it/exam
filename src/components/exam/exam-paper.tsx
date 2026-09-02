@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useEffect, useState } from "react"
 import type { Exam, Question, SubQuestion, ExamTemplateId } from "@/lib/data-storage"
 import {
   ARABIC_ORDINALS,
@@ -14,8 +14,15 @@ import {
   renderCompleteParts,
   getUnderlinedWords,
 } from "@/lib/exam-templates"
-import { PaperCornerOrnaments, QuestionOrnaments, ScienceIcon } from "./science-ornaments"
-import { TEACHER_NAME, TEACHER_SIGNATURE_LINE } from "@/lib/branding"
+import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
+import {
+  DEFAULT_TEACHER_NAME,
+  DEFAULT_TEACHER_SIGNATURE_LINE,
+  TEACHER_NAME,
+  TEACHER_SIGNATURE_LINE,
+  getTeacherName,
+  getTeacherSignatureLine,
+} from "@/lib/branding"
 
 interface ExamPaperProps {
   exam: Exam
@@ -32,7 +39,7 @@ function TypeSeal({ question }: { question: Question }) {
   const meta = getQuestionTypeMeta(question.questionType)
   return (
     <span
-      className="inline-flex items-center justify-center min-w-[2.4rem] h-7 px-2 rounded-md text-[11px] font-extrabold text-white shadow-sm"
+      className="inline-flex items-center justify-center min-w-[2.4rem] h-6 px-2 rounded-md text-[11px] font-extrabold text-white shadow-xs shrink-0"
       style={{ background: meta.accent }}
     >
       {meta.paperMark}
@@ -43,7 +50,7 @@ function TypeSeal({ question }: { question: Question }) {
 function CompleteLine({ sq }: { sq: SubQuestion }) {
   const { before, after, atEnd } = renderCompleteParts(sq)
   const blank = (
-    <span className="inline-block min-w-[7rem] border-b border-dotted border-current mx-1 align-baseline">
+    <span className="inline-block min-w-[6rem] border-b border-dotted border-current mx-1 align-baseline">
       {"\u00a0"}
     </span>
   )
@@ -80,16 +87,16 @@ function CorrectionLine({ sq }: { sq: SubQuestion }) {
 
 function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQuestion; index: number }) {
   return (
-    <div className="exam-sub leading-8">
+    <div className="exam-sub leading-8 text-[14px] sm:text-[15px]">
       {question.questionType === 1 && (
         <div>
           <p>
             <span className="font-bold">{index + 1} – </span>
             {sq.questionText}
           </p>
-          <div className="flex flex-wrap gap-x-8 gap-y-1 pr-7 mt-1">
+          <div className="flex flex-wrap gap-x-8 gap-y-1 pr-6 mt-1">
             {sq.choices?.map(choice => (
-              <span key={choice.id}>
+              <span key={choice.id} className="text-gray-800 dark:text-gray-200">
                 {choice.choiceKey}{") "}{choice.choiceText}
               </span>
             ))}
@@ -103,11 +110,15 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
         </p>
       )}
       {question.questionType === 3 && (
-        <p>
-          <span className="font-bold">{index + 1} – </span>
-          {sq.questionText}{" "}
-          <span className="inline-block w-10 text-center border border-current mx-1">( &nbsp; )</span>
-        </p>
+        <div className="flex items-center justify-between gap-3 w-full py-0.5">
+          <p className="min-w-0 flex-1 text-right text-[14px] sm:text-[15px] leading-relaxed break-words">
+            <span className="font-bold">{index + 1} – </span>
+            {sq.questionText}
+          </p>
+          <span className="shrink-0 inline-flex items-center justify-center min-w-[3.4rem] h-7 px-2 text-sm font-bold border border-current/80 rounded tracking-widest text-center">
+            (&nbsp;&nbsp;&nbsp;&nbsp;)
+          </span>
+        </div>
       )}
       {question.questionType === 4 && (
         <div>
@@ -116,7 +127,7 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
             {sq.questionText}
           </p>
           {Array.from({ length: sq.answerLines || 2 }).map((_, li) => (
-            <p key={li} className="pr-7 tracking-wider opacity-70">
+            <p key={li} className="pr-6 tracking-wider opacity-65">
               {DOTS_LINE}
             </p>
           ))}
@@ -128,7 +139,7 @@ function SubQuestionBody({ question, sq, index }: { question: Question; sq: SubQ
             <span className="font-bold">{index + 1} – </span>
             <CorrectionLine sq={sq} />
           </p>
-          <p className="pr-7 tracking-wider opacity-70">{DOTS_LINE}</p>
+          <p className="pr-6 tracking-wider opacity-65">{DOTS_LINE}</p>
         </div>
       )}
     </div>
@@ -156,30 +167,32 @@ function QuestionBlock({
 
   const headerEl = (
     <div
-      className="flex items-center justify-between gap-3 flex-wrap px-3 py-2"
+      className="relative z-10 flex items-center justify-between gap-3 px-3.5 py-2"
       style={
         colorful
           ? {
               background:
                 template === "explorer"
-                  ? `${meta.accent}18`
+                  ? `${meta.accent}14`
                   : template === "lab"
-                  ? "#0f766e14"
+                  ? "#0f766e12"
                   : template === "life"
-                  ? "#16653414"
-                  : "#1e1b4b14",
+                  ? "#16653412"
+                  : "#1e1b4b12",
               borderBottom: `2px solid ${template === "explorer" ? meta.accent : "currentColor"}`,
             }
           : undefined
       }
     >
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap min-w-0">
         <TypeSeal question={question} />
-        <h3 className="font-extrabold text-[15px] m-0">
+        <h3 className="font-extrabold text-[15px] m-0 leading-tight">
           السؤال {ordinal}: {header}
         </h3>
       </div>
-      <span className="text-xs font-bold opacity-80">({marks} درجة)</span>
+      <span className="relative z-10 shrink-0 text-xs font-bold px-2 py-0.5 rounded bg-white/90 dark:bg-gray-900/90 shadow-2xs border border-current/25">
+        ({marks} درجة)
+      </span>
     </div>
   )
 
@@ -189,7 +202,7 @@ function QuestionBlock({
       style={{
         border:
           template === "classic"
-            ? "1px solid #1e3a5f"
+            ? "1.5px solid #1e3a5f"
             : template === "lab"
             ? "1.5px solid #0f766e"
             : template === "life"
@@ -203,7 +216,7 @@ function QuestionBlock({
     >
       {showDecorations && <QuestionOrnaments gradeName={gradeName} index={index} />}
       {headerEl}
-      <div className="relative z-[1] px-4 py-3 space-y-3">
+      <div className="relative z-10 px-4 py-3 space-y-3">
         {question.subQuestions.map((sq, si) => (
           <React.Fragment key={sq.id}>
             {si > 0 && (
@@ -227,12 +240,12 @@ function QuestionBlock({
 
 function StudentFields() {
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm mt-3">
-      <p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm mt-3 pt-2 border-t border-dashed border-current/20">
+      <p className="font-semibold text-right">
         اسم الطالب: <span className="inline-block min-w-[12rem] border-b border-dotted border-current" />
       </p>
-      <p>
-        الفصل / المجموعة: <span className="inline-block min-w-[8rem] border-b border-dotted border-current" />
+      <p className="font-semibold text-right">
+        الفصل: <span className="inline-block min-w-[8rem] border-b border-dotted border-current" />
       </p>
     </div>
   )
@@ -241,7 +254,6 @@ function StudentFields() {
 function PaperHeader({
   exam,
   gradeName,
-  groupName,
   template,
   teacherName,
   schoolName,
@@ -249,17 +261,18 @@ function PaperHeader({
 }: {
   exam: Exam
   gradeName: string
-  groupName?: string
   template: ExamTemplateId
   teacherName?: string
   schoolName?: string
   totalMarks: number
 }) {
   const month = exam.month ? MONTHS[exam.month - 1] : ""
+  
+  // الصف والشهر والعام الدراسي فقط دون معلومات المجموعات
   const subtitle = [
     gradeName,
-    groupName && groupName !== "الكل" ? groupName : null,
-    exam.unit ? `الوحدة ${exam.unit}` : null,
+    month ? `شهر ${month}` : null,
+    `العام الدراسي ${exam.academicYear}`,
   ]
     .filter(Boolean)
     .join("  •  ")
@@ -267,17 +280,14 @@ function PaperHeader({
   if (template === "classic") {
     return (
       <header className="text-center border-[3px] border-double border-[#1e3a5f] p-4 mb-5">
-        <p className="text-[11px] tracking-widest text-[#1e3a5f] mb-1">جمهورية مصر العربية — مادة العلوم</p>
-        {schoolName && <p className="text-xs text-[#1e3a5f]">{schoolName}</p>}
-        <h1 className="text-xl font-black text-[#1e3a5f] my-1">{exam.title}</h1>
-        <p className="text-sm">{subtitle}</p>
+        {schoolName && <p className="text-xs text-[#1e3a5f] font-bold mb-1">{schoolName}</p>}
+        <h1 className="text-2xl font-black text-[#1e3a5f] my-1">{exam.title}</h1>
+        <p className="text-sm font-semibold text-gray-800">{subtitle}</p>
         <div className="flex flex-wrap justify-center gap-x-6 gap-y-1 text-xs mt-2 font-semibold text-[#1e3a5f]">
-          {month && <span>شهر {month}</span>}
-          <span>العام الدراسي {exam.academicYear}</span>
           {exam.duration ? <span>الزمن: {exam.duration} دقيقة</span> : null}
-          <span>الدرجة: {totalMarks}</span>
+          <span>الدرجة الكلية: {totalMarks} درجة</span>
+          {teacherName && <span>إعداد: {teacherName}</span>}
         </div>
-        {teacherName && <p className="text-xs mt-1">إعداد: {teacherName}</p>}
         <StudentFields />
       </header>
     )
@@ -286,21 +296,14 @@ function PaperHeader({
   if (template === "lab") {
     return (
       <header className="relative overflow-hidden rounded-xl border-2 border-teal-700 bg-gradient-to-l from-teal-50 to-cyan-50 p-4 mb-5 text-center">
-        <div className="flex items-center justify-center gap-2 text-teal-800 text-xs font-bold mb-1">
-          <ScienceIcon kind="microscope" size={18} />
-          مختبر العلوم
-          <ScienceIcon kind="flask" size={18} />
-        </div>
-        {schoolName && <p className="text-xs text-teal-700">{schoolName}</p>}
-        <h1 className="text-xl font-black text-teal-900 my-1">{exam.title}</h1>
-        <p className="text-sm text-teal-800">{subtitle}</p>
+        {schoolName && <p className="text-xs text-teal-700 font-bold mb-1">{schoolName}</p>}
+        <h1 className="text-2xl font-black text-teal-900 my-1">{exam.title}</h1>
+        <p className="text-sm font-semibold text-teal-800">{subtitle}</p>
         <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs mt-2 font-semibold text-teal-800">
-          {month && <span>شهر {month}</span>}
-          <span>{exam.academicYear}</span>
-          {exam.duration ? <span>{exam.duration} دقيقة</span> : null}
+          {exam.duration ? <span>الزمن: {exam.duration} دقيقة</span> : null}
           <span>{totalMarks} درجة</span>
+          {teacherName && <span>إعداد: {teacherName}</span>}
         </div>
-        {teacherName && <p className="text-xs mt-1 text-teal-700">إعداد: {teacherName}</p>}
         <StudentFields />
       </header>
     )
@@ -309,21 +312,14 @@ function PaperHeader({
   if (template === "life") {
     return (
       <header className="relative overflow-hidden rounded-xl border-2 border-green-700 bg-gradient-to-l from-green-50 to-emerald-50 p-4 mb-5 text-center">
-        <div className="flex items-center justify-center gap-2 text-green-800 text-xs font-bold mb-1">
-          <ScienceIcon kind="leaf" size={18} />
-          عالم الحياة
-          <ScienceIcon kind="flower" size={18} />
-        </div>
-        {schoolName && <p className="text-xs text-green-700">{schoolName}</p>}
-        <h1 className="text-xl font-black text-green-900 my-1">{exam.title}</h1>
-        <p className="text-sm text-green-800">{subtitle}</p>
+        {schoolName && <p className="text-xs text-green-700 font-bold mb-1">{schoolName}</p>}
+        <h1 className="text-2xl font-black text-green-900 my-1">{exam.title}</h1>
+        <p className="text-sm font-semibold text-green-800">{subtitle}</p>
         <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs mt-2 font-semibold text-green-800">
-          {month && <span>شهر {month}</span>}
-          <span>{exam.academicYear}</span>
-          {exam.duration ? <span>{exam.duration} دقيقة</span> : null}
+          {exam.duration ? <span>الزمن: {exam.duration} دقيقة</span> : null}
           <span>{totalMarks} درجة</span>
+          {teacherName && <span>إعداد: {teacherName}</span>}
         </div>
-        {teacherName && <p className="text-xs mt-1 text-green-700">إعداد: {teacherName}</p>}
         <StudentFields />
       </header>
     )
@@ -332,21 +328,14 @@ function PaperHeader({
   if (template === "cosmos") {
     return (
       <header className="relative overflow-hidden rounded-xl border-2 border-[#c5a059] bg-[#1e1b4b] text-[#fde68a] p-4 mb-5 text-center">
-        <div className="flex items-center justify-center gap-2 text-xs font-bold mb-1">
-          <ScienceIcon kind="atom" size={18} color="#fde68a" />
-          الطاقة والكون
-          <ScienceIcon kind="planet" size={18} color="#fde68a" />
-        </div>
-        {schoolName && <p className="text-xs opacity-90">{schoolName}</p>}
-        <h1 className="text-xl font-black my-1 text-white">{exam.title}</h1>
-        <p className="text-sm">{subtitle}</p>
+        {schoolName && <p className="text-xs opacity-90 font-bold mb-1">{schoolName}</p>}
+        <h1 className="text-2xl font-black my-1 text-white">{exam.title}</h1>
+        <p className="text-sm font-semibold text-[#fde68a]">{subtitle}</p>
         <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs mt-2 font-semibold">
-          {month && <span>شهر {month}</span>}
-          <span>{exam.academicYear}</span>
-          {exam.duration ? <span>{exam.duration} دقيقة</span> : null}
+          {exam.duration ? <span>الزمن: {exam.duration} دقيقة</span> : null}
           <span>{totalMarks} درجة</span>
+          {teacherName && <span>إعداد: {teacherName}</span>}
         </div>
-        {teacherName && <p className="text-xs mt-1">إعداد: {teacherName}</p>}
         <div className="text-[#fde68a]">
           <StudentFields />
         </div>
@@ -357,21 +346,14 @@ function PaperHeader({
   // explorer
   return (
     <header className="relative overflow-hidden rounded-2xl border-2 border-indigo-400 bg-gradient-to-l from-indigo-50 via-amber-50 to-emerald-50 p-4 mb-5 text-center">
-      <div className="flex items-center justify-center gap-2 text-indigo-800 text-xs font-bold mb-1">
-        <ScienceIcon kind="sun" size={18} />
-        مستكشف العلوم
-        <ScienceIcon kind="microscope" size={18} />
-      </div>
-      {schoolName && <p className="text-xs text-indigo-700">{schoolName}</p>}
-      <h1 className="text-xl font-black text-indigo-950 my-1">{exam.title}</h1>
-      <p className="text-sm text-indigo-800">{subtitle}</p>
+      {schoolName && <p className="text-xs text-indigo-700 font-bold mb-1">{schoolName}</p>}
+      <h1 className="text-2xl font-black text-indigo-950 my-1">{exam.title}</h1>
+      <p className="text-sm font-semibold text-indigo-800">{subtitle}</p>
       <div className="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs mt-2 font-semibold text-indigo-800">
-        {month && <span>شهر {month}</span>}
-        <span>{exam.academicYear}</span>
-        {exam.duration ? <span>{exam.duration} دقيقة</span> : null}
+        {exam.duration ? <span>الزمن: {exam.duration} دقيقة</span> : null}
         <span>{totalMarks} درجة</span>
+        {teacherName && <span>إعداد: {teacherName}</span>}
       </div>
-      {teacherName && <p className="text-xs mt-1 text-indigo-700">إعداد: {teacherName}</p>}
       <StudentFields />
     </header>
   )
@@ -380,7 +362,6 @@ function PaperHeader({
 export function ExamPaper({
   exam,
   gradeName,
-  groupName,
   templateId,
   showDecorations,
   teacherName,
@@ -388,29 +369,37 @@ export function ExamPaper({
 }: ExamPaperProps) {
   const template: ExamTemplateId = templateId || exam.templateId || "classic"
   const decorations = showDecorations ?? exam.showDecorations !== false
-  const teacher = teacherName ?? exam.teacherName
+  const [signatureLine, setSignatureLine] = useState(DEFAULT_TEACHER_SIGNATURE_LINE)
+  const [storedTeacher, setStoredTeacher] = useState(DEFAULT_TEACHER_NAME)
+
+  useEffect(() => {
+    setSignatureLine(getTeacherSignatureLine())
+    setStoredTeacher(getTeacherName())
+  }, [])
+
+  const teacher = teacherName || exam.teacherName || storedTeacher || TEACHER_NAME
+  const sigLine = signatureLine || TEACHER_SIGNATURE_LINE || DEFAULT_TEACHER_SIGNATURE_LINE
   const school = schoolName ?? exam.schoolName
   const totalMarks = exam.totalMarks || getExamTotalMarks(exam.questions)
 
   const shell: React.CSSProperties =
     template === "classic"
-      ? { background: "#fff", color: "#111", border: "6px double #1e3a5f", padding: 20 }
+      ? { background: "#fff", color: "#111", border: "5px double #1e3a5f", padding: 22 }
       : template === "lab"
-      ? { background: "#f7fffe", color: "#134e4a", border: "4px solid #0f766e", padding: 20, borderRadius: 16 }
+      ? { background: "#f7fffe", color: "#134e4a", border: "3.5px solid #0f766e", padding: 22, borderRadius: 16 }
       : template === "life"
-      ? { background: "#f7fff9", color: "#14532d", border: "4px solid #166534", padding: 20, borderRadius: 16 }
+      ? { background: "#f7fff9", color: "#14532d", border: "3.5px solid #166534", padding: 22, borderRadius: 16 }
       : template === "cosmos"
-      ? { background: "#fafafe", color: "#1e1b4b", border: "4px solid #c5a059", padding: 20, borderRadius: 16 }
-      : { background: "#fffefb", color: "#1e1b4b", border: "4px solid #6366f1", padding: 20, borderRadius: 20 }
+      ? { background: "#fafafe", color: "#1e1b4b", border: "3.5px solid #c5a059", padding: 22, borderRadius: 16 }
+      : { background: "#fffefb", color: "#1e1b4b", border: "3.5px solid #6366f1", padding: 22, borderRadius: 18 }
 
   return (
     <article className="exam-paper relative font-arabic print:shadow-none" dir="rtl" lang="ar" style={shell}>
       {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
-      <div className="relative z-[1]">
+      <div className="relative z-10">
         <PaperHeader
           exam={exam}
           gradeName={gradeName}
-          groupName={groupName}
           template={template}
           teacherName={teacher}
           schoolName={school}
@@ -434,10 +423,14 @@ export function ExamPaper({
           <p className="text-center text-sm opacity-60 py-8">لم تُضف أسئلة بعد</p>
         )}
 
-        <footer className="mt-6 pt-4 text-center border-t border-dashed">
-          <p className="text-[11px] opacity-70 mb-2">انتهت الأسئلة</p>
-          <p className="text-sm font-semibold">مع تمناتي لكم بالتوفيق والنجاح</p>
-          <p className="text-base font-extrabold mt-0.5">أ/ ضحى العربي</p>
+        <footer className="mt-8 pt-4 text-center border-t border-dashed border-current/30">
+          <p className="text-[11px] opacity-70 mb-2 font-medium">انتهت الأسئلة</p>
+          <p className="text-base font-semibold text-gray-800 dark:text-gray-200">
+            {sigLine}
+          </p>
+          <p className="text-lg font-extrabold mt-0.5 text-indigo-700 dark:text-indigo-300">
+            {teacher}
+          </p>
         </footer>
       </div>
     </article>

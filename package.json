@@ -9,7 +9,8 @@
     "lint": "eslint",
     "audit": "node scripts/audit.mjs",
     "test:logic": "node scripts/logic-test.mjs",
-    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs"
+    "test:deep": "node scripts/system-deep-audit.mjs",
+    "verify": "tsc --noEmit && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/system-deep-audit.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

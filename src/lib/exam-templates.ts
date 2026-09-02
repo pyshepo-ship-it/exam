@@ -117,9 +117,12 @@ export function getExamTotalMarks(questions: Question[]): number {
 export type GradeBand = "g4" | "g5" | "g6" | "prep" | "sec1" | "other"
 
 export function detectGradeBand(gradeName: string): GradeBand {
-  const n = (gradeName || "").replace(/أ/g, "ا").replace(/ى/g, "ي")
-  if (/ثان/.test(n)) return "sec1"
-  if (/اعداد|إعداد/.test(n)) return "prep"
+  const n = (gradeName || "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+  if (/اعداد/.test(n)) return "prep"
+  if (/ثانوي/.test(n)) return "sec1"
   if (/رابع/.test(n)) return "g4"
   if (/خامس/.test(n)) return "g5"
   if (/سادس/.test(n)) return "g6"
