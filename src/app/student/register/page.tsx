@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Grade, getGrades } from "@/lib/data-storage"
+import { fetchPublicData } from "@/lib/supabase/sync"
 import { registerStudentAccount, isRegistrationOpen } from "@/lib/student-accounts"
 
 export default function StudentRegisterPage() {
@@ -38,9 +39,42 @@ export default function StudentRegisterPage() {
   const [registrationOpen, setRegistrationOpen] = useState(true)
 
   useEffect(() => {
-    setGrades(getGrades())
     setRegistrationOpen(isRegistrationOpen())
-    setMounted(true)
+
+    const load = async () => {
+      // الصفوف من المرآة المحلية أولاً
+      let list = getGrades()
+      if (list.length === 0) {
+        // جهاز الزائر فاضي (زي موقع Vercel المنشور) — نجيب الصفوف من Supabase
+        const pub = await fetchPublicData()
+        if (pub && pub.grades.length > 0) {
+          list = pub.grades.map(g => ({
+            id: g.id,
+            name: g.name,
+            academicYear: "",
+            createdAt: "",
+            groups: pub.groups
+              .filter(gr => gr.gradeId === g.id)
+              .map(gr => ({
+                id: gr.id,
+                name: gr.name,
+                days: gr.days || [],
+                startTime: gr.startTime || "",
+                endTime: gr.endTime || "",
+                monthlyFee: 0,
+                studentsCount: 0,
+              })),
+          }))
+          // نزرعها محلياً (بدون مزامنة) كي ينجح التحقق عند إرسال الطلب
+          try {
+            localStorage.setItem("grades", JSON.stringify(list))
+          } catch { /* تجاهل */ }
+        }
+      }
+      setGrades(list)
+      setMounted(true)
+    }
+    load()
   }, [])
 
   const selectedGrade = grades.find(g => g.id === form.gradeId)

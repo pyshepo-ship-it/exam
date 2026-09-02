@@ -135,6 +135,8 @@ export default function SettingsPage() {
   const [conn, setConn] = useState<ConnectionCheck | null>(null)
   const [registrationOpen, setRegistrationOpenState] = useState(true)
   const [reportsEnabled, setReportsEnabledState] = useState(true)
+  // تابات الإعدادات: عام / بوابة الطلاب / البيانات والمزامنة / السنة الدراسية
+  const [settingsTab, setSettingsTab] = useState<"general" | "portal" | "data" | "year">("general")
 
   // فحص حقيقي: كتابة ثم قراءة من Supabase + عدّ السجلات الفعلية داخل قاعدة البيانات
   const runConnectionCheck = async (silent = false) => {
@@ -494,11 +496,35 @@ export default function SettingsPage() {
           الإعدادات
         </h1>
         <p className="text-gray-500 dark:text-gray-400">
-          إدارة إعدادات الحساب والنظام والتوقيع
+          كل إعدادات الموقع في مكان واحد — مقسمة لتبويبات لسهولة الوصول
         </p>
       </motion.div>
 
+      {/* شريط التبويبات */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { key: "general" as const, label: "الحساب والتخصيص", icon: User },
+          { key: "portal" as const, label: "بوابة الطلاب", icon: GraduationCap },
+          { key: "data" as const, label: "البيانات والمزامنة", icon: Database },
+          { key: "year" as const, label: "السنة الدراسية", icon: CalendarCheck },
+        ]).map(({ key, label, icon: TabIcon }) => (
+          <button
+            key={key}
+            onClick={() => setSettingsTab(key)}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+              settingsTab === key
+                ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg"
+                : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800"
+            }`}
+          >
+            <TabIcon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* ============ السنة الدراسية ============ */}
+      {settingsTab === "year" && (
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -618,8 +644,10 @@ export default function SettingsPage() {
           </div>
         )}
       </motion.div>
+      )}
 
       {/* ============ توقيع المعلم في الاختبارات والشهادات ============ */}
+      {settingsTab === "general" && (
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -710,9 +738,11 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </motion.div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Account Settings */}
+        {settingsTab === "general" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -752,8 +782,10 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         {/* بوابة الطلاب */}
+        {settingsTab === "portal" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -804,8 +836,10 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         {/* Appearance */}
+        {settingsTab === "general" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -834,8 +868,10 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         {/* Contact Info */}
+        {settingsTab === "general" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -878,8 +914,10 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         {/* Data Management */}
+        {settingsTab === "data" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1194,8 +1232,10 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
 
         {/* System Info */}
+        {settingsTab === "data" && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1274,6 +1314,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        )}
       </div>
 
       {/* Change Password Dialog */}

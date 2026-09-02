@@ -770,6 +770,26 @@ export function pushInquiries(rows: any[]) {
   return pushRows("inquiries", rows.map(toInquiryRow));
 }
 
+/** جلب أحدث طلب تسجيل ببريد معين — لمصالحة الحالة على جهاز الطالب بعد الموافقة من جهاز آخر */
+export async function fetchRegistrationRequestByEmail(email: string): Promise<any | null> {
+  const sb = getSupabase()
+  if (!sb) return null
+  try {
+    const { data, error } = await sb
+      .from("registration_requests")
+      .select("*")
+      .eq("email", (email || "").trim().toLowerCase())
+    if (error || !data || data.length === 0) return null
+    const rows = (data as any[])
+      .map(fromRegistrationRequestRow)
+      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+    return rows[rows.length - 1]
+  } catch (e) {
+    console.warn("fetchRegistrationRequestByEmail:", e)
+    return null
+  }
+}
+
 /** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
 export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
   const sb = getSupabase()
@@ -889,6 +909,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       transferReqRes,
       studentHistoryRes,
       studentAccountsRes,
+      inquiriesRes,
     ] = await Promise.all([
       sb.from("grades").select("*"),
       sb.from("groups").select("*"),
@@ -909,6 +930,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       sb.from("group_transfer_requests").select("*"),
       sb.from("student_history").select("*"),
       sb.from("student_accounts").select("*"),
+      sb.from("inquiries").select("*"),
     ]);
 
     const all = [
@@ -928,7 +950,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       settingsRes,
     ];
     // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — نتعامل معها بمرونة
-    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes];
+    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes, inquiriesRes];
     for (const res of all) {
       if (res.error) throw res.error;
     }
@@ -987,6 +1009,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       { key: STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, res: transferReqRes, fromRow: fromGroupTransferRequestRow },
       { key: STORAGE_KEYS.STUDENT_HISTORY, res: studentHistoryRes, fromRow: fromStudentHistoryRow },
       { key: STORAGE_KEYS.STUDENT_ACCOUNTS, res: studentAccountsRes, fromRow: fromStudentAccountRow },
+      { key: STORAGE_KEYS.INQUIRIES, res: inquiriesRes, fromRow: fromInquiryRow },
     ];
     for (const t of portalTables) {
       if (t.res.error) continue; // الجدول غير موجود بعد — سيُنشأ بتشغيل ترحيل 008

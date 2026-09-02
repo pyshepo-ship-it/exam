@@ -105,6 +105,22 @@ export default function StudentPortalPage() {
         const portalData = await fetchStudentPortalData(s.studentId)
         if (portalData) {
           setReport(reportFromPortalData(portalData))
+          // زرع محلي خفيف (بدون مزامنة) كي ينجح تحقق طلب النقل على جهاز الطالب
+          try {
+            if (getGrades().length === 0 && publicData.grades.length > 0) {
+              localStorage.setItem("grades", JSON.stringify(
+                publicData.grades.map(g => ({
+                  id: g.id, name: g.name, academicYear: "", createdAt: "",
+                  groups: publicData.groups.filter(gr => gr.gradeId === g.id).map(gr => ({
+                    id: gr.id, name: gr.name, days: gr.days || [], startTime: gr.startTime || "", endTime: gr.endTime || "", monthlyFee: 0, studentsCount: 0,
+                  })),
+                }))
+              ))
+            }
+            if (getStudents().every(x => x.id !== portalData.student.id)) {
+              localStorage.setItem("students", JSON.stringify([portalData.student]))
+            }
+          } catch { /* تجاهل */ }
           // مجموعات صف الطالب فقط (لطلب الانضمام لمجموعة أخرى)
           const myGroup = publicData.groups.find(g => g.id === portalData.student.groupId)
           if (myGroup) {

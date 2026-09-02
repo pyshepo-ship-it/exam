@@ -27,7 +27,7 @@ import {
   getSetting,
   saveSetting,
 } from "./data-storage"
-import { submitRegistrationRequest, submitGroupTransferRequest } from "./supabase/sync"
+import { submitRegistrationRequest, submitGroupTransferRequest, fetchRegistrationRequestByEmail } from "./supabase/sync"
 
 // ------------------------------------------------------------
 // إعدادات المعلم (مفاتيح عامة تُزامن عبر Supabase)
@@ -289,7 +289,15 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     .filter(r => norm(r.email) === norm(mail))
     .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
     .pop()
-  if (!request) return { ok: false, error: "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+  if (!request) {
+    // جهاز جديد تماماً — ربما سجّل من جهاز آخر
+    const remote = await fetchRegistrationRequestByEmail(mail)
+    if (remote) {
+      saveRegistrationRequests([...getRegistrationRequests(), remote])
+      return portalLogin(mail, password)
+    }
+    return { ok: false, error: "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+  }
 
   const hash = await sha256Hex(password)
   if (hash !== request.passwordHash) {
@@ -297,6 +305,13 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   }
 
   if (request.status === "pending") {
+    // موافقة المعلم قد حدثت من جهاز آخر (موقع منشور) — نستشير Supabase قبل الرفض
+    const remote = await fetchRegistrationRequestByEmail(mail)
+    if (remote && remote.status === "approved") {
+      const updated = getRegistrationRequests().map(r => (r.id === request.id ? { ...r, ...remote } : r))
+      saveRegistrationRequests(updated)
+      return portalLogin(mail, password)
+    }
     return { ok: false, error: "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
   }
   if (request.status === "rejected") {

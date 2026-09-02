@@ -53,7 +53,8 @@ const submitGroupTransferRequest = async (request) => {
   return { ok: true }
 }
 const exportToPDF = async () => true
-const printElement = () => {}`
+const printElement = () => {}
+const fetchRegistrationRequestByEmail = async () => null`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)
 const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")

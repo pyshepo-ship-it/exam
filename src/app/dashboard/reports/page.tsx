@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef, useMemo } from "react"
 import { motion } from "framer-motion"
 import { 
   BarChart3, 
@@ -59,7 +59,8 @@ import {
   StudentReport,
   StudentReportType,
 } from "@/lib/student-report"
-import { HtmlPrintDialog } from "@/components/html-print-dialog"
+import { printHtml, downloadHtmlAsPDF } from "@/lib/schedule-print"
+import { Loader2, Eye, Printer as PrinterIcon, ClipboardList } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Printer, FileText as FileTextIcon, Plus, Trash2, UserRound } from "lucide-react"
@@ -85,6 +86,13 @@ export default function ReportsPage() {
   const [srStudentId, setSrStudentId] = useState("")
   const [srType, setSrType] = useState<StudentReportType>("comprehensive")
   const [srMonth, setSrMonth] = useState("")
+  // تابات قسم التقارير: نظرة عامة / تقرير طالب / الدرجات اليدوية / الحضور والاختبارات
+  const [reportsTab, setReportsTab] = useState<"overview" | "student" | "grades" | "activity">("overview")
+  // معاينة التقرير المباشرة (تُبنى تلقائياً عند تغيير الطالب أو النوع أو الفترة)
+  const [previewHtml, setPreviewHtml] = useState("")
+  const [previewPages, setPreviewPages] = useState(0)
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const previewRef = useRef<HTMLDivElement>(null)
   const [srReport, setSrReport] = useState<StudentReport | null>(null)
   const [printOpen, setPrintOpen] = useState(false)
 
@@ -116,6 +124,61 @@ export default function ReportsPage() {
   const srStudents = students.filter(
     s => (!srGroupId || s.groupId === srGroupId) && (!srGradeId || s.gradeId === srGradeId)
   )
+
+  // بناء المعاينة مباشرة عند اختيار الطالب/النوع/الفترة — بدون حوارات
+  useEffect(() => {
+    if (!srReport) {
+      setPreviewHtml("")
+      setPreviewPages(0)
+      return
+    }
+    try {
+      const built = buildStudentReportPagesHtml({
+        report: srReport,
+        type: srType,
+        mode: "teacher",
+        month: srMonth && srMonth !== "__all" ? parseInt(srMonth) : null,
+      })
+      setPreviewHtml(built.html)
+      setPreviewPages(built.pageCount)
+    } catch (e) {
+      console.error(e)
+      setPreviewHtml("")
+      setPreviewPages(0)
+    }
+  }, [srReport, srType, srMonth])
+
+  // حقن HTML المعاينة عبر DOM (المحتوى مولَّد محلياً ومُنقَّى)
+  useEffect(() => {
+    if (previewRef.current) previewRef.current.innerHTML = previewHtml
+  }, [previewHtml])
+
+  const handlePrintReport = () => {
+    if (!previewHtml) return
+    try {
+      printHtml(previewHtml, `report-inline-print-${Date.now()}`)
+    } catch (e) {
+      console.error(e)
+      toast.error("تعذر فتح نافذة الطباعة")
+    }
+  }
+
+  const handleDownloadReport = async () => {
+    if (!previewHtml || !srReport) return
+    setPdfBusy(true)
+    try {
+      await downloadHtmlAsPDF(
+        `report-inline-pdf-${Date.now()}`,
+        previewHtml,
+        `تقرير-${srReport.student.name}-${STUDENT_REPORT_LABELS[srType]}${srMonth && srMonth !== "__all" ? `-${MONTHS[parseInt(srMonth) - 1]}` : "-سنوي"}`
+      )
+      toast.success("تم تحميل ملف PDF بنجاح")
+    } catch (e) {
+      console.error(e)
+      toast.error("تعذر تصدير ملف PDF")
+    }
+    setPdfBusy(false)
+  }
 
   const loadStudentReport = (studentId: string) => {
     const r = collectStudentReport(studentId)
@@ -290,9 +353,34 @@ export default function ReportsPage() {
         </div>
       </motion.div>
 
+      {/* شريط تبويبات التقارير */}
+      <div className="flex flex-wrap gap-2">
+        {([
+          { key: "overview" as const, label: "نظرة عامة وقرارات", icon: TrendingUp },
+          { key: "student" as const, label: "تقرير طالب", icon: ClipboardList },
+          { key: "grades" as const, label: "الدرجات اليدوية", icon: FileText },
+          { key: "activity" as const, label: "الحضور والاختبارات", icon: Calendar },
+        ]).map(({ key, label, icon: TabIcon }) => (
+          <button
+            key={key}
+            onClick={() => setReportsTab(key)}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition-all ${
+              reportsTab === key
+                ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg"
+                : "bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800"
+            }`}
+          >
+            <TabIcon className="w-4 h-4" />
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Reports Content */}
       <div id="reports-content" className="space-y-6">
 
+      {reportsTab === "overview" && (
+      <>
       {/* Overall Financial Summary */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -451,7 +539,13 @@ export default function ReportsPage() {
             </div>
           )}
         </motion.div>
+      </div>
 
+        </>
+      )}
+
+      {reportsTab === "activity" && (
+      <>
         {/* Attendance Report */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -549,103 +643,150 @@ export default function ReportsPage() {
           </div>
         </motion.div>
 
-        {/* ================== تقرير طالب مفصل ================== */}
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-          <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <UserRound className="w-5 h-5 text-purple-600" />
-                تقرير طالب مفصل
-              </CardTitle>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                تقرير كامل لطالب واحد (درجاته يدوياً والكترونياً + مدفوعاته + حضوره + مكافآته وسجله) — قابل للطباعة وإرساله لولي الأمر
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div>
-                  <Label>الصف</Label>
-                  <Select value={srGradeId} onValueChange={v => { setSrGradeId(v); setSrGroupId(""); setSrStudentId(""); setSrReport(null) }}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="كل الصفوف" /></SelectTrigger>
-                    <SelectContent>
-                      {grades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>المجموعة</Label>
-                  <Select value={srGroupId} onValueChange={v => { setSrGroupId(v); setSrStudentId(""); setSrReport(null) }}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="كل المجموعات" /></SelectTrigger>
-                    <SelectContent>
-                      {srGroups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>الطالب</Label>
-                  <Select value={srStudentId} onValueChange={pickSrStudent}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder={srStudents.length ? "اختر الطالب" : "لا يوجد طلاب"} /></SelectTrigger>
-                    <SelectContent>
-                      {srStudents.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>نوع التقرير</Label>
-                  <Select value={srType} onValueChange={(v: StudentReportType) => setSrType(v)}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {(Object.keys(STUDENT_REPORT_LABELS) as StudentReportType[]).map(k => (
-                        <SelectItem key={k} value={k}>{STUDENT_REPORT_LABELS[k]}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>الفترة</Label>
-                  <Select value={srMonth} onValueChange={setSrMonth}>
-                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all">العام كاملاً (سنوي)</SelectItem>
-                      {MONTHS.map((m, i) => <SelectItem key={i} value={(i + 1).toString()}>{m}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+        </>
+      )}
 
-              {srReport && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-center">
-                      <p className="text-xs text-blue-600 font-bold">التقييمات اليدوية</p>
-                      <p className="text-xl font-extrabold text-blue-700 dark:text-blue-300">{srReport.manualGrades.length}</p>
-                    </div>
-                    <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 p-3 text-center">
-                      <p className="text-xs text-indigo-600 font-bold">اختبارات إلكترونية</p>
-                      <p className="text-xl font-extrabold text-indigo-700 dark:text-indigo-300">{srReport.examAttempts.length}</p>
-                    </div>
-                    <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 text-center">
-                      <p className="text-xs text-emerald-600 font-bold">الرصيد</p>
-                      <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{srReport.balance.toLocaleString("ar-EG")} ج.م</p>
-                    </div>
-                    <div className="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 p-3 text-center">
-                      <p className="text-xs text-teal-600 font-bold">نسبة الحضور</p>
-                      <p className="text-xl font-extrabold text-teal-700 dark:text-teal-300">{srReport.attendance.rate}%</p>
-                    </div>
+        {reportsTab === "student" && (
+        <div className="space-y-5">
+          <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }}>
+            <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <ClipboardList className="w-5 h-5 text-purple-600" />
+                  تقرير طالب مفصل — معاينة مباشرة
+                </CardTitle>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  اختر الطالب ونوع التقرير والفترة — التقرير يظهر أمامك فوراً ثم اطبعه أو حمّله PDF لإرساله لولي الأمر
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <div>
+                    <Label>الصف</Label>
+                    <Select value={srGradeId} onValueChange={v => { setSrGradeId(v); setSrGroupId(""); setSrStudentId(""); setSrReport(null) }}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="كل الصفوف" /></SelectTrigger>
+                      <SelectContent>
+                        {grades.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <Button
-                    onClick={() => setPrintOpen(true)}
-                    className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
-                  >
-                    <Printer className="w-4 h-4" />
-                    <span>معاينة وطباعة {STUDENT_REPORT_LABELS[srType]} — {srReport.student.name}</span>
-                  </Button>
+                  <div>
+                    <Label>المجموعة</Label>
+                    <Select value={srGroupId} onValueChange={v => { setSrGroupId(v); setSrStudentId(""); setSrReport(null) }}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder="كل المجموعات" /></SelectTrigger>
+                      <SelectContent>
+                        {srGroups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>الطالب</Label>
+                    <Select value={srStudentId} onValueChange={pickSrStudent}>
+                      <SelectTrigger className="mt-1"><SelectValue placeholder={srStudents.length ? "اختر الطالب" : "لا يوجد طلاب"} /></SelectTrigger>
+                      <SelectContent>
+                        {srStudents.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>نوع التقرير</Label>
+                    <Select value={srType} onValueChange={(v: StudentReportType) => setSrType(v)}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(STUDENT_REPORT_LABELS) as StudentReportType[]).map(k => (
+                          <SelectItem key={k} value={k}>{STUDENT_REPORT_LABELS[k]}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>الفترة</Label>
+                    <Select value={srMonth} onValueChange={setSrMonth}>
+                      <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all">العام كاملاً (سنوي)</SelectItem>
+                        {MONTHS.map((m, i) => <SelectItem key={i} value={(i + 1).toString()}>{m}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </motion.div>
 
+                {!srReport ? (
+                  <div className="rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-800 py-14 text-center">
+                    <Eye className="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-700" />
+                    <p className="font-bold text-gray-500 dark:text-gray-400">اختر طالباً ليظهر التقرير هنا مباشرة</p>
+                    <p className="text-xs text-gray-400 mt-1">درجاته (يدوياً + إلكترونياً) وكشف حسابه وحضوره ومكافآته وسجله</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-center">
+                        <p className="text-xs text-blue-600 font-bold">التقييمات اليدوية</p>
+                        <p className="text-xl font-extrabold text-blue-700 dark:text-blue-300">{srReport.manualGrades.length}</p>
+                      </div>
+                      <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 p-3 text-center">
+                        <p className="text-xs text-indigo-600 font-bold">اختبارات إلكترونية</p>
+                        <p className="text-xl font-extrabold text-indigo-700 dark:text-indigo-300">{srReport.examAttempts.length}</p>
+                      </div>
+                      <div className="rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 p-3 text-center">
+                        <p className="text-xs text-emerald-600 font-bold">الرصيد</p>
+                        <p className="text-xl font-extrabold text-emerald-700 dark:text-emerald-300">{srReport.balance.toLocaleString("ar-EG")} ج.م</p>
+                      </div>
+                      <div className="rounded-xl bg-teal-50 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800 p-3 text-center">
+                        <p className="text-xs text-teal-600 font-bold">نسبة الحضور</p>
+                        <p className="text-xl font-extrabold text-teal-700 dark:text-teal-300">{srReport.attendance.rate}%</p>
+                      </div>
+                    </div>
+
+                    {/* شريط الأدوات + المعاينة المباشرة */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-l from-purple-50 to-indigo-50 dark:from-purple-950/20 dark:to-indigo-950/20 rounded-2xl border border-purple-200 dark:border-purple-900 px-4 py-3">
+                      <div>
+                        <p className="font-extrabold text-gray-900 dark:text-white">
+                          {STUDENT_REPORT_LABELS[srType]} — {srReport.student.name}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {srMonth && srMonth !== "__all" ? `شهر ${MONTHS[parseInt(srMonth) - 1]}` : "العام كاملاً"} • {previewPages} صفحة A4
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          onClick={handlePrintReport}
+                          disabled={!previewHtml}
+                          className="bg-gradient-to-r from-gray-700 to-gray-900 hover:from-gray-800 hover:to-black text-white"
+                        >
+                          <PrinterIcon className="w-4 h-4" />
+                          <span>طباعة</span>
+                        </Button>
+                        <Button
+                          onClick={handleDownloadReport}
+                          disabled={!previewHtml || pdfBusy}
+                          className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white"
+                        >
+                          {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                          <span>{pdfBusy ? "جاري التصدير..." : "تحميل PDF"}</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-gray-950 p-4">
+                      <div className="overflow-auto max-h-[75vh] rounded-xl">
+                        <div
+                          ref={previewRef}
+                          className="mx-auto shadow-2xl"
+                          style={{ width: "794px", transform: "scale(0.72)", transformOrigin: "top center", marginBottom: "-22%" }}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
+        )}
+
+        {reportsTab === "grades" && (
+        <>
         {/* ================== تسجيل الدرجات يدوياً ================== */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
@@ -774,18 +915,9 @@ export default function ReportsPage() {
             </CardContent>
           </Card>
         </motion.div>
+        </>
+        )}
       </div>
-      </div>
-
-      <HtmlPrintDialog
-        open={printOpen}
-        onOpenChange={setPrintOpen}
-        build={printOpen && srReport ? () => buildStudentReportPagesHtml({ report: srReport, type: srType, mode: "teacher", month: srMonth && srMonth !== "__all" ? parseInt(srMonth) : null }) : null}
-        filename={`تقرير-${srReport?.student.name || "الطالب"}-${STUDENT_REPORT_LABELS[srType]}`}
-        title={`${STUDENT_REPORT_LABELS[srType]} — ${srReport?.student.name || ""}`}
-        description="تقرير رسمي بتوقيع المعلم — جاهز للطباعة أو الإرسال لولي الأمر"
-        accentClass="text-emerald-600"
-      />
     </div>
   )
 }

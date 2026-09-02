@@ -33,15 +33,18 @@ interface HtmlPrintDialogProps {
 export function HtmlPrintDialog({ open, onOpenChange, build, filename, title, description, accentClass }: HtmlPrintDialogProps) {
   const [exporting, setExporting] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
-  const [wasOpen, setWasOpen] = useState(false)
   const [html, setHtml] = useState("")
   const [pageCount, setPageCount] = useState(0)
 
-  // بناء المعاينة عند كل فتح (اشتقاق أثناء العرض — بدون تأثيرات)
-  if (open && !wasOpen) {
-    setWasOpen(true)
+  // بناء المعاينة بعد الفتح مباشرة (داخل Effect — قياسات DOM حقيقية وبلا تحذيرات React)
+  useEffect(() => {
+    if (!open || !build) {
+      setHtml("")
+      setPageCount(0)
+      return
+    }
     try {
-      const built = build?.()
+      const built = build()
       setHtml(built?.html || "")
       setPageCount(built?.pageCount || 0)
     } catch (e) {
@@ -49,9 +52,9 @@ export function HtmlPrintDialog({ open, onOpenChange, build, filename, title, de
       setHtml("")
       setPageCount(0)
     }
-  } else if (!open && wasOpen) {
-    setWasOpen(false)
-  }
+    // build تُمرَّر فقط عند الفتح عمداً — لا نعيد البناء مع كل رسم
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
 
   // حقن HTML المعاينة عبر DOM مباشرة (المحتوى مولَّد محلياً ومُنقَّى)
   useEffect(() => {
