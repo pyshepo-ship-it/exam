@@ -23,6 +23,9 @@ Timer,
   Settings2,
   EyeOff,
   SlidersHorizontal,
+  Users,
+  UserCheck,
+  Phone,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -51,6 +54,7 @@ import {
   Exam,
   Question,
   SubQuestion,
+  ExamAccessMode,
   ExamTemplateId,
   getGrades,
   getExams,
@@ -89,6 +93,7 @@ export default function ExamsPage() {
   const [panelExam, setPanelExam] = useState<Exam | null>(null)
   const [panelForm, setPanelForm] = useState({
     allowOnline: false,
+    accessMode: "members" as ExamAccessMode,
     availabilityMode: "always" as 'always' | 'scheduled',
     availableFrom: "",
     availableUntil: "",
@@ -116,6 +121,7 @@ export default function ExamsPage() {
     teacherName: TEACHER_NAME,
     schoolName: "",
     allowOnline: false,
+    accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
     honorMinPercent: 100,
     availabilityMode: "always" as 'always' | 'scheduled',
@@ -125,10 +131,24 @@ export default function ExamsPage() {
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
+  /** أصل الموقع لرابط الاختبار المفتوح للجميع (يُحسب في المتصفح فقط) */
+  const [siteOrigin, setSiteOrigin] = useState("")
+
   useEffect(() => {
     setGrades(getGrades())
     setExams(getExams())
+    setSiteOrigin(window.location.origin)
   }, [])
+
+  const examLink = (id: string) => `${siteOrigin}/exam/${id}`
+
+  const copyExamLink = (id: string) => {
+    const url = `${window.location.origin}/exam/${id}`
+    navigator.clipboard.writeText(url).then(
+      () => toast.success("تم نسخ رابط الاختبار — انشره للطلاب"),
+      () => toast.error(url),
+    )
+  }
 
   // مجموعات الصف المختار فقط — لا تظهر مجموعات صف آخر أبداً
   // ===== لوحة تحكم الظهور والمحاولات لاختبار بعينه =====
@@ -136,6 +156,7 @@ export default function ExamsPage() {
     setPanelExam(exam)
     setPanelForm({
       allowOnline: !!exam.allowOnline,
+      accessMode: exam.accessMode === "public" ? "public" : "members",
       availabilityMode: exam.availabilityMode || "always",
       availableFrom: (exam.availableFrom || "").slice(0, 16),
       availableUntil: (exam.availableUntil || "").slice(0, 16),
@@ -153,6 +174,7 @@ export default function ExamsPage() {
         ? {
             ...e,
             allowOnline: panelForm.allowOnline,
+            accessMode: panelForm.allowOnline ? panelForm.accessMode : undefined,
             availabilityMode: panelForm.allowOnline ? panelForm.availabilityMode : undefined,
             availableFrom: panelForm.allowOnline && panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
               ? new Date(panelForm.availableFrom).toISOString() : undefined,
@@ -514,6 +536,7 @@ export default function ExamsPage() {
     teacherName: TEACHER_NAME,
     schoolName: "",
     allowOnline: false,
+    accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
     honorMinPercent: 100,
     availabilityMode: "always" as 'always' | 'scheduled',
@@ -541,6 +564,7 @@ export default function ExamsPage() {
         teacherName: exam.teacherName || TEACHER_NAME,
         schoolName: exam.schoolName || "",
         allowOnline: !!exam.allowOnline,
+        accessMode: exam.accessMode === "public" ? "public" : "members",
         autoHonorBoard: !!exam.autoHonorBoard,
         honorMinPercent: exam.honorMinPercent ?? 100,
         availabilityMode: exam.availabilityMode || "always",
@@ -579,6 +603,7 @@ export default function ExamsPage() {
       teacherName: examForm.teacherName || undefined,
       schoolName: examForm.schoolName || undefined,
       allowOnline: examForm.allowOnline,
+      accessMode: examForm.allowOnline ? examForm.accessMode : undefined,
       autoHonorBoard: examForm.autoHonorBoard,
       honorMinPercent: examForm.honorMinPercent,
       availabilityMode: examForm.allowOnline ? examForm.availabilityMode : undefined,
@@ -742,10 +767,17 @@ export default function ExamsPage() {
                         </Badge>
                       )}
                       {exam.allowOnline ? (
-                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                          <Globe className="w-3 h-3 ml-1" />
-                          منشور للطلاب
-                        </Badge>
+                        exam.accessMode === "public" ? (
+                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                            <Globe className="w-3 h-3 ml-1" />
+                            مفتوح للجميع — بدون تسجيل
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                            <UserCheck className="w-3 h-3 ml-1" />
+                            منشور للأعضاء المسجلين
+                          </Badge>
+                        )
                       ) : (
                         <Badge variant="outline" className="bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                           <EyeOff className="w-3 h-3 ml-1" />
@@ -792,14 +824,10 @@ export default function ExamsPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          title="نسخ رابط الاختبار"
-                          onClick={() => {
-                            const url = `${window.location.origin}/exam/${exam.id}`
-                            navigator.clipboard.writeText(url).then(
-                              () => toast.success("تم نسخ رابط الاختبار"),
-                              () => toast.error(url),
-                            )
-                          }}
+                          title={exam.accessMode === "public"
+                            ? "نسخ رابط الاختبار — مفتوح للجميع (يُفتح بدون تسجيل)"
+                            : "نسخ رابط الاختبار"}
+                          onClick={() => copyExamLink(exam.id)}
                         >
                           <Link2 className="w-4 h-4" />
                         </Button>
@@ -1062,6 +1090,48 @@ export default function ExamsPage() {
 
               {examForm.allowOnline && (
                 <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-4">
+                  {/* من يستطيع فتح الاختبار */}
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">من يستطيع فتح الاختبار؟</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {([
+                        {
+                          key: "members" as ExamAccessMode,
+                          icon: <Users className="w-4 h-4" />,
+                          label: "للأعضاء المسجلين فقط",
+                          desc: "يظهر للطالب في بوابته حسب صفه — اسمه وصفه ومجموعته تُعبأ تلقائياً من حسابه ولا يملأ أي بيانات، يجيب عن الأسئلة فقط",
+                        },
+                        {
+                          key: "public" as ExamAccessMode,
+                          icon: <Globe className="w-4 h-4" />,
+                          label: "مفتوح لأي أحد بدون تسجيل",
+                          desc: "يظهر في لوحة الإعلانات (الصفحة الرئيسية) ويمكنك نشر رابطه — يُدخل الزائر اسمه ورقم هاتفه (إجباريان)، والصف ثابت من الاختبار ويختار مجموعته من مجموعات صفه المتاحة فقط، ثم يبدأ",
+                        },
+                      ]).map(opt => {
+                        const on = examForm.accessMode === opt.key
+                        return (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setExamForm(prev => ({ ...prev, accessMode: opt.key }))}
+                            className={`text-right rounded-xl border-2 p-3 transition-all bg-white dark:bg-gray-900 ${
+                              on
+                                ? "border-indigo-500 shadow"
+                                : "border-gray-200 dark:border-gray-700"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-white">
+                              <span className={on ? "text-indigo-600" : "text-gray-400"}>{opt.icon}</span>
+                              {opt.label}
+                              {on && <span className="mr-auto text-[11px] text-indigo-600 shrink-0">✓ محدد</span>}
+                            </span>
+                            <span className="block text-xs text-gray-500 mt-1 leading-relaxed">{opt.desc}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+
                   {/* الإتاحة الزمنية */}
                   <div>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">إتاحة الاختبار</p>
@@ -1812,6 +1882,9 @@ export default function ExamsPage() {
                       <div>
                         <p className="font-bold text-gray-900 dark:text-white">
                           {a.studentName}
+                          {!a.studentId && (
+                            <Badge className="mr-2 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">زائر — بلا حساب</Badge>
+                          )}
                           {overridden && (
                             <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
                           )}
@@ -1820,6 +1893,12 @@ export default function ExamsPage() {
                           {a.submittedAt ? new Date(a.submittedAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : ""}
                           {a.durationSeconds ? ` — مدة ${Math.round(a.durationSeconds / 60)} دقيقة` : ""}
                         </p>
+                        {a.phone && (
+                          <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5" dir="rtl">
+                            <Phone className="w-3 h-3" />
+                            <span dir="ltr">{a.phone}</span>
+                          </p>
+                        )}
                         {overridden && a.manualOverride?.reason && (
                           <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
                         )}
@@ -1933,6 +2012,81 @@ export default function ExamsPage() {
 
               {panelForm.allowOnline && (
                 <>
+                  {/* من يستطيع فتح الاختبار: الأعضاء فقط أم مفتوح للجميع */}
+                  <div className="space-y-2">
+                    <p className="font-bold text-sm text-gray-900 dark:text-white">من يستطيع فتح الاختبار؟</p>
+                    <div className="grid grid-cols-1 gap-2">
+                      {([
+                        {
+                          key: "members" as ExamAccessMode,
+                          icon: <Users className="w-4 h-4" />,
+                          label: "للأعضاء المسجلين فقط",
+                          desc: "يظهر للطالب في بوابته حسب صفه — اسمه وصفه ومجموعته تُعبأ تلقائياً من حسابه ولا يملأ أي بيانات، يجيب عن الأسئلة فقط",
+                        },
+                        {
+                          key: "public" as ExamAccessMode,
+                          icon: <Globe className="w-4 h-4" />,
+                          label: "مفتوح لأي أحد بدون تسجيل",
+                          desc: "يظهر في لوحة الإعلانات (الصفحة الرئيسية) ويمكنك نشر رابطه — يُدخل الزائر اسمه ورقم هاتفه (إجباريان)، والصف ثابت من الاختبار ويختار مجموعته من مجموعات صفه المتاحة فقط، ثم يبدأ",
+                        },
+                      ]).map(opt => {
+                        const on = panelForm.accessMode === opt.key
+                        return (
+                          <button
+                            key={opt.key}
+                            type="button"
+                            onClick={() => setPanelForm(prev => ({ ...prev, accessMode: opt.key }))}
+                            className={`text-right rounded-xl border-2 p-3 transition-colors ${
+                              on
+                                ? "border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30"
+                                : "border-gray-200 dark:border-gray-800 hover:border-gray-300"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 font-bold text-sm text-gray-900 dark:text-white">
+                              <span className={on ? "text-indigo-600" : "text-gray-400"}>{opt.icon}</span>
+                              {opt.label}
+                              {on && <span className="mr-auto text-[11px] text-indigo-600 shrink-0">✓ محدد</span>}
+                            </span>
+                            <span className="block text-xs text-gray-500 mt-1 leading-relaxed">{opt.desc}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      {panelForm.accessMode === "public"
+                        ? "الزوار يفتحون الاختبار من الصفحة الرئيسية أو من رابطه المباشر — تصلك محاولاتهم بالاسم ورقم الهاتف والمجموعة"
+                        : "لا يفتح الاختبار إلا طالب مسجَّل الدخول من صفه — هويته تلقائية من حسابه"}
+                    </p>
+
+                    {/* رابط النشر — للاختبار المفتوح للجميع */}
+                    {panelForm.accessMode === "public" && (
+                      <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-2">
+                        <p className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1.5">
+                          <Link2 className="w-3.5 h-3.5" />
+                          رابط الاختبار — انشره في أي مكان
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            readOnly
+                            dir="ltr"
+                            value={examLink(panelExam.id)}
+                            onFocus={e => e.currentTarget.select()}
+                            className="h-9 text-xs bg-white dark:bg-gray-900"
+                          />
+                          <Button size="sm" variant="outline" className="shrink-0" onClick={() => copyExamLink(panelExam.id)}>
+                            <Link2 className="w-4 h-4" />
+                            <span>نسخ</span>
+                          </Button>
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          يفتحه الطالب بدون تسجيل: يُدخل اسمه ورقم هاتفه، والصف ثابت، ويختار مجموعته ثم يبدأ.
+                          <br />
+                          ويظهر أيضاً تلقائياً في لوحة الإعلانات بالصفحة الرئيسية.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
                   {/* المجموعات المستهدفة */}
                   <div className="space-y-2">
                     <p className="font-bold text-sm text-gray-900 dark:text-white">يظهر لمجموعات:</p>

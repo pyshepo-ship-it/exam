@@ -819,6 +819,45 @@ test("فحص صلاحيات الوصول للزوار (anon): قراءة الم�
   assert(schema.includes("CREATE POLICY \"anon insert exam_attempts\""), "تسليم الاختبار متاح للزائر")
 })
 
+test("وضع فتح الاختبار (أعضاء/مفتوح للجميع) يُزامن ذهاباً وإياباً مع السحابة", () => {
+  const sync = readFileSync("src/lib/supabase/sync.ts", "utf8")
+  assert(/accessMode:\s*e\.accessMode === "public" \? "public" : "members"/.test(sync), "accessMode يُرفع ضمن إعدادات الاختبار")
+  assert(/accessMode:\s*wrapped && q\.accessMode === "public"/.test(sync), "accessMode يُقرأ من السحابة بقيمة افتراضية آمنة (members)")
+  assert(/phone:\s*a\.phone \|\| null/.test(sync), "رقم هاتف الزائر يُرفع مع المحاولة")
+  assert(/phone:\s*nil\(row\.phone\)/.test(sync), "رقم هاتف الزائر يُقرأ مع المحاولة")
+  assert(sync.includes("fetchGuestAttemptCount"), "عدّاد محاولات الزائر عبر الأجهزة موجود")
+  assert(sync.includes("isMissingColumnError"), "تراجع آمن إن لم يكن عمود phone مُرحَّلاً بعد")
+})
+
+test("عمود هاتف الزائر موجود في المخطط وملف الترحيل 013", () => {
+  const schema = readFileSync("supabase/schema.sql", "utf8")
+  assert(/ALTER TABLE exam_attempts ADD COLUMN IF NOT EXISTS phone TEXT;/.test(schema), "schema.sql يضيف عمود phone")
+  const mig = readFileSync("supabase/migrations/013_exam_access_mode.sql", "utf8")
+  assert(/ALTER TABLE public\.exam_attempts ADD COLUMN IF NOT EXISTS phone TEXT;/.test(mig), "013 يضيف عمود phone")
+  assert(mig.includes("idx_exam_attempts_guest"), "013 ينشئ فهرس محاولات الزوار")
+  assert(mig.includes("CREATE POLICY \"public insert\" ON public.exam_attempts"), "013 يؤكد سياسة إرسال الزوار")
+})
+
+test("لوحة الإعلانات تعرض الاختبارات المفتوحة للجميع فقط (لا اختبارات الأعضاء)", () => {
+  const home = readFileSync("src/app/page.tsx", "utf8")
+  assert(home.includes("publicBoardExams("), "الصفحة الرئيسية تستخدم publicBoardExams")
+  assert(!/filter\(e => e\.allowOnline\)/.test(home), "لا تُعرض كل الاختبارات المنشورة للعامة")
+  const pc = readFileSync("src/lib/portal-content.ts", "utf8")
+  assert(/isExamOpenToGuests\(e\) && examAvailability\(e, now\)\.open/.test(pc), "اللوحة = مفتوح للجميع + متاح الآن")
+})
+
+test("صفحة الاختبار: بوابة الأعضاء وبوابة الزوار منفصلتان ولا تُملأ بيانات العضو يدوياً", () => {
+  const page = readFileSync("src/app/exam/[id]/page.tsx", "utf8")
+  assert(page.includes('accessMode !== "public"'), "بوابة تسجيل الدخول لاختبارات الأعضاء فقط")
+  assert(page.includes("validateGuestIdentity("), "التحقق من بيانات الزائر قبل البدء")
+  assert(page.includes("guestGroupsForGrade("), "قائمة مجموعات الزائر من صف الاختبار فقط")
+  assert(/setGuestPhone/.test(page) && /guestPhone/.test(page), "رقم هاتف الزائر إجباري في النموذج")
+  assert(page.includes("محدد مسبقاً من المعلم"), "صف الاختبار ثابت لا يختاره الزائر")
+  assert(page.includes("setPortalStudent({"), "هوية العضو تُعبأ تلقائياً من حسابه")
+  assert(!page.includes("alert("), "بلا نوافذ تنبيه — رسائل خطأ داخل الصفحة")
+  assert(page.includes("phone: portalStudent ? undefined : guestIdentity?.phone"), "الهاتف يُحفظ للزائر فقط")
+})
+
 // ============================================================
 // اختبار 11: خوارزمية تقسيم الامتحان ديناميكياً على الصفحات وعدم قسمة أي سؤال
 // ============================================================

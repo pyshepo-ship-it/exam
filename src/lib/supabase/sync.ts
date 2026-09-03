@@ -208,6 +208,8 @@ export const toExamRow = (e: any) => ({
     teacherName: e.teacherName || "",
     schoolName: e.schoolName || "",
     allowOnline: !!e.allowOnline,
+    // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
+    accessMode: e.accessMode === "public" ? "public" : "members",
     autoHonorBoard: !!e.autoHonorBoard,
     honorMinPercent: e.honorMinPercent ?? 100,
     availabilityMode: e.availabilityMode || "always",
@@ -242,6 +244,7 @@ export const fromExamRow = (row: any) => {
     teacherName: wrapped ? (q.teacherName || undefined) : undefined,
     schoolName: wrapped ? (q.schoolName || undefined) : undefined,
     allowOnline: wrapped ? !!q.allowOnline : false,
+    accessMode: wrapped && q.accessMode === "public" ? ("public" as const) : ("members" as const),
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
     honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
     availabilityMode: wrapped ? (q.availabilityMode || "always") : "always",
@@ -606,6 +609,17 @@ function isForeignKeyError(err: any): boolean {
 }
 
 /**
+ * هل الخطأ «عمود غير موجود» (42703) لعمود بعينه؟
+ * يُستخدم للتراجع الآمن عندما تكون قاعدة البيانات لم تُرحَّل بعد
+ * (مثلاً عمود phone في exam_attempts المُضاف في 013) — فلا تضيع محاولة الطالب.
+ */
+function isMissingColumnError(err: any, column: string): boolean {
+  if (err?.code !== "42703") return false;
+  const msg = String(err?.message || "");
+  return msg.includes(column) || /column .* does not exist/i.test(msg);
+}
+
+/**
  * رفع كل البيانات المحلية بالترتيب الصحيح للتبعيات:
  * الصفوف والمجموعات ← الطلاب ← الاستحقاقات ← المدفوعات ← الحصص ← الحضور
  */
@@ -859,6 +873,8 @@ const toAttemptRow = (a: any) => ({
   exam_id: a.examId,
   student_id: a.studentId || null,
   student_name: a.studentName || "",
+  // هاتف الزائر في الاختبارات المفتوحة للجميع (عمود اختياري — يُتجاهل إن لم تُرحَّل القاعدة بعد)
+  phone: a.phone || null,
   group_id: a.groupId || "",
   grade_id: a.gradeId || "",
   answers: a.answers || {},
@@ -875,6 +891,7 @@ const fromAttemptRow = (row: any) => ({
   examId: row.exam_id,
   studentId: nil(row.student_id),
   studentName: row.student_name,
+  phone: nil(row.phone),
   groupId: row.group_id,
   gradeId: row.grade_id,
   answers: row.answers || {},
@@ -895,6 +912,15 @@ export function pushExamAttempts(rows: any[]) {
     } catch (err: any) {
       // الجدول قد لا يكون مُنشأ بعد — لا نكسر باقي المزامنة
       if (err?.code === "42P01" || /does not exist/i.test(err?.message || "")) return;
+      // عمود phone لم يُضف بعد (013) — نرفع المحاولات بدونه ولا نوقف المزامنة
+      if (isMissingColumnError(err, "phone")) {
+        await pushRows("exam_attempts", rows.map((r) => {
+          const row = toAttemptRow(r);
+          delete row.phone;
+          return row;
+        }));
+        return;
+      }
       throw err;
     }
   })();
@@ -1127,14 +1153,44 @@ export interface PublicData {
   exams: ReturnType<typeof fromExamRow>[];
 }
 
-/** إرسال محاولة طالب من الصفحة العامة (بدون تسجيل دخول) */
+/**
+ * إرسال محاولة طالب من الصفحة العامة (بدون تسجيل دخول).
+ * لو كانت القاعدة لم تُرحَّل بعد (عمود phone غير موجود — خطأ 42703)
+ * نُعيد الإرسال بدون العمود حتى لا تضيع محاولة الطالب أبداً.
+ */
 export async function submitPublicAttempt(attempt: any): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
-  const { error } = await sb.from("exam_attempts").insert(toAttemptRow(attempt));
+  const row = toAttemptRow(attempt);
+  let { error } = await sb.from("exam_attempts").insert(row);
+  if (error && isMissingColumnError(error, "phone")) {
+    const withoutPhone: Record<string, unknown> = { ...row };
+    delete withoutPhone.phone;
+    ({ error } = await sb.from("exam_attempts").insert(withoutPhone));
+  }
   if (error && error.code !== "23505") {
     console.warn("submitPublicAttempt:", error);
   }
+}
+
+/** عدد محاولات زائر (بلا حساب) في اختبار — بالاسم والمجموعة، لحد المحاولات عبر الأجهزة */
+export async function fetchGuestAttemptCount(
+  examId: string,
+  studentName: string,
+  groupId: string
+): Promise<number | null> {
+  const sb = getSupabase();
+  const name = (studentName || "").trim();
+  if (!sb || !examId || !name) return null;
+  const { count, error } = await sb
+    .from("exam_attempts")
+    .select("id", { count: "exact", head: true })
+    .eq("exam_id", examId)
+    .eq("student_name", name)
+    .is("student_id", null)
+    .eq("group_id", groupId || "");
+  if (error) return null;
+  return count ?? 0;
 }
 
 export async function submitPublicHonoree(h: any): Promise<void> {

@@ -138,6 +138,15 @@ export interface Payment {
 
 export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
 
+/**
+ * من يستطيع فتح الاختبار الإلكتروني:
+ *  - members: الأعضاء المسجلون فقط — يظهر للطالب في بوابته حسب صفه،
+ *             وبياناته (الاسم/الصف/المجموعة) تُعبأ تلقائياً من حسابه
+ *  - public : مفتوح لأي أحد بدون تسجيل — يظهر في لوحة الإعلانات (الصفحة الرئيسية)
+ *             أو برابط مباشر، ويُدخل الزائر اسمه ورقم هاتفه ويختار مجموعته
+ */
+export type ExamAccessMode = "members" | "public"
+
 export interface Exam {
   id: string
   gradeId: string
@@ -157,6 +166,8 @@ export interface Exam {
   schoolName?: string
   /** نشر الاختبار للطلاب على الموقع ليؤدوه خلال المدة المحددة */
   allowOnline?: boolean
+  /** من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بدون تسجيل */
+  accessMode?: ExamAccessMode
   /** إضافة المتفوقين تلقائياً إلى لوحة الشرف */
   autoHonorBoard?: boolean
   /** الحد الأدنى للنسبة المئوية للترشيح (100 = الدرجة الكاملة) */
@@ -261,6 +272,8 @@ export interface ExamAttempt {
   examId: string
   studentId?: string
   studentName: string
+  /** رقم هاتف الزائر — يُطلب في الاختبارات المفتوحة للجميع (بلا تسجيل دخول) */
+  phone?: string
   groupId: string
   gradeId: string
   answers: Record<string, ExamAttemptAnswer>

@@ -4,7 +4,8 @@
 //  • الاختبارات الإلكترونية: لصفه ومجموعاته المستهدفة وضمن الإتاحة الزمنية
 // ============================================================
 
-import { Announcement, Exam } from "./data-storage"
+import { Announcement, Exam, ExamAccessMode, Grade, Group } from "./data-storage"
+import { isValidPhone, isValidStudentName, normalizeDigits } from "./student-accounts"
 
 /** إعلانات تخص هذا الصف فقط — المستهدف فارغ = إعلان عام للجميع */
 export function announcementsForGrade(announcements: Announcement[], gradeId: string): Announcement[] {
@@ -55,6 +56,115 @@ export function isExamForStudent(exam: Exam, gradeId: string, groupId: string): 
   const targets = exam.targetGroupIds || []
   if (targets.length > 0 && groupId && !targets.includes(groupId)) return false
   return true
+}
+
+// ============================================================
+// من يفتح الاختبار: للأعضاء المسجلين فقط أم مفتوح للجميع بلا تسجيل
+//  • members (الافتراضي): يظهر للطالب في بوابته حسب صفه، وبياناته
+//    (الاسم/الصف/المجموعة) تُعبأ تلقائياً من حسابه — يجيب فقط
+//  • public: يظهر في لوحة الإعلانات (الصفحة الرئيسية) أو برابط مباشر،
+//    ويُدخل الزائر اسمه ورقم هاتفه ويختار مجموعته من مجموعات صف الاختبار
+// ============================================================
+
+/** وضع الدخول للاختبار — غير المحدد = للأعضاء فقط (سلوك آمن افتراضياً) */
+export function examAccessMode(exam: Exam): ExamAccessMode {
+  return exam.accessMode === "public" ? "public" : "members"
+}
+
+/** هل يقبل الاختبار زواراً بلا حساب ولا تسجيل دخول؟ */
+export function isExamOpenToGuests(exam: Exam): boolean {
+  return !!exam.allowOnline && examAccessMode(exam) === "public"
+}
+
+/**
+ * اختبارات لوحة الإعلانات في الصفحة الرئيسية:
+ * المفتوحة للجميع فقط (اختبارات الأعضاء تظهر في بوابة الطالب لا في الصفحة العامة)
+ * والمتاحة الآن زمنياً.
+ */
+export function publicBoardExams(exams: Exam[], now: Date = new Date()): Exam[] {
+  return (exams || []).filter(e => isExamOpenToGuests(e) && examAvailability(e, now).open)
+}
+
+/** هل يختار الزائر صفه؟ — فقط إذا كان الاختبار عاماً (بلا صف محدد) */
+export function isExamGradeSelectable(exam: Exam): boolean {
+  return !exam.gradeId
+}
+
+/** صف الاختبار من جهة الزائر: ثابت من إعداد المعلم، والاختبار العام يأخذ صف الزائر */
+export function examGradeIdForGuest(exam: Exam, chosenGradeId?: string): string {
+  return exam.gradeId || (chosenGradeId || "")
+}
+
+/** المجموعات المتاحة للزائر في هذا الاختبار: مجموعات صفه، والمستهدفة فقط إن حُدِّدت */
+export function guestGroupsForGrade(exam: Exam, grades: Grade[], gradeId: string): Group[] {
+  const grade = (grades || []).find(g => g.id === gradeId)
+  const groups = grade?.groups || []
+  const targets = exam.targetGroupIds || []
+  return targets.length > 0 ? groups.filter(g => targets.includes(g.id)) : groups
+}
+
+export interface GuestIdentityInput {
+  name: string
+  phone: string
+  /** يُستخدم فقط مع الاختبار العام (بلا صف محدد) */
+  gradeId?: string
+  groupId?: string
+}
+
+export interface GuestIdentity {
+  name: string
+  phone: string
+  gradeId: string
+  groupId: string
+}
+
+/**
+ * التحقق من بيانات الزائر قبل بدء الاختبار المفتوح للجميع:
+ * الاسم ورقم الهاتف إجباريان، والصف محدد مسبقاً من الاختبار نفسه،
+ * والمجموعة من قائمة مجموعات صفه المتاحة لهذا الاختبار فقط.
+ */
+export function validateGuestIdentity(
+  exam: Exam,
+  grades: Grade[],
+  input: GuestIdentityInput
+): { ok: true; identity: GuestIdentity } | { ok: false; error: string } {
+  const name = (input.name || "").trim().replace(/\s+/g, " ")
+  const phone = normalizeDigits(input.phone || "").replace(/[\s-]/g, "")
+
+  if (!isValidStudentName(name)) {
+    return { ok: false, error: "اكتب اسمك كاملاً بالحروف — ٥ أحرف على الأقل وبدون أرقام أو رموز" }
+  }
+  if (!isValidPhone(phone)) {
+    return { ok: false, error: "رقم الهاتف غير صحيح — أرقام فقط بدون حروف (10-15 رقماً)" }
+  }
+
+  const gradeId = examGradeIdForGuest(exam, input.gradeId)
+  if (!gradeId) return { ok: false, error: "اختر صفك للبدء" }
+
+  const knownGrades = (grades || []).filter(g => !!g?.id)
+  if (knownGrades.length === 0) {
+    // تعذر جلب الصفوف (انقطاع السحابة مثلاً) — لا نمنع الطالب من الاختبار
+    return { ok: true, identity: { name, phone, gradeId, groupId: input.groupId || exam.groupId || "" } }
+  }
+  if (!knownGrades.some(g => g.id === gradeId)) {
+    return { ok: false, error: "الصف المختار غير متاح في هذا الاختبار" }
+  }
+
+  const allowed = guestGroupsForGrade(exam, grades, gradeId)
+  if (allowed.length === 0) {
+    if ((exam.targetGroupIds || []).length > 0) {
+      return { ok: false, error: "لا توجد مجموعات متاحة لهذا الاختبار حالياً — راجع المعلم" }
+    }
+    // الصف بلا مجموعات معرَّفة: الاختبار يُؤدى بلا مجموعة
+    return { ok: true, identity: { name, phone, gradeId, groupId: exam.groupId || "" } }
+  }
+
+  const groupId = input.groupId || ""
+  if (!groupId) return { ok: false, error: "اختر مجموعتك من القائمة للبدء" }
+  if (!allowed.some(g => g.id === groupId)) {
+    return { ok: false, error: "هذه المجموعة غير متاحة في هذا الاختبار — اختر مجموعة من القائمة" }
+  }
+  return { ok: true, identity: { name, phone, gradeId, groupId } }
 }
 
 /** حالة محاولات الطالب في اختبار: متاح / استُنفدت */

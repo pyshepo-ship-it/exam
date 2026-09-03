@@ -745,6 +745,69 @@ DS.saveStudentAccounts(savedAccounts)
 globalThis.__remoteStudents = undefined
 
 // ============================================================
+section("سيناريو 18: من يفتح الاختبار — للأعضاء المسجلين فقط أم مفتوح للجميع")
+
+const mkAccessExam = (over) => mkExam({ id: "ex-access", ...over })
+const gradesList = [grade1, grade2]
+
+eq("بلا تحديد → للأعضاء المسجلين فقط (افتراضي آمن)", PC.examAccessMode(mkAccessExam({})) === "members")
+eq("accessMode = public → مفتوح للجميع", PC.examAccessMode(mkAccessExam({ accessMode: "public" })) === "public")
+eq("قيمة غير معروفة → للأعضاء فقط", PC.examAccessMode(mkAccessExam({ accessMode: "قيمة غريبة" })) === "members")
+
+eq("غير منشور → لا يستقبل زواراً ولو ضُبط مفتوحاً للجميع", PC.isExamOpenToGuests(mkAccessExam({ allowOnline: false, accessMode: "public" })) === false)
+eq("منشور + مفتوح للجميع → يستقبل الزوار", PC.isExamOpenToGuests(mkAccessExam({ accessMode: "public" })) === true)
+eq("منشور للأعضاء فقط → لا يستقبل الزوار", PC.isExamOpenToGuests(mkAccessExam({})) === false)
+
+// لوحة الإعلانات (الصفحة الرئيسية): المفتوح للجميع والمتاح الآن فقط
+const boardIds = PC.publicBoardExams([
+  mkAccessExam({ id: "b-1", accessMode: "public" }),
+  mkAccessExam({ id: "b-2" }),
+  mkAccessExam({ id: "b-3", accessMode: "public", allowOnline: false }),
+  mkAccessExam({ id: "b-4", accessMode: "public", availabilityMode: "scheduled", availableUntil: new Date(Date.now() - 3600e3).toISOString() }),
+]).map(e => e.id)
+eq("لوحة الإعلانات تعرض المفتوح للجميع والمتاح الآن فقط", boardIds.length === 1 && boardIds[0] === "b-1", boardIds.join(","))
+
+// مجموعات الزائر: مجموعات صف الاختبار فقط، والمستهدفة منها إن حُدِّدت
+const guestGroups1 = PC.guestGroupsForGrade(mkAccessExam({ accessMode: "public", gradeId: "g-1" }), gradesList, "g-1").map(g => g.id)
+eq("قائمة الزائر = مجموعات صف الاختبار فقط", guestGroups1.join(",") === "gr-1,gr-2", guestGroups1.join(","))
+const guestGroups2 = PC.guestGroupsForGrade(mkAccessExam({ accessMode: "public", gradeId: "g-1", targetGroupIds: ["gr-2"] }), gradesList, "g-1").map(g => g.id)
+eq("المجموعات المستهدفة فقط تظهر للزائر", guestGroups2.join(",") === "gr-2", guestGroups2.join(","))
+eq("اختبار عام → الصف قابل للاختيار، وغير العام → ثابت", PC.isExamGradeSelectable(mkAccessExam({ gradeId: "" })) === true && PC.isExamGradeSelectable(mkAccessExam({ gradeId: "g-1" })) === false)
+eq("صف الزائر يؤخذ من الاختبار نفسه", PC.examGradeIdForGuest(mkAccessExam({ gradeId: "g-1" }), "g-2") === "g-1")
+
+// التحقق من بيانات الزائر قبل البدء (الاسم + الهاتف إجباريان، الصف ثابت، المجموعة من القائمة)
+const guestExam = mkAccessExam({ accessMode: "public", gradeId: "g-1" })
+const guestBase = { name: "محمد علي حسن", phone: "01012345678", groupId: "gr-1" }
+const gv = (over, exam = guestExam) => PC.validateGuestIdentity(exam, gradesList, { ...guestBase, ...over })
+
+const g1ok = gv({})
+eq("بيانات سليمة → يبدأ الاختبار", g1ok.ok === true && g1ok.identity?.gradeId === "g-1" && g1ok.identity?.groupId === "gr-1", g1ok.error || "")
+eq("بلا اسم → مرفوض", gv({ name: "" }).ok === false)
+eq("اسم قصير → مرفوض", gv({ name: "علي" }).ok === false)
+eq("اسم بأرقام → مرفوض", gv({ name: "محمد 12345" }).ok === false)
+eq("بلا هاتف → مرفوض", gv({ phone: "" }).ok === false)
+eq("هاتف بحروف → مرفوض", gv({ phone: "010abc23456" }).ok === false)
+const arabicPhone = gv({ phone: "٠١٠١٢٣٤٥٦٧٨" })
+eq("أرقام عربية-هندية في الهاتف → تُوحَّد وتُقبل", arabicPhone.ok === true && arabicPhone.identity?.phone === "01012345678", arabicPhone.error || "")
+eq("بلا مجموعة → مرفوض", gv({ groupId: "" }).ok === false)
+eq("مجموعة من صف آخر → مرفوضة", gv({ groupId: "gr-3" }).ok === false)
+eq("مجموعة غير مستهدفة → مرفوضة", gv({ groupId: "gr-1" }, mkAccessExam({ accessMode: "public", gradeId: "g-1", targetGroupIds: ["gr-2"] })).ok === false)
+const forcedGrade = gv({ gradeId: "g-2", groupId: "gr-1" })
+eq("الزائر لا يستطيع تغيير صف الاختبار", forcedGrade.ok === true && forcedGrade.identity?.gradeId === "g-1", forcedGrade.error || "")
+const generalExam = mkAccessExam({ accessMode: "public", gradeId: "" })
+const generalOk = gv({ gradeId: "g-2", groupId: "gr-3" }, generalExam)
+eq("اختبار عام → الزائر يختار صفه ومجموعته", generalOk.ok === true && generalOk.identity?.gradeId === "g-2" && generalOk.identity?.groupId === "gr-3", generalOk.error || "")
+eq("اختبار عام بلا اختيار صف → مرفوض", gv({ gradeId: "", groupId: "" }, generalExam).ok === false)
+eq("صف غير موجود أصلاً → مرفوض", gv({ gradeId: "g-9", groupId: "gr-9" }, mkAccessExam({ accessMode: "public", gradeId: "g-9" })).ok === false)
+
+// الزائر يخضع لحد المحاولات بالاسم والمجموعة (عبر الأجهزة بالعدّاد السحابي)
+const guestLimitExam = mkAccessExam({ accessMode: "public", gradeId: "g-1", maxAttempts: 1 })
+const guestAttempts = [{ examId: "ex-access", studentName: "محمد علي حسن", groupId: "gr-1", score: 5 }]
+eq("زائر بلا محاولات سابقة → مسموح", PC.attemptsStatus(guestLimitExam, [], undefined, "محمد علي حسن", "gr-1", 0).allowed === true)
+eq("زائر استهلك محاولته محلياً → ممنوع", PC.attemptsStatus(guestLimitExam, guestAttempts, undefined, "محمد علي حسن", "gr-1", 0).allowed === false)
+eq("زائر استهلك محاولته على جهاز آخر (السحابة) → ممنوع", PC.attemptsStatus(guestLimitExam, [], undefined, "محمد علي حسن", "gr-1", 1).allowed === false)
+
+// ============================================================
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {
