@@ -69,8 +69,17 @@ const transpileAndLoad = async (path, replacements = []) => {
 const weekdaysMod = await transpileAndLoad("src/lib/weekdays.ts")
 
 // Data storage (with mocked sync)
+// مخزن الذاكرة الحقيقي — يُنفَّذ كما في المتصفح (صفر تخزين محلي للبيانات)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { readRows as __readRows, writeRows as __writeRows, clearStore as __clearStore," +
+  " readSetting as __readSetting, writeSetting as __writeSetting," +
+  " purgeLegacyLocalStorage as __purgeLegacy, adoptLegacyIntoMemory as __adoptLegacy };\n"
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+
 const weekdaysRaw = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
-const storageRaw = readFileSync("src/lib/data-storage.ts", "utf8")
+const storageRaw = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
@@ -111,10 +120,14 @@ const pushSetting = () => Promise.resolve();
 const pushExamAttempts = () => Promise.resolve();
 `
 
-const storageJs = ts.transpileModule(mockSyncHeader + "\n" + storageRaw, {
+const storageJs = ts.transpileModule(mockSyncHeader + "\n" + memoryStore + "\n" + storageRaw, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
 const storageMod = await import("data:text/javascript;base64," + Buffer.from(storageJs).toString("base64"))
+
+// تفريغ ذاكرة الجلسة مع كل تفريغ للتخزين الصوري بين الاختبارات
+const __lsClear = globalThis.localStorage.clear
+globalThis.localStorage.clear = () => { __lsClear(); storageMod.__clearStore() }
 
 // Exam Grade
 const gradeMod = await transpileAndLoad("src/lib/exam-grade.ts", [
@@ -174,16 +187,20 @@ test("حفظ واسترجاع الصفوف مع بنية المجموعات كا
   assertEq(loaded[0].groups[0].days, ["السبت", "الثلاثاء"])
 })
 
-test("معالجة JSON تالف في LocalStorage دون انهيار التطبيق", () => {
+test("تخزين محلي تالف لا يؤثر على البيانات (المصدر: Supabase ثم ذاكرة الجلسة)", () => {
   store.set("grades", "{ broken json !!")
-  const loaded = storageMod.getGrades()
-  assertEq(loaded, [], "يجب أن يعيد مصفوفة فارغة بأمان")
+  const g = [{ id: "g1", name: "الصف الأول", academicYear: "2026-2027", groups: [], createdAt: "" }]
+  storageMod.saveGrades(g)
+  assertEq(storageMod.getGrades().length, 1, "القراءة من ذاكرة الجلسة لا من المتصفح")
+  storageMod.__purgeLegacy()
+  assertEq(store.has("grades"), false, "أي أثر محلي قديم يُمسح نهائياً")
 })
 
-test("معالجة بيانات غير مصفوفة (primitive أو object)", () => {
-  store.set("students", JSON.stringify({ not: "an array" }))
-  const loaded = storageMod.getStudents()
-  assertEq(loaded, [], "يجب أن يعيد مصفوفة فارغة إذا كانت القيمة كائناً")
+test("كيان لم تصل بياناته من السحابة بعد → مصفوفة فارغة بلا انهيار", () => {
+  storageMod.__clearStore()
+  assertEq(storageMod.getStudents(), [], "يجب أن يعيد مصفوفة فارغة بأمان")
+  storageMod.__writeRows("students", { not: "an array" })
+  assertEq(storageMod.getStudents(), [], "قيمة غير مصفوفة تُهمل بأمان")
 })
 
 test("حفظ واسترجاع الطلاب مع الملاحظات ورقم الهاتف", () => {
@@ -817,6 +834,45 @@ test("فحص صلاحيات الوصول للزوار (anon): قراءة الم�
   assert(schema.includes("CREATE POLICY \"public read shared_files\""), "قراءة الملفات عامة")
   assert(schema.includes("CREATE POLICY \"public read important_links\""), "قراءة الروابط عامة")
   assert(schema.includes("CREATE POLICY \"anon insert exam_attempts\""), "تسليم الاختبار متاح للزائر")
+})
+
+test("وضع فتح الاختبار (أعضاء/مفتوح للجميع) يُزامن ذهاباً وإياباً مع السحابة", () => {
+  const sync = readFileSync("src/lib/supabase/sync.ts", "utf8")
+  assert(/accessMode:\s*e\.accessMode === "public" \? "public" : "members"/.test(sync), "accessMode يُرفع ضمن إعدادات الاختبار")
+  assert(/accessMode:\s*wrapped && q\.accessMode === "public"/.test(sync), "accessMode يُقرأ من السحابة بقيمة افتراضية آمنة (members)")
+  assert(/phone:\s*a\.phone \|\| null/.test(sync), "رقم هاتف الزائر يُرفع مع المحاولة")
+  assert(/phone:\s*nil\(row\.phone\)/.test(sync), "رقم هاتف الزائر يُقرأ مع المحاولة")
+  assert(sync.includes("fetchGuestAttemptCount"), "عدّاد محاولات الزائر عبر الأجهزة موجود")
+  assert(sync.includes("isMissingColumnError"), "تراجع آمن إن لم يكن عمود phone مُرحَّلاً بعد")
+})
+
+test("عمود هاتف الزائر موجود في المخطط وملف الترحيل 013", () => {
+  const schema = readFileSync("supabase/schema.sql", "utf8")
+  assert(/ALTER TABLE exam_attempts ADD COLUMN IF NOT EXISTS phone TEXT;/.test(schema), "schema.sql يضيف عمود phone")
+  const mig = readFileSync("supabase/migrations/013_exam_access_mode.sql", "utf8")
+  assert(/ALTER TABLE public\.exam_attempts ADD COLUMN IF NOT EXISTS phone TEXT;/.test(mig), "013 يضيف عمود phone")
+  assert(mig.includes("idx_exam_attempts_guest"), "013 ينشئ فهرس محاولات الزوار")
+  assert(mig.includes("CREATE POLICY \"public insert\" ON public.exam_attempts"), "013 يؤكد سياسة إرسال الزوار")
+})
+
+test("لوحة الإعلانات تعرض الاختبارات المفتوحة للجميع فقط (لا اختبارات الأعضاء)", () => {
+  const home = readFileSync("src/app/page.tsx", "utf8")
+  assert(home.includes("publicBoardExams("), "الصفحة الرئيسية تستخدم publicBoardExams")
+  assert(!/filter\(e => e\.allowOnline\)/.test(home), "لا تُعرض كل الاختبارات المنشورة للعامة")
+  const pc = readFileSync("src/lib/portal-content.ts", "utf8")
+  assert(/isExamOpenToGuests\(e\) && examAvailability\(e, now\)\.open/.test(pc), "اللوحة = مفتوح للجميع + متاح الآن")
+})
+
+test("صفحة الاختبار: بوابة الأعضاء وبوابة الزوار منفصلتان ولا تُملأ بيانات العضو يدوياً", () => {
+  const page = readFileSync("src/app/exam/[id]/page.tsx", "utf8")
+  assert(page.includes('accessMode !== "public"'), "بوابة تسجيل الدخول لاختبارات الأعضاء فقط")
+  assert(page.includes("validateGuestIdentity("), "التحقق من بيانات الزائر قبل البدء")
+  assert(page.includes("guestGroupsForGrade("), "قائمة مجموعات الزائر من صف الاختبار فقط")
+  assert(/setGuestPhone/.test(page) && /guestPhone/.test(page), "رقم هاتف الزائر إجباري في النموذج")
+  assert(page.includes("محدد مسبقاً من المعلم"), "صف الاختبار ثابت لا يختاره الزائر")
+  assert(page.includes("setPortalStudent({"), "هوية العضو تُعبأ تلقائياً من حسابه")
+  assert(!page.includes("alert("), "بلا نوافذ تنبيه — رسائل خطأ داخل الصفحة")
+  assert(page.includes("phone: portalStudent ? undefined : guestIdentity?.phone"), "الهاتف يُحفظ للزائر فقط")
 })
 
 // ============================================================

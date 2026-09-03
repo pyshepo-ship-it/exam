@@ -138,6 +138,15 @@ export interface Payment {
 
 export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
 
+/**
+ * من يستطيع فتح الاختبار الإلكتروني:
+ *  - members: الأعضاء المسجلون فقط — يظهر للطالب في بوابته حسب صفه،
+ *             وبياناته (الاسم/الصف/المجموعة) تُعبأ تلقائياً من حسابه
+ *  - public : مفتوح لأي أحد بدون تسجيل — يظهر في لوحة الإعلانات (الصفحة الرئيسية)
+ *             أو برابط مباشر، ويُدخل الزائر اسمه ورقم هاتفه ويختار مجموعته
+ */
+export type ExamAccessMode = "members" | "public"
+
 export interface Exam {
   id: string
   gradeId: string
@@ -157,6 +166,8 @@ export interface Exam {
   schoolName?: string
   /** نشر الاختبار للطلاب على الموقع ليؤدوه خلال المدة المحددة */
   allowOnline?: boolean
+  /** من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بدون تسجيل */
+  accessMode?: ExamAccessMode
   /** إضافة المتفوقين تلقائياً إلى لوحة الشرف */
   autoHonorBoard?: boolean
   /** الحد الأدنى للنسبة المئوية للترشيح (100 = الدرجة الكاملة) */
@@ -261,6 +272,8 @@ export interface ExamAttempt {
   examId: string
   studentId?: string
   studentName: string
+  /** رقم هاتف الزائر — يُطلب في الاختبارات المفتوحة للجميع (بلا تسجيل دخول) */
+  phone?: string
   groupId: string
   gradeId: string
   answers: Record<string, ExamAttemptAnswer>
@@ -370,6 +383,7 @@ export interface YearArchive {
 
 // Storage Keys (مفتاح المرآة المحلية — المصدر الحقيقي هو Supabase)
 import { STORAGE_KEYS } from "./storage-keys"
+import { readRows, writeRows, readSetting, writeSetting } from "./memory-store"
 import { attendanceDayId } from "./weekdays"
 import {
   queuePush,
@@ -431,133 +445,124 @@ export function sortGradesByLevel<T extends { name: string }>(grades: T[]): T[] 
     .map(x => x.g)
 }
 
-// Helper functions
-export const getFromStorage = <T>(key: string): T[] => {
-  if (typeof window === 'undefined') return []
-  const data = localStorage.getItem(key)
-  if (!data) return []
-  try {
-    const parsed = JSON.parse(data)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-export const saveToStorage = <T>(key: string, data: T[]): void => {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(key, JSON.stringify(data))
-}
+// ------------------------------------------------------------
+// القراءة والكتابة — من ذاكرة الجلسة فقط (لا تخزين محلي على الجهاز)
+// السحابة (Supabase) هي المكان الوحيد الذي تُسجَّل فيه البيانات:
+//   • القراءة: مما جاء من السحابة عند فتح الصفحة (pullAllData / fetchPublicData)
+//   • الكتابة: إلى السحابة (queuePush) ثم تحديث الذاكرة للعرض الفوري
+// ------------------------------------------------------------
+export const getFromStore = <T>(key: string): T[] => readRows<T>(key)
+export const saveToStore = <T>(key: string, data: T[]): void => writeRows<T>(key, data)
 
 // Grades
-export const getGrades = (): Grade[] => getFromStorage<Grade>(STORAGE_KEYS.GRADES)
+export const getGrades = (): Grade[] => getFromStore<Grade>(STORAGE_KEYS.GRADES)
 export const saveGrades = (grades: Grade[]): void => {
-  saveToStorage(STORAGE_KEYS.GRADES, grades)
+  saveToStore(STORAGE_KEYS.GRADES, grades)
   queuePush(() => pushGrades(grades))
 }
 
 // Students
-export const getStudents = (): Student[] => getFromStorage<Student>(STORAGE_KEYS.STUDENTS)
+export const getStudents = (): Student[] => getFromStore<Student>(STORAGE_KEYS.STUDENTS)
 export const saveStudents = (students: Student[]): void => {
-  saveToStorage(STORAGE_KEYS.STUDENTS, students)
+  saveToStore(STORAGE_KEYS.STUDENTS, students)
   queuePush(() => pushStudents(students))
 }
 
 // Dues
-export const getDues = (): Due[] => getFromStorage<Due>(STORAGE_KEYS.DUES)
+export const getDues = (): Due[] => getFromStore<Due>(STORAGE_KEYS.DUES)
 export const saveDues = (dues: Due[]): void => {
-  saveToStorage(STORAGE_KEYS.DUES, dues)
+  saveToStore(STORAGE_KEYS.DUES, dues)
   queuePush(() => pushDues(dues))
 }
 
 // Payments
-export const getPayments = (): Payment[] => getFromStorage<Payment>(STORAGE_KEYS.PAYMENTS)
+export const getPayments = (): Payment[] => getFromStore<Payment>(STORAGE_KEYS.PAYMENTS)
 export const savePayments = (payments: Payment[]): void => {
-  saveToStorage(STORAGE_KEYS.PAYMENTS, payments)
+  saveToStore(STORAGE_KEYS.PAYMENTS, payments)
   queuePush(() => pushPayments(payments))
 }
 
 // Exams
-export const getExams = (): Exam[] => getFromStorage<Exam>(STORAGE_KEYS.EXAMS)
+export const getExams = (): Exam[] => getFromStore<Exam>(STORAGE_KEYS.EXAMS)
 export const saveExams = (exams: Exam[]): void => {
-  saveToStorage(STORAGE_KEYS.EXAMS, exams)
+  saveToStore(STORAGE_KEYS.EXAMS, exams)
   queuePush(() => pushExams(exams))
 }
 
 // Sessions
-export const getSessions = (): Session[] => getFromStorage<Session>(STORAGE_KEYS.SESSIONS)
+export const getSessions = (): Session[] => getFromStore<Session>(STORAGE_KEYS.SESSIONS)
 export const saveSessions = (sessions: Session[]): void => {
-  saveToStorage(STORAGE_KEYS.SESSIONS, sessions)
+  saveToStore(STORAGE_KEYS.SESSIONS, sessions)
   queuePush(() => pushSessions(sessions))
 }
 
 // Attendance
-export const getAttendance = (): Attendance[] => getFromStorage<Attendance>(STORAGE_KEYS.ATTENDANCE)
+export const getAttendance = (): Attendance[] => getFromStore<Attendance>(STORAGE_KEYS.ATTENDANCE)
 export const saveAttendance = (attendance: Attendance[]): void => {
-  saveToStorage(STORAGE_KEYS.ATTENDANCE, attendance)
+  saveToStore(STORAGE_KEYS.ATTENDANCE, attendance)
   queuePush(() => pushAttendance(attendance))
 }
 
-export const getExamAttempts = (): ExamAttempt[] => getFromStorage<ExamAttempt>(STORAGE_KEYS.EXAM_ATTEMPTS)
+export const getExamAttempts = (): ExamAttempt[] => getFromStore<ExamAttempt>(STORAGE_KEYS.EXAM_ATTEMPTS)
 export const saveExamAttempts = (attempts: ExamAttempt[], opts?: { sync?: boolean }): void => {
-  saveToStorage(STORAGE_KEYS.EXAM_ATTEMPTS, attempts)
+  saveToStore(STORAGE_KEYS.EXAM_ATTEMPTS, attempts)
   if (opts?.sync === false) return
   queuePush(() => pushExamAttempts(attempts))
 }
 
 // Announcements
-export const getAnnouncements = (): Announcement[] => getFromStorage<Announcement>(STORAGE_KEYS.ANNOUNCEMENTS)
+export const getAnnouncements = (): Announcement[] => getFromStore<Announcement>(STORAGE_KEYS.ANNOUNCEMENTS)
 export const saveAnnouncements = (items: Announcement[]): void => {
-  saveToStorage(STORAGE_KEYS.ANNOUNCEMENTS, items)
+  saveToStore(STORAGE_KEYS.ANNOUNCEMENTS, items)
   queuePush(() => pushAnnouncements(items))
 }
 
 // Honorees (لوحة الشرف)
-export const getHonorees = (): Honoree[] => getFromStorage<Honoree>(STORAGE_KEYS.HONOREES)
+export const getHonorees = (): Honoree[] => getFromStore<Honoree>(STORAGE_KEYS.HONOREES)
 export const saveHonorees = (items: Honoree[]): void => {
-  saveToStorage(STORAGE_KEYS.HONOREES, items)
+  saveToStore(STORAGE_KEYS.HONOREES, items)
   queuePush(() => pushHonorees(items))
 }
 
 // Shared files
-export const getSharedFiles = (): SharedFile[] => getFromStorage<SharedFile>(STORAGE_KEYS.SHARED_FILES)
+export const getSharedFiles = (): SharedFile[] => getFromStore<SharedFile>(STORAGE_KEYS.SHARED_FILES)
 export const saveSharedFiles = (items: SharedFile[]): void => {
-  saveToStorage(STORAGE_KEYS.SHARED_FILES, items)
+  saveToStore(STORAGE_KEYS.SHARED_FILES, items)
   queuePush(() => pushSharedFiles(items))
 }
 
 // Important links
-export const getImportantLinks = (): ImportantLink[] => getFromStorage<ImportantLink>(STORAGE_KEYS.IMPORTANT_LINKS)
+export const getImportantLinks = (): ImportantLink[] => getFromStore<ImportantLink>(STORAGE_KEYS.IMPORTANT_LINKS)
 export const saveImportantLinks = (items: ImportantLink[]): void => {
-  saveToStorage(STORAGE_KEYS.IMPORTANT_LINKS, items)
+  saveToStore(STORAGE_KEYS.IMPORTANT_LINKS, items)
   queuePush(() => pushImportantLinks(items))
 }
 
 // الدرجات اليدوية
-export const getManualGrades = (): ManualGrade[] => getFromStorage<ManualGrade>(STORAGE_KEYS.MANUAL_GRADES)
+export const getManualGrades = (): ManualGrade[] => getFromStore<ManualGrade>(STORAGE_KEYS.MANUAL_GRADES)
 export const saveManualGrades = (items: ManualGrade[]): void => {
-  saveToStorage(STORAGE_KEYS.MANUAL_GRADES, items)
+  saveToStore(STORAGE_KEYS.MANUAL_GRADES, items)
   queuePush(() => pushManualGrades(items))
 }
 
 // طلبات التسجيل
-export const getRegistrationRequests = (): RegistrationRequest[] => getFromStorage<RegistrationRequest>(STORAGE_KEYS.REGISTRATION_REQUESTS)
+export const getRegistrationRequests = (): RegistrationRequest[] => getFromStore<RegistrationRequest>(STORAGE_KEYS.REGISTRATION_REQUESTS)
 export const saveRegistrationRequests = (items: RegistrationRequest[]): void => {
-  saveToStorage(STORAGE_KEYS.REGISTRATION_REQUESTS, items)
+  saveToStore(STORAGE_KEYS.REGISTRATION_REQUESTS, items)
   queuePush(() => pushRegistrationRequests(items))
 }
 
 // طلبات نقل المجموعة
-export const getGroupTransferRequests = (): GroupTransferRequest[] => getFromStorage<GroupTransferRequest>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
+export const getGroupTransferRequests = (): GroupTransferRequest[] => getFromStore<GroupTransferRequest>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
 export const saveGroupTransferRequests = (items: GroupTransferRequest[]): void => {
-  saveToStorage(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, items)
+  saveToStore(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, items)
   queuePush(() => pushGroupTransferRequests(items))
 }
 
 // سجل نشاط الطلاب
-export const getStudentHistory = (): StudentHistoryEvent[] => getFromStorage<StudentHistoryEvent>(STORAGE_KEYS.STUDENT_HISTORY)
+export const getStudentHistory = (): StudentHistoryEvent[] => getFromStore<StudentHistoryEvent>(STORAGE_KEYS.STUDENT_HISTORY)
 export const saveStudentHistory = (items: StudentHistoryEvent[]): void => {
-  saveToStorage(STORAGE_KEYS.STUDENT_HISTORY, items)
+  saveToStore(STORAGE_KEYS.STUDENT_HISTORY, items)
   queuePush(() => pushStudentHistory(items))
 }
 
@@ -573,16 +578,16 @@ export const addStudentHistoryEvent = (event: Omit<StudentHistoryEvent, 'id' | '
 }
 
 // حسابات بوابة الطلاب
-export const getStudentAccounts = (): StudentAccount[] => getFromStorage<StudentAccount>(STORAGE_KEYS.STUDENT_ACCOUNTS)
+export const getStudentAccounts = (): StudentAccount[] => getFromStore<StudentAccount>(STORAGE_KEYS.STUDENT_ACCOUNTS)
 
 // ---------- الاستفسارات ----------
-export const getInquiries = (): InquiryThread[] => getFromStorage<InquiryThread>(STORAGE_KEYS.INQUIRIES)
+export const getInquiries = (): InquiryThread[] => getFromStore<InquiryThread>(STORAGE_KEYS.INQUIRIES)
 export const saveInquiries = (items: InquiryThread[]): void => {
-  saveToStorage(STORAGE_KEYS.INQUIRIES, items)
+  saveToStore(STORAGE_KEYS.INQUIRIES, items)
   queuePush(() => pushInquiries(items))
 }
 export const saveStudentAccounts = (items: StudentAccount[]): void => {
-  saveToStorage(STORAGE_KEYS.STUDENT_ACCOUNTS, items)
+  saveToStore(STORAGE_KEYS.STUDENT_ACCOUNTS, items)
   queuePush(() => pushStudentAccounts(items))
 }
 
@@ -606,16 +611,15 @@ export const getNextAcademicYear = (academicYear: string): string => {
   return `${startYear + 1}-${startYear + 2}`
 }
 
-/** السنة الدراسية المخزنة في الجهاز (أو الحالية محسوباً تلقائياً إذا لم تُخزَّن) */
+/** السنة الدراسية من إعدادات السحابة (أو الحالية محسوباً تلقائياً إن لم تصل بعد) */
 export const getStoredAcademicYear = (): string => {
-  if (typeof window === 'undefined') return '2026-2027'
-  const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR)
+  const stored = readSetting(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, "")
   return stored && stored.trim() ? stored : getCurrentAcademicYear()
 }
 
+/** تُحفظ في Supabase (app_settings) وتُحدِّث ذاكرة الجلسة للعرض الفوري */
 export const saveAcademicYear = (academicYear: string): void => {
-  if (typeof window === 'undefined') return
-  localStorage.setItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, academicYear)
+  writeSetting(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, academicYear)
   queuePush(() => pushSetting("currentAcademicYear", academicYear))
 }
 
@@ -627,24 +631,19 @@ export const suggestNextAcademicYear = (closedYear: string): string => {
   return parseStart(next) >= parseStart(current) ? next : current
 }
 
-export const getYearArchives = (): YearArchive[] => getFromStorage<YearArchive>(STORAGE_KEYS.YEAR_ARCHIVES)
+export const getYearArchives = (): YearArchive[] => getFromStore<YearArchive>(STORAGE_KEYS.YEAR_ARCHIVES)
 
 export const saveYearArchives = (archives: YearArchive[]): void => {
-  saveToStorage(STORAGE_KEYS.YEAR_ARCHIVES, archives)
+  saveToStore(STORAGE_KEYS.YEAR_ARCHIVES, archives)
   queuePush(() => pushYearArchives(archives))
 }
 
-// إعدادات عامة (مفتاح/قيمة) — مثل رقم واتساب التواصل
-export const getSetting = (key: string, fallback = ""): string => {
-  if (typeof window === "undefined") return fallback
-  // ملاحظة: القيمة الفارغة "" مقصودة (مثلاً إغلاق التسجيل) — لا تُستبدل بالافتراضي
-  const v = localStorage.getItem(key)
-  return v === null ? fallback : v
-}
+// إعدادات عامة (مفتاح/قيمة) — مثل رقم واتساب التواصل.
+// مكانها الدائم جدول app_settings في Supabase، والذاكرة للعرض الفوري فقط.
+export const getSetting = (key: string, fallback = ""): string => readSetting(key, fallback)
 
 export const saveSetting = (key: string, value: string): void => {
-  if (typeof window === "undefined") return
-  localStorage.setItem(key, value)
+  writeSetting(key, value)
   queuePush(() => pushSetting(key, value))
 }
 
@@ -901,7 +900,7 @@ export const maybeAutoHonor = (opts: {
   }
   const next = [...honorees, honoree]
   if (opts.sync === false) {
-    saveToStorage(STORAGE_KEYS.HONOREES, next)
+    saveToStore(STORAGE_KEYS.HONOREES, next)
   } else {
     saveHonorees(next)
   }
@@ -995,39 +994,22 @@ export const getSampleGrades = (): Grade[] => {
  * إزالة البيانات التجريبية (الصفوف والمجموعات الافتراضية)
  * لا تلمس أي صف عليه طلاب
  */
-/** مفتاح النسخة الاحتياطية قبل إزالة البيانات التجريبية (للتراجع) */
-const SAMPLE_BACKUP_KEY = 'sampleGradesBackup'
+/** نسخة التراجع عن إزالة البيانات التجريبية تعيش في ذاكرة الجلسة فقط (لا تُكتب على الجهاز) */
+let sampleBackup: Grade[] = []
 
 /** هل توجد نسخة يمكن التراجع إليها؟ */
-export const hasSampleBackup = (): boolean => {
-  if (typeof window === 'undefined') return false
-  const raw = localStorage.getItem(SAMPLE_BACKUP_KEY)
-  if (!raw) return false
-  try {
-    return (JSON.parse(raw) as Grade[]).length > 0
-  } catch {
-    return false
-  }
-}
+export const hasSampleBackup = (): boolean => sampleBackup.length > 0
 
 /** التراجع عن إزالة البيانات التجريبية (استعادة الصفوف المحذوفة) */
 export const restoreSampleGrades = (): number => {
-  if (typeof window === 'undefined') return 0
-  const raw = localStorage.getItem(SAMPLE_BACKUP_KEY)
-  if (!raw) return 0
-  let backup: Grade[] = []
-  try {
-    backup = JSON.parse(raw) as Grade[]
-  } catch {
-    return 0
-  }
-  if (backup.length === 0) return 0
+  if (sampleBackup.length === 0) return 0
+  const backup = sampleBackup
+  sampleBackup = []
 
   const current = getGrades()
   const currentIds = new Set(current.map(g => g.id))
   const restored = backup.filter(g => !currentIds.has(g.id))
   saveGrades([...current, ...restored])
-  localStorage.removeItem(SAMPLE_BACKUP_KEY)
   return restored.length
 }
 
@@ -1041,18 +1023,18 @@ export const removeSampleGrades = (): { removedGrades: number; removedStudents: 
     return { removedGrades: 0, removedStudents: 0 }
   }
 
-  // نحفظ نسخة احتياطية تسمح بالتراجع الفوري
-  if (typeof window !== 'undefined') {
-    localStorage.setItem(SAMPLE_BACKUP_KEY, JSON.stringify(sampleGrades))
-  }
+  // نسخة احتياطية في الذاكرة تسمح بالتراجع الفوري داخل نفس الجلسة
+  sampleBackup = sampleGrades
 
   // getSampleGrades يضمن بالفعل عدم وجود أي طالب مرتبط،
   // لذلك لا نحذف أي طالب إطلاقاً هنا (حماية من فقدان البيانات).
   saveGrades(grades.filter(g => !sampleGradeIds.has(g.id)))
 
+  // شارة الواجهة فقط (ليست بيانات) — تُعاد ليعود الشريط للظهور، مع مسح أي أثر قديم
+  writeSetting('sampleBannerDismissed', '')
   if (typeof window !== 'undefined') {
-    localStorage.removeItem('initialized')
-    localStorage.removeItem('sampleBannerDismissed')
+    window.localStorage.removeItem('initialized')
+    window.localStorage.removeItem('sampleBannerDismissed')
   }
 
   return { removedGrades: sampleGradeIds.size, removedStudents: 0 }

@@ -96,7 +96,8 @@ import {
   setTeacherName,
   setTeacherSignatureLine,
 } from "@/lib/branding"
-import { clearAllRemote, syncAllFromLocal, pullAllData, checkSupabaseConnection, forcePushAll, diagnoseSync, type ConnectionCheck, type SyncReport } from "@/lib/supabase/sync"
+import { clearAllRemote, pushAllToCloud, pullAllData, checkSupabaseConnection, forcePushAll, diagnoseSync, type ConnectionCheck, type SyncReport } from "@/lib/supabase/sync"
+import { clearStore, purgeLegacyLocalStorage } from "@/lib/memory-store"
 
 export default function SettingsPage() {
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false)
@@ -458,14 +459,14 @@ export default function SettingsPage() {
         // رفع البيانات المستوردة إلى Supabase (المصدر الحقيقي)
         ;(async () => {
           try {
-            if (isSupabaseConfigured()) await syncAllFromLocal()
+            if (isSupabaseConfigured()) await pushAllToCloud()
           } catch (e) {
             console.warn("remote sync after import failed", e)
-            toast.error("تم الاستيراد محلياً، لكن تعذر رفعه إلى Supabase — ستتم المزامنة لاحقاً")
+            toast.error("تمت القراءة في الذاكرة، لكن تعذر رفعه إلى Supabase — أعد المحاولة (لا يُحفظ أي شيء على الجهاز)")
           }
         })()
 
-        toast.success("تم استيراد البيانات بنجاح! سيتم تحديث الصفحة.")
+        toast.success("تم استيراد البيانات ورفعها إلى Supabase! سيتم تحديث الصفحة.")
         setTimeout(() => window.location.reload(), 1000)
       } catch (err) {
         toast.error("خطأ في قراءة الملف. تأكد من أنه ملف نسخة احتياطية صحيحة.")
@@ -474,17 +475,18 @@ export default function SettingsPage() {
     reader.readAsText(file)
   }
 
-  // Clear all data (محلياً وفي Supabase)
+  // حذف كل البيانات من Supabase + مسح ذاكرة الجلسة (لا تخزين محلي أصلاً)
   const clearAllData = async () => {
     try {
       if (isSupabaseConfigured()) await clearAllRemote()
     } catch (e) {
       console.warn("remote clear failed", e)
-      toast.error("تم الحذف محلياً لكن تعذر حذف بيانات Supabase — تحقق من الإعدادات")
+      toast.error("تعذر حذف بيانات Supabase — تحقق من الاتصال ثم أعد المحاولة")
       return
     }
-    localStorage.clear()
-    toast.success("تم حذف جميع البيانات (محلياً وفي Supabase). سيتم تحديث الصفحة.")
+    clearStore()
+    purgeLegacyLocalStorage()
+    toast.success("تم حذف جميع البيانات من Supabase ومسح ذاكرة الجلسة. سيتم تحديث الصفحة.")
     setTimeout(() => window.location.reload(), 1000)
   }
 
@@ -1001,7 +1003,7 @@ export default function SettingsPage() {
                             ? "جاري اختبار الكتابة والقراءة على Supabase..."
                             : conn.ok
                             ? `تم اختبار كتابة سجل حقيقي وقراءته من Supabase بنجاح (${conn.latencyMs} ms)`
-                            : conn.error || "تعذّر الكتابة أو القراءة — بياناتك الآن محفوظة في المتصفح فقط"}
+                            : conn.error || "تعذّر الكتابة أو القراءة على Supabase — لا يُحفظ أي بيان حتى يعود الاتصال"}
                         </p>
                       </div>
                     </div>
@@ -1084,7 +1086,7 @@ export default function SettingsPage() {
                           <thead>
                             <tr className="text-gray-500">
                               <th className="text-right py-1">الجدول</th>
-                              <th className="text-center py-1">محلي</th>
+                              <th className="text-center py-1">في الذاكرة</th>
                               <th className="text-center py-1">نجح رفعه</th>
                               <th className="text-center py-1">في القاعدة</th>
                               <th className="text-center py-1">فشل</th>
@@ -1094,7 +1096,7 @@ export default function SettingsPage() {
                             {report.tables.map((t) => (
                               <tr key={t.table} className="border-t border-gray-200/60 dark:border-gray-800">
                                 <td className="py-1 font-medium">{t.table}</td>
-                                <td className="py-1 text-center">{t.localCount}</td>
+                                <td className="py-1 text-center">{t.memoryCount}</td>
                                 <td className="py-1 text-center text-green-600">{t.pushed}</td>
                                 <td className="py-1 text-center font-semibold">{t.remoteCount}</td>
                                 <td className={`py-1 text-center ${t.failures.length ? "text-red-600 font-bold" : "text-gray-400"}`}>
@@ -1150,13 +1152,13 @@ export default function SettingsPage() {
                             ["الاختبارات", "exams", dataStats.exams],
                             ["أيام الحضور", "sessions", dataStats.sessions],
                             ["الحضور", "attendance", dataStats.attendance],
-                          ] as [string, string, number][]).map(([label, table, localCount]) => {
+                          ] as [string, string, number][]).map(([label, table, memoryCount]) => {
                             const remote = conn.counts[table] ?? 0
-                            const match = remote === localCount
+                            const match = remote === memoryCount
                             return (
                               <tr key={table} className="border-t border-gray-200/60 dark:border-gray-800">
                                 <td className="py-1 font-medium text-gray-800 dark:text-gray-200">{label}</td>
-                                <td className="py-1 text-center">{localCount}</td>
+                                <td className="py-1 text-center">{memoryCount}</td>
                                 <td className="py-1 text-center font-semibold">{remote < 0 ? "—" : remote}</td>
                                 <td className="py-1 text-center">
                                   {match ? (
@@ -1274,7 +1276,7 @@ export default function SettingsPage() {
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
                     <span className="text-gray-500">قاعدة البيانات</span>
                     <span className="font-semibold text-gray-900 dark:text-white">
-                      {supabaseConnected ? "Supabase (PostgreSQL)" : "المتصفح المحلي (وضع تجريبي)"}
+                      {supabaseConnected ? "Supabase (PostgreSQL)" : "غير متصل — لا حفظ للبيانات"}
                     </span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-200 dark:border-gray-800">
@@ -1282,7 +1284,7 @@ export default function SettingsPage() {
                     {!supabaseConnected ? (
                       <span className="font-semibold text-yellow-600 flex items-center gap-1">
                         <AlertCircle className="w-4 h-4" />
-                        غير متصل (الوضع المحلي فقط)
+                        غير متصل — لا يُحفظ أي بيان
                       </span>
                     ) : checking || !conn ? (
                       <span className="font-semibold text-gray-500 flex items-center gap-1">

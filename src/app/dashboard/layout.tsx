@@ -24,7 +24,8 @@ import { Button } from "@/components/ui/button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client"
 import { pullAllData } from "@/lib/supabase/sync"
-import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { getRegistrationRequests, getGroupTransferRequests, getInquiries } from "@/lib/data-storage"
+import { clearStore, purgeLegacyLocalStorage } from "@/lib/memory-store"
 
 // Force dynamic rendering to avoid prerendering issues
 export const dynamic = 'force-dynamic'
@@ -58,9 +59,10 @@ export default function DashboardLayout({
   useEffect(() => {
     const computeBadge = () => {
       try {
-        const regs = (JSON.parse(localStorage.getItem("registrationRequests") || "[]") as { status?: string }[])
-        const transfers = (JSON.parse(localStorage.getItem("groupTransferRequests") || "[]") as { status?: string }[])
-        const inquiries = (JSON.parse(localStorage.getItem("inquiries") || "[]") as { status?: string; messages?: { from?: string }[] }[])
+        // من ذاكرة الجلسة المعبأة من Supabase (لا قراءة من الجهاز)
+        const regs = getRegistrationRequests()
+        const transfers = getGroupTransferRequests()
+        const inquiries = getInquiries()
         const pending = regs.filter(r => r.status === "pending").length + transfers.filter(t => t.status === "pending").length
         const awaiting = inquiries.filter(t => {
           if (t.status !== "open") return false
@@ -97,7 +99,7 @@ export default function DashboardLayout({
     let cancelled = false
 
     const init = async () => {
-      // في الوضع المحلي (بدون Supabase) لا يوجد تسجيل دخول للتحقق منه
+      // بدون Supabase لا يوجد تسجيل دخول للتحقق منه (ولا تُحفظ أي بيانات)
       if (!isSupabaseConfigured()) {
         if (!cancelled) setMounted(true)
         return
@@ -152,12 +154,9 @@ export default function DashboardLayout({
     }
     const supabase = getSupabase()
     await supabase.auth.signOut()
-    // مسح نسخة البيانات من المتصفح بعد الخروج (الأصلية في Supabase)
-    try {
-      Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key))
-    } catch {
-      // تجاهل أخطاء التخزين المحلي
-    }
+    // بعد الخروج: تُمسح ذاكرة الجلسة تماماً ولا يبقى أي أثر للبيانات على الجهاز
+    clearStore()
+    purgeLegacyLocalStorage()
     router.push("/login")
   }
 

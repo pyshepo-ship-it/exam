@@ -18,8 +18,17 @@ globalThis.localStorage = {
 }
 globalThis.window = globalThis
 
+// مخزن الذاكرة الحقيقي (يُنفَّذ كما في المتصفح — صفر تخزين محلي)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { readRows as __readRows, writeRows as __writeRows, clearStore as __clearStore," +
+  " readSetting as __readSetting, writeSetting as __writeSetting," +
+  " purgeLegacyLocalStorage as __purgeLegacy, adoptLegacyIntoMemory as __adoptLegacy };\n"
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+
 // ---- تحميل data-storage بعد تجريده من استيراد Supabase ----
-let src = readFileSync("src/lib/data-storage.ts", "utf8")
+let src = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 src = src.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
@@ -28,6 +37,7 @@ const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g,
 src =
   weekdays + "\n" +
   readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "") + "\n" +
+  memoryStore + "\n" +
   `const queuePush = () => {};\n` +
   [
     "pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
@@ -46,7 +56,7 @@ const mod = await import(
   "data:text/javascript;base64," + Buffer.from(js).toString("base64")
 )
 
-let gradeSrc = readFileSync("src/lib/exam-grade.ts", "utf8")
+let gradeSrc = stripMemoryImport(readFileSync("src/lib/exam-grade.ts", "utf8"))
 gradeSrc = gradeSrc.replace(/import[\s\S]*?from\s*"\.\/data-storage"/, "")
 const gradeJs = ts.transpileModule(gradeSrc, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
@@ -73,7 +83,7 @@ function eq(a, b, msg = "") {
   if (A !== B) throw new Error(`${msg} توقعت ${B} لكن حصلت على ${A}`)
 }
 
-const reset = () => store.clear()
+const reset = () => { store.clear(); mod.__clearStore() }
 const grade = (id, name, groups = []) => ({
   id, name, academicYear: "2026-2027", groups, createdAt: new Date().toISOString(),
 })

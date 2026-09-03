@@ -25,7 +25,16 @@ const utils = readFileSync("src/lib/utils.ts", "utf8").replace(/import[\s\S]*?fr
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
 const storageKeys = `const STORAGE_KEYS = { GRADES: "grades", ANNOUNCEMENTS: "announcements" };`
 
-let ds = readFileSync("src/lib/data-storage.ts", "utf8")
+// مخزن الذاكرة الحقيقي — يُنفَّذ كما في المتصفح (صفر تخزين محلي للبيانات)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { readRows as __readRows, writeRows as __writeRows, clearStore as __clearStore," +
+  " readSetting as __readSetting, writeSetting as __writeSetting," +
+  " purgeLegacyLocalStorage as __purgeLegacy, adoptLegacyIntoMemory as __adoptLegacy };\n"
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+
+let ds = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
@@ -35,7 +44,7 @@ sched = sched.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/data-storage"/, "")
 sched = sched.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/utils"/, "")
 sched = sched.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/branding"/, "")
 
-const prelude = utils + "\n" + weekdays + "\n" + storageKeys + "\n" +
+const prelude = utils + "\n" + weekdays + "\n" + storageKeys + "\n" + memoryStore + "\n" +
   ["queuePush","pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
    "pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks",
    "pushYearArchives","pushSetting","pushExamAttempts"].map(f => `const ${f} = () => Promise.resolve();`).join("\n") + "\n"

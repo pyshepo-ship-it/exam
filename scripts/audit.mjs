@@ -65,8 +65,12 @@ check(
     /removedStudents: 0/.test(storage)
 )
 check(
-  "توجد نسخة احتياطية للتراجع قبل الحذف",
-  storage.includes("SAMPLE_BACKUP_KEY") && storage.includes("restoreSampleGrades")
+  "توجد نسخة احتياطية للتراجع قبل الحذف (في ذاكرة الجلسة — لا تُكتب على الجهاز)",
+  storage.includes("sampleBackup") && storage.includes("restoreSampleGrades")
+)
+check(
+  "data-storage لا يكتب أي بيان في التخزين المحلي",
+  !/localStorage\.setItem|sessionStorage/.test(storage)
 )
 
 const banner = read("src/components/sample-data-banner.tsx")

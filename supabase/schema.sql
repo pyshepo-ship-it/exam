@@ -201,6 +201,8 @@ CREATE TABLE IF NOT EXISTS exam_attempts (
   exam_id TEXT NOT NULL,
   student_id TEXT,
   student_name TEXT NOT NULL,
+  -- رقم هاتف الزائر في الاختبارات «المفتوحة للجميع» (بدون تسجيل دخول)
+  phone TEXT,
   group_id TEXT NOT NULL DEFAULT '',
   grade_id TEXT NOT NULL DEFAULT '',
   answers JSONB NOT NULL DEFAULT '{}',
@@ -211,6 +213,12 @@ CREATE TABLE IF NOT EXISTS exam_attempts (
   duration_seconds INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_exam_attempts_exam ON exam_attempts(exam_id);
+-- لقاعدة موجودة من قبل: أضف عمود هاتف الزائر إن كان ناقصاً (كما في 013)
+ALTER TABLE exam_attempts ADD COLUMN IF NOT EXISTS phone TEXT;
+-- فهرس عدّ محاولات الزوار (حد المحاولات للاختبارات المفتوحة للجميع)
+CREATE INDEX IF NOT EXISTS idx_exam_attempts_guest
+  ON exam_attempts (exam_id, student_name, group_id)
+  WHERE student_id IS NULL;
 
 -- ============================================================
 -- 2) تفعيل Row Level Security على كل الجداول

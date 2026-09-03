@@ -16,6 +16,7 @@ import {
   Sparkles,
   Star,
   GraduationCap,
+  Globe,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -43,6 +44,7 @@ import { getTeacherName, getTeacherSignatureLine } from "@/lib/branding"
 import { formatTime12 } from "@/lib/utils"
 import { fetchPublicData } from "@/lib/supabase/sync"
 import { toPublicExamCard } from "@/lib/exam-public"
+import { publicBoardExams } from "@/lib/portal-content"
 import { TeacherSignature } from "@/components/teacher-signature"
 import toast from "react-hot-toast"
 
@@ -116,7 +118,9 @@ export default function HomePage() {
           }))
         )
         setWhatsappNumber(publicData.settings?.whatsappNumber || "")
-        setOnlineExams((publicData.exams || []).filter(e => e.allowOnline).map(toPublicExamCard))
+        // لوحة الإعلانات تعرض الاختبارات «المفتوحة للجميع» فقط (بلا أسئلة إطلاقاً) —
+        // اختبارات الأعضاء المسجلين تظهر في بوابة الطالب حسب صف كل طالب
+        setOnlineExams(publicBoardExams(publicData.exams || []).map(toPublicExamCard))
         // حالة نشر الجدول + اسم المعلم لتوقيع الجدول المطبوع
         setSchedulePublished(publicData.settings?.schedulePublished === "1")
         setPublicTeacher({
@@ -124,14 +128,14 @@ export default function HomePage() {
           signature: publicData.settings?.teacherSignatureLine || undefined,
         })
       } else {
-        // 2) وضع محلي (عند عدم تهيئة Supabase): من متصفح الجهاز
+        // 2) تعذر الوصول إلى Supabase: تُعرض ذاكرة الجلسة فقط (لا تخزين محلي على الجهاز)
         setGrades(getGrades())
         setAnnouncements(getAnnouncements())
         setHonorees(getHonorees())
         setFiles(getSharedFiles())
         setLinks(getImportantLinks())
         setWhatsappNumber(getSetting("whatsappNumber"))
-        setOnlineExams(getExams().filter(e => e.allowOnline))
+        setOnlineExams(publicBoardExams(getExams()).map(toPublicExamCard))
         setSchedulePublished(isSchedulePublished())
         setPublicTeacher({
           name: getTeacherName(),
@@ -519,7 +523,7 @@ export default function HomePage() {
               </motion.section>
             )}
 
-            {/* ============ اختبارات مفتوحة للطلاب ============ */}
+            {/* ============ اختبارات مفتوحة للجميع (بدون تسجيل دخول) ============ */}
             {onlineExams.length > 0 && (
               <motion.section
                 initial={{ opacity: 0, y: 20 }}
@@ -532,21 +536,36 @@ export default function HomePage() {
                   </div>
                   اختبارات مفتوحة الآن
                 </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 -mt-2">
+                  مفتوحة للجميع بدون تسجيل دخول — تُدخل اسمك ورقم هاتفك وتختار مجموعتك ثم تبدأ
+                </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {onlineExams.map(exam => (
-                    <a
-                      key={exam.id}
-                      href={`/exam/${exam.id}`}
-                      className="bg-white dark:bg-gray-900 rounded-2xl border border-indigo-200 dark:border-indigo-800 p-5 hover:shadow-md transition-shadow"
-                    >
-                      <p className="font-bold text-gray-900 dark:text-white">{exam.title}</p>
-                      <p className="text-sm text-gray-500 mt-1">
-                        الزمن {exam.duration || 60} دقيقة
-                        {exam.totalMarks ? ` • ${exam.totalMarks} درجة` : ""}
-                      </p>
-                      <p className="text-indigo-600 text-sm font-semibold mt-3">ابدأ الاختبار ←</p>
-                    </a>
-                  ))}
+                  {onlineExams.map(exam => {
+                    const gradeName = grades.find(g => g.id === exam.gradeId)?.name
+                    return (
+                      <a
+                        key={exam.id}
+                        href={`/exam/${exam.id}`}
+                        className="bg-white dark:bg-gray-900 rounded-2xl border border-indigo-200 dark:border-indigo-800 p-5 hover:shadow-md transition-shadow"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="font-bold text-gray-900 dark:text-white">{exam.title}</p>
+                          <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 px-2.5 py-1 text-[11px] font-bold">
+                            <Globe className="w-3 h-3" />
+                            بدون تسجيل
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-500 mt-1">
+                          الزمن {exam.duration || 60} دقيقة
+                          {exam.totalMarks ? ` • ${exam.totalMarks} درجة` : ""}
+                        </p>
+                        {gradeName && (
+                          <p className="text-xs text-gray-400 mt-1">الصف: {gradeName}</p>
+                        )}
+                        <p className="text-indigo-600 text-sm font-semibold mt-3">ابدأ الاختبار ←</p>
+                      </a>
+                    )
+                  })}
                 </div>
               </motion.section>
             )}

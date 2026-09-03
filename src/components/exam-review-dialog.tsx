@@ -35,7 +35,7 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
   const [fullExam, setFullExam] = useState<Exam | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // جلب الاختبار كاملاً (بمفاتيح الإجابات) — السحابة أولاً ثم الكاش المحلي
+  // جلب الاختبار كاملاً (بمفاتيح الإجابات) — من Supabase أولاً ثم ذاكرة الجلسة
   useEffect(() => {
     if (!open) return
     let alive = true

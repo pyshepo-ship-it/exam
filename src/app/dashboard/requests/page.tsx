@@ -100,7 +100,7 @@ export default function RequestsPage() {
       await forcePushAll().catch(() => {})
       const { pullAllData } = await import("@/lib/supabase/sync")
       await pullAllData().catch(() => {})
-    } catch { /* تجاهل — الوضع المحلي يعمل بدونها */ }
+    } catch { /* تجاهل — بلا Supabase تعمل الصفحة من ذاكرة الجلسة */ }
     setSyncing(false)
     refresh()
   }

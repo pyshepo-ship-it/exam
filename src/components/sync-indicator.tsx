@@ -36,11 +36,11 @@ export function SyncIndicator({ compact = false }: { compact?: boolean }) {
   if (!isSupabaseConfigured()) {
     return (
       <div
-        title="لم يتم ضبط متغيرات Supabase — البيانات تُحفظ في هذا المتصفح فقط"
+        title="لم يتم ضبط متغيرات Supabase — لا يُحفظ أي بيان على الجهاز أو في السحابة"
         className="flex items-center gap-1.5 text-xs font-medium text-red-600 dark:text-red-400"
       >
         <CloudOff className="w-4 h-4" />
-        {!compact && <span>محلي فقط — لا يوجد حفظ في قاعدة البيانات</span>}
+        {!compact && <span>غير متصل بـ Supabase — لا يوجد حفظ للبيانات</span>}
       </div>
     )
   }

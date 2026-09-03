@@ -5,6 +5,7 @@ import { motion } from "framer-motion"
 import { AlertTriangle, Trash2, X, Undo2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import toast from "react-hot-toast"
+import { readSetting, writeSetting } from "@/lib/memory-store"
 import {
   getSampleGrades,
   removeSampleGrades,
@@ -20,6 +21,9 @@ import {
  * لا يحذف أي صف أنشأه المستخدم مهما كان اسمه، ويطلب تأكيداً صريحاً،
  * ويتيح التراجع بعد الإزالة.
  */
+/** إخفاء الشريط حالة واجهة في ذاكرة الجلسة فقط — لا تُكتب على الجهاز */
+const SAMPLE_BANNER_DISMISSED_KEY = "sampleBannerDismissed"
+
 export default function SampleDataBanner({ onRemoved }: { onRemoved?: () => void }) {
   const [samples, setSamples] = useState<Grade[]>([])
   const [hidden, setHidden] = useState(false)
@@ -27,7 +31,7 @@ export default function SampleDataBanner({ onRemoved }: { onRemoved?: () => void
   const [canUndo, setCanUndo] = useState(false)
 
   useEffect(() => {
-    if (localStorage.getItem("sampleBannerDismissed") === "1") {
+    if (readSetting(SAMPLE_BANNER_DISMISSED_KEY, "") === "1") {
       setSamples([])
       return
     }
@@ -93,7 +97,7 @@ export default function SampleDataBanner({ onRemoved }: { onRemoved?: () => void
   }
 
   const handleDismiss = () => {
-    localStorage.setItem("sampleBannerDismissed", "1")
+    writeSetting(SAMPLE_BANNER_DISMISSED_KEY, "1")
     setHidden(true)
   }
 

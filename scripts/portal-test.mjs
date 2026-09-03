@@ -29,6 +29,9 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
   clear: () => store.clear(),
 }
+// نفس التخزين الصوري داخل window (ليقرأه/يمسحه memory-store كما في المتصفح)
+Object.defineProperty(dom.window, "localStorage", { value: globalThis.localStorage, configurable: true })
+const localKeyList = () => [...store.keys()]
 
 // ---- تجميع كل ملف إلى وحدة ES مستقلة (لتفادي تعارض الثوابت بين الملفات) ----
 const TMP = resolve(process.cwd(), ".tmp-portal-test")
@@ -38,23 +41,27 @@ mkdirSync(TMP, { recursive: true })
 const stripImportsOf = (src, spec) =>
   src.replace(new RegExp(`import\\s*\\{[^}]*\\}\\s*from\\s*"\\./${spec}"`), "")
 
-const stubs = `const queuePush = () => Promise.resolve()
+const stubs = `import { readRows as __memRows, writeRows as __memWrite } from "./memory-store.mjs"
+const queuePush = () => Promise.resolve()
 ${["pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
   .map((f) => `const ${f} = () => Promise.resolve()`).join("\n")}
-// مثل sync.ts الحقيقية: حفظ محلي أولاً ثم مزامنة (نحاكي الحفظ المحلي فقط)
+// محاكاة Supabase (سحابة صورية في الذاكرة) — لا تخزين محلي في الاختبار أيضاً
+const __cloud = (globalThis.__cloud = globalThis.__cloud || { registrationRequests: [], groupTransferRequests: [], studentAccounts: [] })
 const submitRegistrationRequest = async (request) => {
-  const local = JSON.parse(localStorage.getItem("registrationRequests") || "[]")
-  localStorage.setItem("registrationRequests", JSON.stringify([...local, request]))
+  __cloud.registrationRequests.push(request)
+  __memWrite("registrationRequests", [...__memRows("registrationRequests"), request])
   return { ok: true }
 }
 const submitGroupTransferRequest = async (request) => {
-  const local = JSON.parse(localStorage.getItem("groupTransferRequests") || "[]")
-  localStorage.setItem("groupTransferRequests", JSON.stringify([...local, request]))
+  __cloud.groupTransferRequests.push(request)
+  __memWrite("groupTransferRequests", [...__memRows("groupTransferRequests"), request])
   return { ok: true }
 }
 const exportToPDF = async () => true
 const printElement = () => {}
 const fetchRegistrationRequestByEmail = async () => null
+const fetchStudentAccountByEmail = async (mail) =>
+  __cloud.studentAccounts.find((a) => a.email === String(mail || "").trim().toLowerCase()) || null
 const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)
@@ -69,6 +76,7 @@ const utils = readFileSync("src/lib/utils.ts", "utf8").replace(/import[\s\S]*?fr
 const rewrite = (src) =>
   src
     .replace(/from "\.\.\/storage-keys"/g, 'from "../storage-keys.mjs"')
+    .replace(/from "\.\.\/memory-store"/g, 'from "../memory-store.mjs"')
     .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
     .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
@@ -124,6 +132,10 @@ const isSupabaseConfigured = () => false`)
   files["inquiries.mjs"] = rewrite(readFileSync("src/lib/inquiries.ts", "utf8"))
 }
 {
+  // مخزن ذاكرة الجلسة — الوحدة الحقيقية (صفر تخزين محلي للبيانات)
+  files["memory-store.mjs"] = rewrite(readFileSync("src/lib/memory-store.ts", "utf8"))
+}
+{
   files["portal-content.mjs"] = rewrite(readFileSync("src/lib/portal-content.ts", "utf8"))
 }
 
@@ -143,6 +155,33 @@ const SA = await import("file://" + join(TMP, "student-accounts.mjs"))
 const SR = await import("file://" + join(TMP, "student-report.mjs"))
 const IQ = await import("file://" + join(TMP, "inquiries.mjs"))
 const PC = await import("file://" + join(TMP, "portal-content.mjs"))
+const MEM = await import("file://" + join(TMP, "memory-store.mjs"))
+
+// ---- ذاكرة الجلسة: لقطة/استعادة (تحاكي إعادة الجلب من Supabase بعد الخروج) ----
+const ROW_KEYS = ["grades","students","dues","payments","exams","sessions","attendance",
+  "examAttempts","announcements","honorees","sharedFiles","importantLinks","yearArchives",
+  "manualGrades","registrationRequests","groupTransferRequests","studentHistory",
+  "studentAccounts","inquiries"]
+const SETTING_KEYS = ["currentAcademicYear","teacherName","teacherSignatureLine",
+  "whatsappNumber","schedulePublished","registrationOpen","studentReportsEnabled"]
+const snapshotMemory = () => ({
+  rows: ROW_KEYS.map((k) => [k, MEM.readRows(k)]),
+  settings: SETTING_KEYS.map((k) => [k, MEM.readSetting(k, "")]),
+})
+const restoreMemory = (snap) => {
+  MEM.clearStore()
+  for (const [k, v] of snap.rows) MEM.writeRows(k, v)
+  for (const [k, v] of snap.settings) if (v !== "") MEM.writeSetting(k, v)
+}
+/**
+ * الخروج الحقيقي يفرّغ ذاكرة الجلسة (خصوصية الطالب). في الموقع، أي صفحة
+ * تالية تعيد الجلب من Supabase — وهذا بالضبط ما تحاكیه الاستعادة هنا.
+ */
+const logoutAndRepull = () => {
+  const snap = snapshotMemory()
+  SA.portalLogout()
+  restoreMemory(snap)
+}
 
 // jsdom لا يحسب أبعاداً حقيقية → محاكاة ارتفاع ثابت لكل عنصر (كما في اختبار الجدول)
 dom.window.HTMLElement.prototype.getBoundingClientRect = function () {
@@ -253,7 +292,7 @@ eq("سجل نشاط يوثّق الربط", DS.getStudentHistory().some(h => h.s
 
 const login1 = await SA.portalLogin("mohamed@test.com", "secret1")
 eq("الدخول بعد الموافقة → ناجح", login1.ok === true && login1.session.studentId === "st-old" && login1.session.name === "محمد علي حسن")
-SA.portalLogout()
+logoutAndRepull()
 eq("تسجيل الخروج يمسح الجلسة", SA.getPortalSession() === null)
 
 // ============================================================
@@ -272,7 +311,7 @@ eq("الطالب الجديد على صفه ومجموعته المطلوبتي�
 eq("الطالب الجديد له بريد الهاتف من الطلب", !!sara && sara.email === "sara@test.com" && sara.phone === "01000000003")
 const saraLogin = await SA.portalLogin("sara@test.com", "sara123")
 eq("سارة تسجل الدخول مباشرة بعد الموافقة", saraLogin.ok === true && saraLogin.session.studentId === sara?.id)
-SA.portalLogout()
+logoutAndRepull()
 
 // ============================================================
 section("سيناريو 4: الرفض وإعادة التقديم وحظر الحساب")
@@ -318,7 +357,7 @@ eq("الدخول بعد الحظر → ممنوع (blocked)", karimLogin2.ok ===
 SA.setStudentPortalActive(karimId, true)
 const karimLogin3 = await SA.portalLogin("karim2@test.com", "karim123")
 eq("إعادة التفعيل تسمح بالدخول", karimLogin3.ok === true)
-SA.portalLogout()
+logoutAndRepull()
 
 // ============================================================
 section("سيناريو 5: طلبات النقل — نفس الصف فقط والموافقة تنقل وتوثق")
@@ -482,19 +521,32 @@ eq("بعد 5 محاولات فاشلة → تُقفل المحاولات مؤق�
 SA.resetRateLimits()
 const okAfterReset = await SA.portalLogin(mohamedMail, "secret1")
 eq("بعد تصفير الحد → الدخول ينجح طبيعياً", okAfterReset.ok === true)
-SA.portalLogout()
+logoutAndRepull()
 
 // ============================================================
 section("سيناريو 9: الجلسة — صلاحية 30 يوماً + كوكيز")
 
+// لقطة قبل اختبارات الجلسة: انتهاء الصلاحية يُخرج الطالب تلقائياً (ويُفرّغ الذاكرة)
+const __snapBeforeLogout = snapshotMemory()
 const sessLogin = await SA.portalLogin("mohamed@test.com", "secret1")
 eq("الدخول ينشئ جلسة منضبطة بالوقت", sessLogin.ok === true && typeof sessLogin.session.exp === "number" && sessLogin.session.exp > Date.now() + 29 * 24 * 3600 * 1000)
-eq("كوكي الجلسة كُتب (مرآة للميدل وير)", document.cookie.includes("studentPortalSession="))
-// انتهاء الصلاحية → الجلسة تُلغى
-const rawSess = JSON.parse(localStorage.getItem("studentPortalSession"))
-localStorage.setItem("studentPortalSession", JSON.stringify({ ...rawSess, exp: Date.now() - 1000 }))
+eq("كوكي الجلسة كُتب (المصدر الوحيد للجلسة — لا نسخة محلية)", document.cookie.includes("studentPortalSession="))
+eq("لا نسخة من الجلسة في التخزين المحلي", localStorage.getItem("studentPortalSession") === null)
+// انتهاء الصلاحية → الجلسة تُلغى (نعدّل الكوكي نفسه)
+const rawCookie = document.cookie.split("; ").find((c) => c.startsWith("studentPortalSession="))
+const sessPayload = JSON.parse(
+  decodeURIComponent(escape(atob(decodeURIComponent(rawCookie.split("=").slice(1).join("=")))))
+)
+document.cookie = `studentPortalSession=${encodeURIComponent(
+  btoa(unescape(encodeURIComponent(JSON.stringify({ ...sessPayload, exp: Date.now() - 1000 }))))
+)}; path=/; max-age=2592000`
 eq("جلسة منتهية الصلاحية → تُلغى تلقائياً", SA.getPortalSession() === null)
 eq("الخروج يمسح الكوكي أيضاً", (SA.portalLogout(), !document.cookie.includes("studentPortalSession=")))
+eq("الخروج يفرّغ ذاكرة الجلسة — لا يبقى أي بيان بعد الخروج",
+  MEM.readRows("students").length === 0 && MEM.readRows("studentAccounts").length === 0 && MEM.readRows("grades").length === 0)
+eq("الخروج لا يترك أي بيانات في التخزين المحلي",
+  !Object.keys(localStorage).some((k) => ["students","grades","studentAccounts","exams","dues","payments"].includes(k)))
+restoreMemory(__snapBeforeLogout) // الصفحة التالية تعيد الجلب من Supabase
 
 // ============================================================
 section("سيناريو 10: الاستفسارات — رسالة واحدة ورد وغلق")
@@ -502,7 +554,7 @@ section("سيناريو 10: الاستفسارات — رسالة واحدة و�
 const saraLogin2 = await SA.portalLogin("sara@test.com", "sara123")
 const saraSess = saraLogin2.session
 eq("سارة تدخل للاختبار", !!saraSess)
-SA.portalLogout()
+logoutAndRepull()
 
 const inqState0 = IQ.canStudentSendInquiry(saraId)
 eq("لا استفسارات سابقة → مسموح الإرسال", inqState0.allowed === true)
@@ -632,10 +684,10 @@ const reset1 = await SA.resetStudentPasswordByTeacher(recStudentId)
 eq("إعادة التعيين تنجح وتنتج كلمة مؤقتة", reset1.ok === true && /^[a-z0-9]{7}$/.test(reset1.temporaryPassword || ""), reset1.message || "")
 const oldLogin = await SA.portalLogin("recover@test.com", "oldpass1")
 eq("الكلمة القديمة تتوقف عن العمل", oldLogin.ok === false)
-SA.portalLogout()
+logoutAndRepull()
 const newLogin = await SA.portalLogin("recover@test.com", reset1.ok ? reset1.temporaryPassword : "x")
 eq("الدخول بالكلمة المؤقتة ينجح", newLogin.ok === true)
-SA.portalLogout()
+logoutAndRepull()
 const accAfterReset = DS.getStudentAccounts().find(a => a.studentId === recStudentId)
 eq("البصمة تُخزَّن ولا تُخزَّن الكلمة نصاً", !!accAfterReset?.passwordHash && accAfterReset.passwordHash !== reset1.temporaryPassword)
 eq("سجل النشاط يوثق إعادة التعيين", DS.getStudentHistory().some(h => h.studentId === recStudentId && h.title === "إعادة إنشاء كلمة المرور"))
@@ -652,7 +704,7 @@ const accAfterEmail = DS.getStudentAccounts().find(a => a.studentId === recStude
 eq("حساب الدخول انتقل للبريد الجديد", accAfterEmail?.email === "recover2@test.com" && !DS.getStudentAccounts().some(a => a.email === "recover@test.com"))
 const emailLogin = await SA.portalLogin("recover2@test.com", reset1.ok ? reset1.temporaryPassword : "x")
 eq("الدخول بالبريد الجديد يعمل", emailLogin.ok === true)
-SA.portalLogout()
+logoutAndRepull()
 
 // طلب استرجاع من الطالب
 SA.resetRateLimits()
@@ -728,7 +780,7 @@ globalThis.__remoteStudents = { [crossStudent.id]: crossStudent }
 
 const crossLogin = await SA.portalLogin("cross-device@test.com", "cross123")
 eq("الدخول من الجهاز الخالي ينجح بجلب الطالب من السحابة", crossLogin.ok === true && crossLogin.session.studentId === crossStudent.id, crossLogin.error || "")
-SA.portalLogout()
+logoutAndRepull()
 eq("صف الطالب أُحفظ محلياً بعد الدخول (البوابة تعمل كاملة)", DS.getStudents().some(s => s.id === crossStudent.id))
 
 // بلا سحابة (فشل الجلب) → رسالة تشجع إعادة المحاولة لا «راجع المعلم»
@@ -737,12 +789,119 @@ DS.saveStudents([])
 DS.saveStudentAccounts([])
 const offlineLogin = await SA.portalLogin("cross-device@test.com", "cross123")
 eq("تعذر الجلب → رسالة إعادة محاولة واضحة", offlineLogin.ok === false && /أعد المحاولة/.test(offlineLogin.error || ""), offlineLogin.error || "")
-SA.portalLogout()
+logoutAndRepull()
 
 // استعادة
 DS.saveStudents(savedStudents)
 DS.saveStudentAccounts(savedAccounts)
 globalThis.__remoteStudents = undefined
+
+// ============================================================
+section("سيناريو 18: من يفتح الاختبار — للأعضاء المسجلين فقط أم مفتوح للجميع")
+
+const mkAccessExam = (over) => mkExam({ id: "ex-access", ...over })
+const gradesList = [grade1, grade2]
+
+eq("بلا تحديد → للأعضاء المسجلين فقط (افتراضي آمن)", PC.examAccessMode(mkAccessExam({})) === "members")
+eq("accessMode = public → مفتوح للجميع", PC.examAccessMode(mkAccessExam({ accessMode: "public" })) === "public")
+eq("قيمة غير معروفة → للأعضاء فقط", PC.examAccessMode(mkAccessExam({ accessMode: "قيمة غريبة" })) === "members")
+
+eq("غير منشور → لا يستقبل زواراً ولو ضُبط مفتوحاً للجميع", PC.isExamOpenToGuests(mkAccessExam({ allowOnline: false, accessMode: "public" })) === false)
+eq("منشور + مفتوح للجميع → يستقبل الزوار", PC.isExamOpenToGuests(mkAccessExam({ accessMode: "public" })) === true)
+eq("منشور للأعضاء فقط → لا يستقبل الزوار", PC.isExamOpenToGuests(mkAccessExam({})) === false)
+
+// لوحة الإعلانات (الصفحة الرئيسية): المفتوح للجميع والمتاح الآن فقط
+const boardIds = PC.publicBoardExams([
+  mkAccessExam({ id: "b-1", accessMode: "public" }),
+  mkAccessExam({ id: "b-2" }),
+  mkAccessExam({ id: "b-3", accessMode: "public", allowOnline: false }),
+  mkAccessExam({ id: "b-4", accessMode: "public", availabilityMode: "scheduled", availableUntil: new Date(Date.now() - 3600e3).toISOString() }),
+]).map(e => e.id)
+eq("لوحة الإعلانات تعرض المفتوح للجميع والمتاح الآن فقط", boardIds.length === 1 && boardIds[0] === "b-1", boardIds.join(","))
+
+// مجموعات الزائر: مجموعات صف الاختبار فقط، والمستهدفة منها إن حُدِّدت
+const guestGroups1 = PC.guestGroupsForGrade(mkAccessExam({ accessMode: "public", gradeId: "g-1" }), gradesList, "g-1").map(g => g.id)
+eq("قائمة الزائر = مجموعات صف الاختبار فقط", guestGroups1.join(",") === "gr-1,gr-2", guestGroups1.join(","))
+const guestGroups2 = PC.guestGroupsForGrade(mkAccessExam({ accessMode: "public", gradeId: "g-1", targetGroupIds: ["gr-2"] }), gradesList, "g-1").map(g => g.id)
+eq("المجموعات المستهدفة فقط تظهر للزائر", guestGroups2.join(",") === "gr-2", guestGroups2.join(","))
+eq("اختبار عام → الصف قابل للاختيار، وغير العام → ثابت", PC.isExamGradeSelectable(mkAccessExam({ gradeId: "" })) === true && PC.isExamGradeSelectable(mkAccessExam({ gradeId: "g-1" })) === false)
+eq("صف الزائر يؤخذ من الاختبار نفسه", PC.examGradeIdForGuest(mkAccessExam({ gradeId: "g-1" }), "g-2") === "g-1")
+
+// التحقق من بيانات الزائر قبل البدء (الاسم + الهاتف إجباريان، الصف ثابت، المجموعة من القائمة)
+const guestExam = mkAccessExam({ accessMode: "public", gradeId: "g-1" })
+const guestBase = { name: "محمد علي حسن", phone: "01012345678", groupId: "gr-1" }
+const gv = (over, exam = guestExam) => PC.validateGuestIdentity(exam, gradesList, { ...guestBase, ...over })
+
+const g1ok = gv({})
+eq("بيانات سليمة → يبدأ الاختبار", g1ok.ok === true && g1ok.identity?.gradeId === "g-1" && g1ok.identity?.groupId === "gr-1", g1ok.error || "")
+eq("بلا اسم → مرفوض", gv({ name: "" }).ok === false)
+eq("اسم قصير → مرفوض", gv({ name: "علي" }).ok === false)
+eq("اسم بأرقام → مرفوض", gv({ name: "محمد 12345" }).ok === false)
+eq("بلا هاتف → مرفوض", gv({ phone: "" }).ok === false)
+eq("هاتف بحروف → مرفوض", gv({ phone: "010abc23456" }).ok === false)
+const arabicPhone = gv({ phone: "٠١٠١٢٣٤٥٦٧٨" })
+eq("أرقام عربية-هندية في الهاتف → تُوحَّد وتُقبل", arabicPhone.ok === true && arabicPhone.identity?.phone === "01012345678", arabicPhone.error || "")
+eq("بلا مجموعة → مرفوض", gv({ groupId: "" }).ok === false)
+eq("مجموعة من صف آخر → مرفوضة", gv({ groupId: "gr-3" }).ok === false)
+eq("مجموعة غير مستهدفة → مرفوضة", gv({ groupId: "gr-1" }, mkAccessExam({ accessMode: "public", gradeId: "g-1", targetGroupIds: ["gr-2"] })).ok === false)
+const forcedGrade = gv({ gradeId: "g-2", groupId: "gr-1" })
+eq("الزائر لا يستطيع تغيير صف الاختبار", forcedGrade.ok === true && forcedGrade.identity?.gradeId === "g-1", forcedGrade.error || "")
+const generalExam = mkAccessExam({ accessMode: "public", gradeId: "" })
+const generalOk = gv({ gradeId: "g-2", groupId: "gr-3" }, generalExam)
+eq("اختبار عام → الزائر يختار صفه ومجموعته", generalOk.ok === true && generalOk.identity?.gradeId === "g-2" && generalOk.identity?.groupId === "gr-3", generalOk.error || "")
+eq("اختبار عام بلا اختيار صف → مرفوض", gv({ gradeId: "", groupId: "" }, generalExam).ok === false)
+eq("صف غير موجود أصلاً → مرفوض", gv({ gradeId: "g-9", groupId: "gr-9" }, mkAccessExam({ accessMode: "public", gradeId: "g-9" })).ok === false)
+
+// الزائر يخضع لحد المحاولات بالاسم والمجموعة (عبر الأجهزة بالعدّاد السحابي)
+const guestLimitExam = mkAccessExam({ accessMode: "public", gradeId: "g-1", maxAttempts: 1 })
+const guestAttempts = [{ examId: "ex-access", studentName: "محمد علي حسن", groupId: "gr-1", score: 5 }]
+eq("زائر بلا محاولات سابقة → مسموح", PC.attemptsStatus(guestLimitExam, [], undefined, "محمد علي حسن", "gr-1", 0).allowed === true)
+eq("زائر استهلك محاولته محلياً → ممنوع", PC.attemptsStatus(guestLimitExam, guestAttempts, undefined, "محمد علي حسن", "gr-1", 0).allowed === false)
+eq("زائر استهلك محاولته على جهاز آخر (السحابة) → ممنوع", PC.attemptsStatus(guestLimitExam, [], undefined, "محمد علي حسن", "gr-1", 1).allowed === false)
+
+// ============================================================
+section("سيناريو 13: صفر تخزين محلي — Supabase هو مكان التسجيل الوحيد")
+
+const DATA_KEYS = ["grades","students","dues","payments","exams","sessions","attendance",
+  "examAttempts","announcements","honorees","sharedFiles","importantLinks",
+  "currentAcademicYear","yearArchives","manualGrades","registrationRequests",
+  "groupTransferRequests","studentHistory","studentAccounts","inquiries",
+  "teacherName","teacherSignatureLine","studentPortalSession","sampleGradesBackup","initialized"]
+const localDataKeys = () => localKeyList().filter((k) => DATA_KEYS.includes(k))
+
+eq("بعد كل عمليات الحفظ والدخول والخروج: لا أثر لأي بيان في التخزين المحلي",
+  localDataKeys().length === 0, localDataKeys().join("، ") || "لا شيء")
+eq("المسموح على الجهاز: عدّاد حماية الإغراق فقط (رقم بلا أسماء)",
+  localKeyList().every((k) => k === "studentRateLimits"),
+  localKeyList().join("، ") || "لا شيء")
+
+// حفظ جديد (طلاب + اختبارات + إعدادات + سنة دراسية) — لا يُكتب على الجهاز
+const snap13 = snapshotMemory()
+DS.saveStudents([...DS.getStudents(), { id: "st-x13", name: "طالب اختبار الحفظ", phone: "01000000009", gradeId: "g-1", groupId: "gr-1", status: "active", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
+DS.saveExams([...DS.getExams(), { id: "ex-x13", title: "اختبار الحفظ", gradeId: "g-1", targetGroupIds: [], questions: [], totalMarks: 10, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }])
+DS.saveSetting("teacherName", "أ/ اختبار السحابة")
+DS.saveAcademicYear("2026-2027")
+eq("الحفظ يصل إلى ذاكرة الجلسة (العرض الفوري) والسحابة",
+  DS.getStudents().some((x) => x.id === "st-x13") && DS.getExams().some((e) => e.id === "ex-x13") &&
+  DS.getSetting("teacherName") === "أ/ اختبار السحابة" && DS.getStoredAcademicYear() === "2026-2027")
+eq("الحفظ لا يكتب أي مفتاح بيانات في التخزين المحلي", localDataKeys().length === 0, localDataKeys().join("، ") || "لا شيء")
+restoreMemory(snap13)
+
+// كاش قديم من إصدار سابق: يُنقل إلى الذاكرة ثم يُمسح من الجهاز نهائياً
+const snapLegacy = snapshotMemory()
+MEM.clearStore()
+localStorage.setItem("grades", JSON.stringify([{ id: "legacy-g", name: "صف قديم", academicYear: "2020-2021", groups: [], createdAt: "" }]))
+localStorage.setItem("students", JSON.stringify([{ id: "legacy-s", name: "طالب قديم", gradeId: "legacy-g", groupId: "", status: "active", createdAt: "" }]))
+localStorage.setItem("teacherName", "اسم قديم من المتصفح")
+MEM.adoptLegacyIntoMemory()
+eq("الكاش القديم يُنقل إلى ذاكرة الجلسة أولاً (لا تضيع بيانات المالك)",
+  MEM.readRows("grades").some((g) => g.id === "legacy-g") && MEM.readSetting("teacherName", "") === "اسم قديم من المتصفح")
+MEM.purgeLegacyLocalStorage()
+eq("المسح النهائي: لا يبقى أي كاش قديم على الجهاز",
+  localStorage.getItem("grades") === null && localStorage.getItem("students") === null && localStorage.getItem("teacherName") === null)
+eq("sessionStorage نظيف كذلك", !Object.keys(window.sessionStorage).some((k) => DATA_KEYS.includes(k)))
+eq("لا نسخة جلسة الطالب على الجهاز (الكوكي فقط)", localStorage.getItem("studentPortalSession") === null)
+restoreMemory(snapLegacy)
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

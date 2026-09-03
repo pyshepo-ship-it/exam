@@ -1,7 +1,8 @@
 import { createBrowserClient } from '@supabase/ssr'
 
 // يتحقق مما إذا كانت متغيرات بيئة Supabase مُعدّة.
-// يُستخدم للسماح بتشغيل الوضع المحلي (localStorage) عندما لا يكون Supabase متصلاً بعد.
+// يُستخدم لمعرفة هل السحابة متصلة — وإن لم تكن متصلة فلا يُحفظ أي بيان إطلاقاً
+// (لا تخزين محلي: ذاكرة الجلسة فقط حتى يعود الاتصال بـ Supabase).
 export function isSupabaseConfigured() {
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY

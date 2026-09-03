@@ -79,7 +79,7 @@ const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: "links", label: "روابط مهمة", icon: Link2 },
 ]
 
-// الحد الأقصى لحجم الملف المرفوع (2 ميجا) للحفاظ على مساحة التخزين المحلية
+// الحد الأقصى لحجم الملف المرفوع (2 ميجا) — يُرفع إلى Supabase
 const MAX_FILE_SIZE = 2 * 1024 * 1024
 
 export default function AnnouncementsPage() {
@@ -143,13 +143,13 @@ export default function AnnouncementsPage() {
   const currentMonth = new Date().getMonth() + 1
   const currentYear = new Date().getFullYear()
 
-  // حفظ مع التعامل مع امتلاء التخزين المحلي
+  // حفظ إلى Supabase (ذاكرة الجلسة للعرض الفوري)
   const trySave = (fn: () => void): boolean => {
     try {
       fn()
       return true
     } catch {
-      toast.error("مساحة التخزين في المتصفح ممتلئة. احذف بعض الملفات الكبيرة وحاول مرة أخرى.")
+      toast.error("تعذر حفظ الملف — قلّل حجمه أو تحقق من اتصال Supabase ثم حاول مرة أخرى.")
       return false
     }
   }
