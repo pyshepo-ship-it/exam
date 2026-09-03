@@ -126,7 +126,6 @@ const LS_READ_ALLOW = [
 const LS_WIPE_ALLOW = new Set([
   "lib/memory-store.ts",        // مسح كل الآثار القديمة + الأعلام البصرية القديمة
   "lib/student-accounts.ts",    // مسح كوكي/نسخة الجلسة القديمة عند الخروج
-  "lib/data-storage.ts",        // مسح أعلام بصرية قديمة بعد حذف الصفوف التجريبية
 ])
 {
   const h = hits(/localStorage\.(removeItem|clear)\(/)

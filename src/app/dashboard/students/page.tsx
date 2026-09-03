@@ -29,7 +29,6 @@ import {
 import {
   isStudentPortalActive,
   setStudentPortalActive,
-  removeStudentPortalAccount,
   resetStudentPasswordByTeacher,
   updateStudentByTeacher,
 } from "@/lib/student-accounts"
@@ -77,8 +76,8 @@ import {
   getDues,
   getPayments,
   getStudentAccounts,
+  deleteStudentCascade,
 } from "@/lib/data-storage"
-import SampleDataBanner from "@/components/sample-data-banner"
 
 const MONTHS = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -247,15 +246,21 @@ export default function StudentsPage() {
     saveGrades(updatedGrades)
   }
 
-  // Delete student — ينظف حساب البوابة أيضاً حتى لا يبقى للطالب حساب يتيم
+  // Delete student — حذف متسلسل: يمسح ماله (استحقاقات/مدفوعات) وحضوره ودرجاته
+  // اليدوية وسجل نشاطه وحساب البوابة وطلباته — كما تفعل قيود قاعدة البيانات.
+  // (محاولات الاختبار السابقة تبقى في النتائج باسمه لأنها سجل اختبارات لا حساب.)
   const deleteStudent = (studentId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا الطالب؟ سيتم أيضاً إلغاء حسابه في بوابة الطلاب إن وجد.")) {
-      const updatedStudents = students.filter(s => s.id !== studentId)
+    const student = students.find(s => s.id === studentId)
+    if (confirm(`حذف «${student?.name || "الطالب"}» نهائياً مع كل ما يخصه: الاستحقاقات والمدفوعات وسجلات الحضور والدرجات اليدوية وسجل النشاط وحساب بوابة الطالب وطلباته — لا يمكن التراجع. هل أنت متأكد؟`)) {
+      const res = deleteStudentCascade(studentId)
+      if (!res.ok) {
+        toast.error("تعذر حذف الطالب — يبدو أنه لم يعد موجوداً")
+        return
+      }
+      const updatedStudents = getStudents()
       setStudents(updatedStudents)
-      saveStudents(updatedStudents)
-      removeStudentPortalAccount(studentId)
       updateGroupStudentCounts(updatedStudents)
-      toast.success("تم حذف الطالب بنجاح")
+      toast.success("تم حذف الطالب وكل ما يخصه من قاعدة البيانات نهائياً (بقيت محاولات اختباراته السابقة في النتائج باسمه)")
     }
   }
 
@@ -394,12 +399,6 @@ export default function StudentsPage() {
           <span>إضافة طالب جديد</span>
         </Button>
       </motion.div>
-
-      {/* تنبيه البيانات التجريبية */}
-      <SampleDataBanner onRemoved={() => {
-        setStudents(getStudents())
-        setGrades(getGrades())
-      }} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

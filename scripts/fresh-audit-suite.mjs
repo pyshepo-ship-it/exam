@@ -5,7 +5,7 @@
  * يختبر جميع أقسام التطبيق بشكل منفرد + فحص الأمان والكوكيز والتوكين والتشفير
  */
 
-import { readFileSync } from "node:fs"
+import { readFileSync, readdirSync } from "node:fs"
 import ts from "typescript"
 
 // ==========================================
@@ -21,27 +21,32 @@ globalThis.localStorage = {
 globalThis.window = globalThis
 
 // تحميل الكود المصدري بعد استبعاد الاستيرادات الخارجية
-let dsSrc = readFileSync("src/lib/data-storage.ts", "utf8")
+// (البنية الحالية: data-storage تقرأ/تكتب عبر memory-store — ذاكرة الجلسة —
+//  ونستبدل الاستيرادات الخارجية بنسخ محلية كبقية حزم الاختبار)
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+let dsSrc = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
 dsSrc = dsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 dsSrc = dsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 dsSrc = dsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
+
+// ذاكرة الجلسة الحقيقية (كما تعمل في المتصفح — صفر تخزين محلي)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { clearStore as __clearStore };"
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
 
 dsSrc =
   weekdays + "\n" +
-  `const STORAGE_KEYS = ${JSON.stringify({
-    GRADES: "grades", STUDENTS: "students", DUES: "dues", PAYMENTS: "payments",
-    EXAMS: "exams", SESSIONS: "sessions", ATTENDANCE: "attendance",
-    EXAM_ATTEMPTS: "examAttempts",
-    ANNOUNCEMENTS: "announcements", HONOREES: "honorees", SHARED_FILES: "sharedFiles",
-    IMPORTANT_LINKS: "importantLinks", CURRENT_ACADEMIC_YEAR: "currentAcademicYear",
-    YEAR_ARCHIVES: "yearArchives",
-  })};\n` +
+  readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "") + "\n" +
+  memoryStore + "\n" +
   `const queuePush = () => {};\n` +
   [
     "pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions",
     "pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles",
     "pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts",
+    "pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests",
+    "pushStudentHistory","pushStudentAccounts","pushInquiries",
   ].map((f) => `const ${f} = () => Promise.resolve();`).join("\n") +
   "\n" + dsSrc
 
@@ -454,6 +459,114 @@ assert(middlewareFile.includes("matcher: ['/dashboard/:path*', '/login']"), "ت�
 // 6. فحص خلو المشروع من أية ثغرات تسريب مفاتيح
 const envKeysCheck = !middlewareFile.includes("SUPABASE_SERVICE_ROLE_KEY") && !middlewareFile.includes("service_role")
 assert(envKeysCheck, "عدم تسريب مفتاح service_role في الواجهات أو Middleware")
+
+// ------------------------------------------------------------
+// 6.5 قسم الحذف المتسلسل — يطابق قيود قاعدة البيانات (CASCADE/SET NULL)
+// ------------------------------------------------------------
+console.log("\n\x1b[1;33m[6.5] قسم الحذف المتسلسل (صف/مجموعة/طالب — بلا بيانات يتيمة):\x1b[0m")
+store.clear()
+ds.saveGrades([
+  {
+    id: "csc-grade", name: "صف الحذف التجريبي", academicYear: "2026-2027",
+    createdAt: new Date().toISOString(),
+    groups: [
+      { id: "csc-g1", name: "مجموعة أ", days: ["السبت"], startTime: "09:00", endTime: "10:00", monthlyFee: 100, studentsCount: 0 },
+      { id: "csc-g2", name: "مجموعة ب", days: ["الأحد"], startTime: "10:00", endTime: "11:00", monthlyFee: 100, studentsCount: 0 },
+    ],
+  },
+])
+const t0 = new Date().toISOString()
+ds.saveStudents([
+  { id: "csc-s1", name: "طالب أول", gradeId: "csc-grade", groupId: "csc-g1", phone: "", parentPhone: "", status: "active", createdAt: t0, updatedAt: t0 },
+  { id: "csc-s2", name: "طالب ثانٍ", gradeId: "csc-grade", groupId: "csc-g2", phone: "", parentPhone: "", status: "active", createdAt: t0, updatedAt: t0 },
+])
+ds.saveDues([
+  { id: "csc-d1", studentId: "csc-s1", groupId: "csc-g1", month: 9, year: 2026, amount: 100, status: "pending", createdAt: t0 },
+  { id: "csc-d2", studentId: "csc-s2", groupId: "csc-g2", month: 9, year: 2026, amount: 100, status: "pending", createdAt: t0 },
+])
+ds.saveSessions([
+  { id: "csc-sess1", groupId: "csc-g1", sessionDate: "2026-09-05", startTime: "09:00", endTime: "10:00", createdAt: t0 },
+  { id: "csc-sess2", groupId: "csc-g2", sessionDate: "2026-09-06", startTime: "10:00", endTime: "11:00", createdAt: t0 },
+])
+ds.saveAttendance([
+  { id: "csc-att1", sessionId: "csc-sess1", studentId: "csc-s1", status: "present", createdAt: t0 },
+  { id: "csc-att2", sessionId: "csc-sess2", studentId: "csc-s2", status: "present", createdAt: t0 },
+])
+ds.saveExams([{ id: "csc-ex1", gradeId: "csc-grade", title: "اختبار تجريبي", academicYear: "2026-2027", questions: [], createdAt: t0 }])
+ds.saveManualGrades([{ id: "csc-m1", studentId: "csc-s1", gradeId: "csc-grade", groupId: "csc-g1", title: "تقييم", score: 10, maxScore: 10, month: 9, year: 2026, createdAt: t0 }])
+ds.saveStudentAccounts([{ id: "csc-a1@x.com", email: "csc-a1@x.com", studentId: "csc-s1", active: true, createdAt: t0 }])
+ds.saveStudentHistory([{ id: "csc-h1", studentId: "csc-s1", type: "account", title: "فتح حساب", date: t0, createdAt: t0 }])
+ds.saveRegistrationRequests([{ id: "csc-r1", name: "طالب أول", phone: "", email: "csc-a1@x.com", passwordHash: "x", gradeId: "csc-grade", groupId: "csc-g1", status: "approved", linkedStudentId: "csc-s1", createdAt: t0 }])
+ds.saveGroupTransferRequests([{ id: "csc-t1", studentId: "csc-s2", studentName: "طالب ثانٍ", fromGroupId: "csc-g2", toGradeId: "csc-grade", toGroupId: "csc-g1", status: "pending", createdAt: t0 }])
+
+// حذف مجموعة → حصصها وحضورها تُحذف وطلابها يبقون بلا مجموعة
+const resGroup = ds.deleteGroupCascade("csc-grade", "csc-g1")
+assertEqual(resGroup.ok, true, "حذف مجموعة ينجح")
+const afterGroupDelete = ds.getGrades().find(g => g.id === "csc-grade")
+assertEqual(afterGroupDelete?.groups.length, 1, "بقيت مجموعة واحدة بعد حذف المجموعة")
+assertEqual(ds.getStudents().find(s => s.id === "csc-s1")?.groupId, "", "طالب المجموعة المحذوفة بقي بلا مجموعة (SET NULL)")
+assertEqual(ds.getStudents().find(s => s.id === "csc-s2")?.groupId, "csc-g2", "طالب المجموعة الباقية لم يتأثر")
+assertEqual(ds.getSessions().filter(s => s.id === "csc-sess1").length, 0, "حُذفت حصة المجموعة المحذوفة نهائياً")
+assertEqual(ds.getAttendance().filter(a => a.id === "csc-att1").length, 0, "حُذف حضور حصة المجموعة المحذوفة")
+assertEqual(ds.getDues().find(d => d.id === "csc-d1")?.groupId, "", "استحقاق الطالب الباقي فقد مرجع مجموعته المحذوفة فقط")
+
+// حذف طالب → كل ما يخصه يُحذف (مال + حضور + درجات + حساب + سجل) والطلب المعتمد يبقى بلا ربط
+const resStudent = ds.deleteStudentCascade("csc-s1")
+assertEqual(resStudent.ok, true, "حذف الطالب ينجح")
+assertEqual(ds.getStudents().some(s => s.id === "csc-s1"), false, "أُزيل الطالب من القائمة")
+assertEqual(ds.getDues().some(d => d.studentId === "csc-s1"), false, "حُذفت استحقاقات الطالب المحذوف")
+assertEqual(ds.getManualGrades().some(m => m.studentId === "csc-s1"), false, "حُذفت الدرجات اليدوية للطالب المحذوف")
+assertEqual(ds.getStudentAccounts().some(a => a.studentId === "csc-s1"), false, "حُذف حساب بوابة الطالب")
+assertEqual(ds.getStudentHistory().some(h => h.studentId === "csc-s1"), false, "حُذف سجل نشاط الطالب")
+const keptReq = ds.getRegistrationRequests().find(r => r.id === "csc-r1")
+assert(keptReq && !keptReq.linkedStudentId, "طلب التسجيل المعتمد بقي لكن بلا ربط بالطالب (SET NULL كمخطط القاعدة)")
+assertEqual(ds.getDues().some(d => d.studentId === "csc-s2"), true, "استحقاق الطالب الآخر لم يُمَس")
+assertEqual(ds.getSessions().some(s => s.id === "csc-sess2"), true, "حصة الطالب الآخر لم تُمَس")
+
+// حذف الصف → كل مجموعاته وحصصه وحضورها تُحذف والطلاب يبقون بلا صف والاختبار بلا صف
+const resGrade = ds.deleteGradeCascade("csc-grade")
+assertEqual(resGrade.ok, true, "حذف الصف ينجح")
+assertEqual(ds.getGrades().some(g => g.id === "csc-grade"), false, "أُزيل الصف نهائياً")
+assertEqual(ds.getSessions().length, 0, "حُذفت كل حصص مجموعات الصف")
+assertEqual(ds.getAttendance().length, 0, "حُذف حضور كل حصص الصف")
+assertEqual(ds.getStudents().find(s => s.id === "csc-s2")?.gradeId, "", "الطالب المتبقي بلا صف بعد حذف صفه (SET NULL)")
+assertEqual(ds.getDues().some(d => d.studentId === "csc-s2"), true, "استحقاق الطالب المتبقي لم يُحذف مع الصف")
+assertEqual(ds.getExams().find(e => e.id === "csc-ex1")?.gradeId, "", "الاختبار بقي لكن بلا صف (SET NULL)")
+
+// ==========================================
+// 7. فحص سياسات قاعدة البيانات (RLS/GRANT) في ملفات الترحيل —
+//    يمنع التراجع عن تحصين قراءة anon مستقبلاً
+// ==========================================
+const migrationDir = "supabase/migrations"
+let migrationFiles = []
+try {
+  migrationFiles = readdirSync(migrationDir).filter(f => /^\d{3}_.*\.sql$/.test(f)).sort()
+} catch { /* يُتجاهل إن لم يوجد المجلد */ }
+assert(migrationFiles.length >= 14, `وجود 14 ترحيلاً على الأقل (وُجد ${migrationFiles.length}) — آخرها تحصين anon`)
+
+// جداول لا يجوز لأي كود مجهول قراءتها (لا مستهلك anon لها في src): sessions + year_archives
+// الملفات الأحدث من التحصين (014+) — إن مُنحت anon قراءة هذه الجداول يَفشل الفحص
+const hardeningIndex = migrationFiles.findIndex(f => Number(f.slice(0, 3)) >= 14)
+assert(hardeningIndex !== -1, "وجود ملف ترحيل يحصّن قراءة anon (014+)")
+for (const f of migrationFiles.slice(hardeningIndex)) {
+  const sql = readFileSync(`${migrationDir}/${f}`, "utf8")
+  const grantRegex = /GRANT\s+SELECT[^;]*?\b(sessions|year_archives)\b[^;]*?TO\s+ANON/i
+  const policyRegex = /CREATE\s+POLICY[^;]*?\b(sessions|year_archives)\b[^;]*?FOR\s+SELECT[^;]*?TO\s+ANON/i
+  assert(!grantRegex.test(sql), `${f}: لا يُمنح anon صلاحية SELECT على جداول محمية`)
+  assert(!policyRegex.test(sql), `${f}: لا تُنشأ سياسة قراءة anon على جداول محمية`)
+}
+// التأكد أن التحصين نفسه نُفّذ فعلاً: سحب SELECT من anon + إسقاط سياسة القراءة
+const hardeningSql = readFileSync(`${migrationDir}/${migrationFiles[hardeningIndex]}`, "utf8")
+assert(
+  /REVOKE\s+SELECT\s+ON\s+TABLE\s+public\.sessions\s+FROM\s+anon/i.test(hardeningSql) &&
+  /REVOKE\s+SELECT\s+ON\s+TABLE\s+public\.year_archives\s+FROM\s+anon/i.test(hardeningSql),
+  `${migrationFiles[hardeningIndex]}: يسحب SELECT من anon عن sessions و year_archives`
+)
+assert(
+  /DROP\s+POLICY\s+IF\s+EXISTS\s+"public\s+read"\s+ON\s+public\.sessions/i.test(hardeningSql) &&
+  /DROP\s+POLICY\s+IF\s+EXISTS\s+"public\s+read"\s+ON\s+public\.year_archives/i.test(hardeningSql),
+  `${migrationFiles[hardeningIndex]}: يسقط سياسة "public read" عن sessions و year_archives`
+)
 
 // ==========================================
 // تقرير النتائج النهائي

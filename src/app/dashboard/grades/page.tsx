@@ -46,7 +46,7 @@ import {
 } from "@/components/ui/table"
 import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
-import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear, sortGradesByLevel } from "@/lib/data-storage"
+import { Grade, Group, getGrades, saveGrades, getStudents, getStoredAcademicYear, sortGradesByLevel, deleteGradeCascade, deleteGroupCascade } from "@/lib/data-storage"
 import {
   findScheduleConflicts,
   buildConflictMessage,
@@ -56,7 +56,6 @@ import {
 import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
 import { SchedulePrintDialog } from "@/components/schedule-print-dialog"
 import type { SchedulePrintOptions } from "@/lib/schedule-print"
-import SampleDataBanner from "@/components/sample-data-banner"
 import { TimePicker } from "@/components/time-picker"
 import { formatTime12, addDuration } from "@/lib/utils"
 
@@ -214,11 +213,21 @@ export default function GradesPage() {
 
   // Delete grade
   const deleteGrade = (gradeId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا الصف وجميع مجموعاته؟")) {
-      const updatedGrades = grades.filter(g => g.id !== gradeId)
-      setGrades(updatedGrades)
-      saveGrades(updatedGrades)
-      toast.success("تم حذف الصف بنجاح")
+    const target = grades.find(g => g.id === gradeId)
+    const studentsCount = target?.groups.reduce((s, gr) => s + (gr.studentsCount || 0), 0) || 0
+    const base = "حذف هذا الصف وجميع مجموعاته نهائي."
+    const effects = studentsCount > 0
+      ? ` سيكون ${studentsCount} طالب مرتبط به بدون صف/مجموعة (لن يُحذفوا هم ولا مدفوعاتهم)،`
+      : " لا يوجد طلاب مرتبطون به حالياً،"
+    const warning = "وسيُحذف نهائياً ما لهذه المجموعات من حصص وسجلات حضور مسجّلة في القاعدة — لا يمكن التراجع. هل أنت متأكد؟"
+    if (confirm(`${base}${effects}${warning}`)) {
+      const res = deleteGradeCascade(gradeId)
+      if (!res.ok) {
+        toast.error("تعذر حذف الصف — يبدو أنه لم يعد موجوداً")
+        return
+      }
+      setGrades(getGrades())
+      toast.success(`تم حذف الصف ومجموعاته نهائياً وحُذفت حصصها وحضورها — بقيت الطلاب والاختبارات المرتبطة به بلا صف (${res.detachedStudents || 0} طالب)`)
     }
   }
 
@@ -320,21 +329,21 @@ export default function GradesPage() {
 
   // Delete group
   const deleteGroup = (gradeId: string, groupId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذه المجموعة؟")) {
-      let updatedGrades = grades.map(grade => {
-        if (grade.id === gradeId) {
-          return {
-            ...grade,
-            groups: grade.groups.filter(g => g.id !== groupId),
-          }
-        }
-        return grade
-      })
-
-      updatedGrades = updateStudentCounts(updatedGrades)
-      setGrades(updatedGrades)
-      saveGrades(updatedGrades)
-      toast.success("تم حذف المجموعة بنجاح")
+    const target = grades.find(g => g.id === gradeId)?.groups.find(gr => gr.id === groupId)
+    const cnt = target?.studentsCount || 0
+    const base = `حذف مجموعة «${target?.name || ""}» نهائياً`
+    const effects = cnt > 0
+      ? ` وستبقى طلابها (${cnt}) بلا مجموعة — لن يُحذفوا هم ولا مدفوعاتهم،`
+      : " ولا يوجد طلاب مرتبطون بها حالياً،"
+    if (confirm(`${base}${effects} وسيُحذف نهائياً ما لها من حصص وسجلات حضور مسجّلة في القاعدة — لا يمكن التراجع. هل أنت متأكد؟`)) {
+      const res = deleteGroupCascade(gradeId, groupId)
+      if (!res.ok) {
+        toast.error("تعذر حذف المجموعة — يبدو أنها لم تعد موجودة")
+        return
+      }
+      const fresh = getGrades()
+      setGrades(fresh)
+      toast.success(`تم حذف المجموعة وحذف حصصها وحضورها من القاعدة — بقي طلابها بلا مجموعة (${res.detachedStudents || 0} طالب)`)
     }
   }
 
@@ -434,9 +443,6 @@ export default function GradesPage() {
           </div>
         </div>
       </motion.div>
-
-      {/* تنبيه البيانات التجريبية */}
-      <SampleDataBanner onRemoved={() => setGrades(getGrades())} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

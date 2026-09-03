@@ -213,7 +213,6 @@ exam/
 │   │   └── layout.tsx      # التخطيط الرئيسي
 │   ├── components/
 │   │   ├── ui/             # مكونات shadcn/ui
-│   │   ├── sample-data-banner.tsx # تنبيه البيانات التجريبية
 │   │   └── providers/      # Providers
 │   └── lib/
 │       ├── supabase/       # إعداد Supabase

@@ -23,7 +23,6 @@ import {
   getExams,
   getAttendance,
 } from "@/lib/data-storage"
-import SampleDataBanner from "@/components/sample-data-banner"
 
 export default function DashboardPage() {
   const [stats, setStats] = useState({
@@ -152,9 +151,6 @@ export default function DashboardPage() {
         <div className="absolute top-0 left-0 w-64 h-64 bg-white/10 rounded-full -translate-x-1/2 -translate-y-1/2" />
         <div className="absolute bottom-0 right-0 w-96 h-96 bg-white/5 rounded-full translate-x-1/3 translate-y-1/2" />
       </motion.div>
-
-      {/* تنبيه البيانات التجريبية */}
-      <SampleDataBanner onRemoved={loadStats} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

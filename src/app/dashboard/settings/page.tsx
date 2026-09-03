@@ -85,8 +85,6 @@ import {
   getSetting,
   saveSetting,
   YearArchive,
-  hasSampleBackup,
-  restoreSampleGrades,
 } from "@/lib/data-storage"
 import {
   DEFAULT_TEACHER_NAME,
@@ -201,20 +199,6 @@ export default function SettingsPage() {
     }
   }
 
-  // استعادة الصفوف التي أُزيلت كـ"بيانات تجريبية" عن طريق الخطأ
-  const [canRestoreSamples, setCanRestoreSamples] = useState(false)
-
-  const handleRestoreSamples = () => {
-    const n = restoreSampleGrades()
-    if (n > 0) {
-      toast.success(`تمت استعادة ${n} صف مع مجموعاته`)
-      setCanRestoreSamples(false)
-      refreshData()
-    } else {
-      toast.error("لا توجد نسخة يمكن استعادتها")
-    }
-  }
-
   // تشخيص دقيق: يحدد أي سجل يفشل ولماذا
   const [report, setReport] = useState<SyncReport | null>(null)
   const [diagnosing, setDiagnosing] = useState(false)
@@ -275,7 +259,6 @@ export default function SettingsPage() {
 
   useEffect(() => {
     refreshData()
-    setCanRestoreSamples(hasSampleBackup())
     setSupabaseConnected(isSupabaseConfigured())
     if (isSupabaseConfigured()) runConnectionCheck(true)
     setRegistrationOpenState(isRegistrationOpen())
@@ -957,26 +940,6 @@ export default function SettingsPage() {
                   </div>
                 ))}
               </div>
-
-              {canRestoreSamples && (
-                <div className="rounded-xl border-2 border-amber-400 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-                  <div className="flex-1">
-                    <p className="font-bold text-amber-900 dark:text-amber-100">
-                      يمكن استعادة صفوف أُزيلت كبيانات تجريبية
-                    </p>
-                    <p className="text-sm text-amber-800 dark:text-amber-200 mt-0.5">
-                      إذا فُقد صف أو مجموعة بعد الضغط على «إزالة البيانات التجريبية»، استعدها من هنا.
-                    </p>
-                  </div>
-                  <Button
-                    onClick={handleRestoreSamples}
-                    className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
-                  >
-                    <RotateCcw className="w-4 h-4" />
-                    <span>استعادة الصفوف المحذوفة</span>
-                  </Button>
-                </div>
-              )}
 
               {/* التحقق من الحفظ في قاعدة البيانات */}
               {supabaseConnected && (
