@@ -935,107 +935,146 @@ export const getStudentWithDetails = (student: Student): Student & { gradeName: 
   }
 }
 
-// ---- البيانات التجريبية (النسخة القديمة) ----
-
-// أسماء الصفوف التجريبية التي كانت تُضاف تلقائياً في النسخ السابقة
-const SAMPLE_GRADE_NAMES = ['الصف الرابع الابتدائي', 'الصف الخامس الابتدائي']
-
-/**
- * معرفات الصفوف التجريبية القديمة.
- *
- * ⚠️ مهم: البذرة القديمة كانت تستخدم معرفات ثابتة ('1' و '2').
- * الصفوف التي ينشئها المستخدم تستخدم Date.now() (13 رقماً)،
- * لذلك لا يمكن أبداً أن تتطابق مع هذه المعرفات.
- *
- * الاعتماد على الاسم وحده كان خطأً جسيماً: أي صف حقيقي يسميه
- * المستخدم "الصف الرابع الابتدائي" (وهو اسم شائع جداً!) كان
- * يُصنَّف تجريبياً ويُحذف. لذلك صار المعرّف شرطاً إلزامياً.
- */
-const SAMPLE_GRADE_IDS = ['1', '2']
+// ------------------------------------------------------------
+// الحذف المتسلسل (Cascade) — يعكس سلوك قاعدة البيانات (FK CASCADE/SET NULL)
+// في ذاكرة الجلسة والدفع معاً حتى لا تبقى بيانات يتيمة داخل الجلسة.
+// كل دالة تحفظ بالترتيب المعتمد (الصفوف ← الطلاب ← المال ← الحصص ← البوابة).
+// ------------------------------------------------------------
 
 /**
- * اكتشاف الصفوف التجريبية المتبقية من النسخ القديمة.
- *
- * الشروط (يجب أن تتحقق كلها معاً حتى لا يُحذف أي صف حقيقي):
- *  1. معرّف الصف من معرفات البذرة القديمة الثابتة ('1' أو '2')
- *  2. اسم الصف من الأسماء التجريبية
- *  3. لا يوجد أي طالب في أي مجموعة من مجموعاته
- *  4. لا توجد أي بيانات أخرى مرتبطة به (اختبارات/حصص/استحقاقات)
+ * يُزيل/يُعلّق كل المراجع حسب مجموعات الحذف:
+ *  gradeIds: صفوف محذوفة نهائياً (مجموعاتها + حصصها + حضورها تُحذف،
+ *            وطلابها واختباراتها واستحقاقاتها تبقى لكن بلا صف/مجموعة — SET NULL)
+ *  groupIds: مجموعات محذوفة (داخل الصفوف المحذوفة أو بمفردها)
+ *  studentIds: طلاب محذوفون نهائياً (مع مالهم وحضورهم ودرجاتهم وحساباتهم — CASCADE)
  */
-export const getSampleGrades = (): Grade[] => {
+function applyCascadeDelete(opts: { gradeIds?: Set<string>; groupIds?: Set<string>; studentIds?: Set<string> }): void {
+  const gradeIds = opts.gradeIds || new Set<string>()
+  const groupIds = opts.groupIds || new Set<string>()
+  const studentIds = opts.studentIds || new Set<string>()
+  const now = new Date().toISOString()
+
+  // المجموعات المحذوفة تشمل مجموعات الصفوف المحذوفة + المحددة مباشرة
+  const droppedGroupIds = new Set<string>([
+    ...groupIds,
+    ...getGrades().filter(g => gradeIds.has(g.id)).flatMap(g => g.groups.map(gr => gr.id)),
+  ])
+  // الصفوف — تُحذف من قائمة الصفوف، والمجموعات المحذوفة تُحذف من صفوفها الباقية
   const grades = getGrades()
+    .filter(g => !gradeIds.has(g.id))
+    .map(g =>
+      g.groups.some(gr => droppedGroupIds.has(gr.id))
+        ? { ...g, groups: g.groups.filter(gr => !droppedGroupIds.has(gr.id)) }
+        : g
+    )
+  // حصص المجموعات المحذوفة — تُحذف نهائياً (كما تفعل CASCADE في القاعدة)
+  const droppedSessionIds = new Set(
+    getSessions().filter(s => droppedGroupIds.has(s.groupId)).map(s => s.id)
+  )
+
+  // الطلاب: حذف (studentIds) أو تعليق مرجع الصف/المجموعة (SET NULL) — دون حذفهم
   const students = getStudents()
-  const exams = getExams()
-  const sessions = getSessions()
+    .filter(s => !studentIds.has(s.id))
+    .map(s => {
+      if (gradeIds.has(s.gradeId)) return { ...s, gradeId: "", groupId: "", updatedAt: now }
+      if (droppedGroupIds.has(s.groupId)) return { ...s, groupId: "", updatedAt: now }
+      return s
+    })
+  const keptStudentIds = new Set(students.map(s => s.id))
+
+  // الاستحقاقات: تُحذف مع طلابها (CASCADE) ويُفرَّغ مرجع مجموعتها المحذوفة
   const dues = getDues()
+    .filter(d => !studentIds.has(d.studentId) && keptStudentIds.has(d.studentId))
+    .map(d => (droppedGroupIds.has(d.groupId) ? { ...d, groupId: "" } : d))
 
-  return grades.filter(grade => {
-    // 1) المعرّف الثابت للبذرة القديمة — شرط إلزامي
-    if (!SAMPLE_GRADE_IDS.includes(String(grade.id))) return false
+  // المدفوعات: تُحذف مع طلابها فقط
+  const payments = getPayments().filter(p => !studentIds.has(p.studentId) && keptStudentIds.has(p.studentId))
 
-    // 2) الاسم التجريبي
-    if (!SAMPLE_GRADE_NAMES.includes(grade.name)) return false
-
-    const groupIds = grade.groups.map(g => g.id)
-
-    // 3) لا طلاب
-    if (students.some(s => groupIds.includes(s.groupId) || s.gradeId === grade.id)) return false
-
-    // 4) لا اختبارات / حصص / استحقاقات مرتبطة
-    if (exams.some(e => e.gradeId === grade.id || (e.groupId && groupIds.includes(e.groupId)))) return false
-    if (sessions.some(se => groupIds.includes(se.groupId))) return false
-    if (dues.some(d => d.groupId && groupIds.includes(d.groupId))) return false
-
-    return true
+  // الاختبارات: تبقى لكن بلا صف/مجموعة محذوفة (SET NULL)
+  const exams = getExams().map(e => {
+    if (gradeIds.has(e.gradeId) || (e.groupId && droppedGroupIds.has(e.groupId))) {
+      return { ...e, gradeId: "", groupId: "" }
+    }
+    return e
   })
+
+  // الحصص والحضور: تُحذف حصص المجموعات المحذوفة + حضور الطلاب المحذوفين
+  const sessions = getSessions().filter(s => !droppedSessionIds.has(s.id))
+  const attendance = getAttendance().filter(
+    a => !droppedSessionIds.has(a.sessionId) &&
+      !droppedGroupIds.has(a.groupId as string) &&
+      !studentIds.has(a.studentId)
+  )
+
+  // الدرجات اليدوية: تُحذف مع طلابها ويُفرَّغ مرجع صف/مجموعة محذوفة
+  const manualGrades = getManualGrades()
+    .filter(m => !studentIds.has(m.studentId) && keptStudentIds.has(m.studentId))
+    .map(m => {
+      let out: ManualGrade = m
+      if (gradeIds.has(m.gradeId as string)) out = { ...out, gradeId: "" }
+      if (droppedGroupIds.has(m.groupId as string)) out = { ...out, groupId: "" }
+      return out
+    })
+
+  // بوابة الطلاب — طبقاً لقيود قاعدة البيانات:
+  //   • student_accounts / student_history / manual_grades → CASCADE (تُحذف)
+  //   • registration_requests.linked_student_id → SET NULL (يبقى الطلب لكن بلا ربط)
+  const accounts = getStudentAccounts().filter(a => !studentIds.has(a.studentId))
+  const history = getStudentHistory().filter(h => !studentIds.has(h.studentId))
+  const registrationRequests = getRegistrationRequests().map(r =>
+    r.linkedStudentId && studentIds.has(r.linkedStudentId)
+      ? { ...r, linkedStudentId: undefined }
+      : r
+  )
+  const transferRequests = getGroupTransferRequests()
+    .filter(t => !studentIds.has(t.studentId))
+    .map(t => {
+      let out: GroupTransferRequest = t
+      if (droppedGroupIds.has(t.fromGroupId as string)) out = { ...out, fromGroupId: "" }
+      if (droppedGroupIds.has(t.toGroupId as string)) out = { ...out, toGradeId: "", toGroupId: "" }
+      return out
+    })
+
+  // الحفظ بالترتيب المعتمد — كل حفظ يدفع للسحابة ويتحقق من المراجع المعلّقة
+  saveGrades(grades)
+  saveStudents(students)
+  saveDues(dues)
+  savePayments(payments)
+  saveExams(exams)
+  saveSessions(sessions)
+  saveAttendance(attendance)
+  saveManualGrades(manualGrades)
+  saveRegistrationRequests(registrationRequests)
+  saveGroupTransferRequests(transferRequests)
+  saveStudentHistory(history)
+  saveStudentAccounts(accounts)
+}
+
+/** حذف صف نهائياً: مجموعاته وحصصه وحضوره تُحذف، وطلابه واختباراته تبقى بلا صف/مجموعة */
+export function deleteGradeCascade(gradeId: string): { ok: boolean; detachedStudents?: number; removedGroups?: number } {
+  const grade = getGrades().find(g => g.id === gradeId)
+  if (!grade) return { ok: false }
+  const studentsCount = getStudents().filter(s => s.gradeId === gradeId).length
+  applyCascadeDelete({ gradeIds: new Set([gradeId]) })
+  return { ok: true, detachedStudents: studentsCount, removedGroups: grade.groups.length }
+}
+
+/** حذف مجموعة واحدة: حصصها وحضورها تُحذف، وطلابها يبقون بلا مجموعة (داخل صفهم) */
+export function deleteGroupCascade(gradeId: string, groupId: string): { ok: boolean; detachedStudents?: number } {
+  const group = getGrades().find(g => g.id === gradeId)?.groups.find(gr => gr.id === groupId)
+  if (!group) return { ok: false }
+  const studentsCount = getStudents().filter(s => s.groupId === groupId).length
+  applyCascadeDelete({ groupIds: new Set([groupId]) })
+  return { ok: true, detachedStudents: studentsCount }
 }
 
 /**
- * إزالة البيانات التجريبية (الصفوف والمجموعات الافتراضية)
- * لا تلمس أي صف عليه طلاب
+ * حذف طالب نهائياً: مع ماله (استحقاقات/مدفوعات) وحضوره ودرجاته اليدوية وسجل نشاطه
+ * وحساب بوابة الطالب وطلباته — كما تفعل قيود CASCADE في قاعدة البيانات.
+ * (محاولات الاختبار السابقة تبقى في سجل النتائج باسمه — لا علاقة لها بحسابه.)
  */
-/** نسخة التراجع عن إزالة البيانات التجريبية تعيش في ذاكرة الجلسة فقط (لا تُكتب على الجهاز) */
-let sampleBackup: Grade[] = []
-
-/** هل توجد نسخة يمكن التراجع إليها؟ */
-export const hasSampleBackup = (): boolean => sampleBackup.length > 0
-
-/** التراجع عن إزالة البيانات التجريبية (استعادة الصفوف المحذوفة) */
-export const restoreSampleGrades = (): number => {
-  if (sampleBackup.length === 0) return 0
-  const backup = sampleBackup
-  sampleBackup = []
-
-  const current = getGrades()
-  const currentIds = new Set(current.map(g => g.id))
-  const restored = backup.filter(g => !currentIds.has(g.id))
-  saveGrades([...current, ...restored])
-  return restored.length
-}
-
-export const removeSampleGrades = (): { removedGrades: number; removedStudents: number } => {
-  const grades = getGrades()
-  const sampleGrades = getSampleGrades()
-  const sampleGradeIds = new Set(sampleGrades.map(g => g.id))
-
-  // لا شيء لإزالته — لا نلمس أي بيانات
-  if (sampleGradeIds.size === 0) {
-    return { removedGrades: 0, removedStudents: 0 }
-  }
-
-  // نسخة احتياطية في الذاكرة تسمح بالتراجع الفوري داخل نفس الجلسة
-  sampleBackup = sampleGrades
-
-  // getSampleGrades يضمن بالفعل عدم وجود أي طالب مرتبط،
-  // لذلك لا نحذف أي طالب إطلاقاً هنا (حماية من فقدان البيانات).
-  saveGrades(grades.filter(g => !sampleGradeIds.has(g.id)))
-
-  // شارة الواجهة فقط (ليست بيانات) — تُعاد ليعود الشريط للظهور، مع مسح أي أثر قديم
-  writeSetting('sampleBannerDismissed', '')
-  if (typeof window !== 'undefined') {
-    window.localStorage.removeItem('initialized')
-    window.localStorage.removeItem('sampleBannerDismissed')
-  }
-
-  return { removedGrades: sampleGradeIds.size, removedStudents: 0 }
+export function deleteStudentCascade(studentId: string): { ok: boolean } {
+  if (!getStudents().some(s => s.id === studentId)) return { ok: false }
+  applyCascadeDelete({ studentIds: new Set([studentId]) })
+  return { ok: true }
 }

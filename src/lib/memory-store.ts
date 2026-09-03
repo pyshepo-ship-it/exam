@@ -103,6 +103,8 @@ const LEGACY_KEYS: string[] = [
   ...Object.values(STORAGE_KEYS),
   ...LEGACY_SETTING_KEYS,
   "sampleGradesBackup",
+  "sampleBannerDismissed", // علم إخفاء شريط «البيانات التجريبية» القديم — أُلغي الشريط
+  "initialized", // علم البذرة القديمة في الإصدارات السابقة
   "studentPortalSession", // الجلسة الآن كوكي فقط — لا نسخة في localStorage
 ]
 

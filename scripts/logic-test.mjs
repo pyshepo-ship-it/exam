@@ -2,7 +2,7 @@
  * اختبار سلوكي حقيقي للمنطق الحرج — node scripts/logic-test.mjs
  *
  * يحاكي localStorage وينفّذ دوال data-storage فعلياً للتأكد من أن
- * البيانات الحقيقية لا تُحذف أبداً، وأن الحسابات صحيحة.
+ * الحسابات المالية وسنوات الدراسة والحضور والتصحيح سليمة.
  */
 
 import { readFileSync } from "node:fs"
@@ -92,68 +92,7 @@ const group = (id, name) => ({
   monthlyFee: 200, studentsCount: 0,
 })
 
-console.log("\n\x1b[1mسيناريو 1: البيانات التجريبية القديمة الحقيقية\x1b[0m")
-t("تُكتشف البذرة القديمة (id=1) الفارغة", () => {
-  reset()
-  mod.saveGrades([grade("1", "الصف الرابع الابتدائي", [group("g1", "مجموعة 1")])])
-  eq(mod.getSampleGrades().length, 1)
-})
-t("تُحذف عند التأكيد ولا يُحذف أي طالب", () => {
-  const r = mod.removeSampleGrades()
-  eq(r.removedGrades, 1, "عدد الصفوف المحذوفة:")
-  eq(r.removedStudents, 0, "عدد الطلاب المحذوفة:")
-  eq(mod.getGrades().length, 0)
-})
-t("يمكن التراجع واستعادتها", () => {
-  eq(mod.hasSampleBackup(), true)
-  eq(mod.restoreSampleGrades(), 1)
-  eq(mod.getGrades().length, 1)
-})
-
-console.log("\n\x1b[1mسيناريو 2: 🔴 الخطأ الذي حدث معك — صف حقيقي بنفس الاسم\x1b[0m")
-t("صف أنشأه المستخدم باسم تجريبي لا يُعتبر تجريبياً", () => {
-  reset()
-  // المستخدم أنشأ صفاً حقيقياً — المعرّف من Date.now()
-  mod.saveGrades([grade("1772650000000", "الصف الرابع الابتدائي", [group("gr9", "مجموعة أ")])])
-  eq(mod.getSampleGrades().length, 0, "يجب ألا يُكتشف كتجريبي:")
-})
-t("removeSampleGrades لا يحذف شيئاً في هذه الحالة", () => {
-  const r = mod.removeSampleGrades()
-  eq(r.removedGrades, 0)
-  eq(mod.getGrades().length, 1, "الصف الحقيقي باقٍ:")
-  eq(mod.getGrades()[0].groups.length, 1, "المجموعة باقية:")
-})
-
-console.log("\n\x1b[1mسيناريو 3: الصف التجريبي عليه بيانات\x1b[0m")
-t("لا يُعتبر تجريبياً إذا كان عليه طالب", () => {
-  reset()
-  mod.saveGrades([grade("1", "الصف الرابع الابتدائي", [group("g1", "مجموعة 1")])])
-  mod.saveStudents([{
-    id: "s1", name: "أحمد", gradeId: "1", groupId: "g1", status: "active",
-    createdAt: "", updatedAt: "",
-  }])
-  eq(mod.getSampleGrades().length, 0)
-})
-t("لا يُعتبر تجريبياً إذا كان عليه اختبار", () => {
-  reset()
-  mod.saveGrades([grade("1", "الصف الرابع الابتدائي", [group("g1", "مجموعة 1")])])
-  mod.saveExams([{
-    id: "e1", gradeId: "1", title: "اختبار", academicYear: "2026-2027",
-    questions: [], createdAt: "", updatedAt: "",
-  }])
-  eq(mod.getSampleGrades().length, 0)
-})
-t("لا يُعتبر تجريبياً إذا كان عليه حصة", () => {
-  reset()
-  mod.saveGrades([grade("1", "الصف الرابع الابتدائي", [group("g1", "مجموعة 1")])])
-  mod.saveSessions([{
-    id: "se1", groupId: "g1", sessionDate: "2026-09-01",
-    startTime: "", endTime: "", createdAt: "",
-  }])
-  eq(mod.getSampleGrades().length, 0)
-})
-
-console.log("\n\x1b[1mسيناريو 4: الحسابات المالية\x1b[0m")
+console.log("\n\x1b[1mسيناريو 1: الحسابات المالية\x1b[0m")
 t("رصيد الطالب يُحسب صحيحاً", () => {
   reset()
   mod.saveStudents([{
@@ -173,7 +112,7 @@ t("رصيد الطالب يُحسب صحيحاً", () => {
   eq(b.balance, 250, "المتبقي:")
 })
 
-console.log("\n\x1b[1mسيناريو 5: السنة الدراسية\x1b[0m")
+console.log("\n\x1b[1mسيناريو 2: السنة الدراسية\x1b[0m")
 t("سبتمبر 2026 ← 2026-2027", () => {
   eq(mod.getCurrentAcademicYear(new Date("2026-09-15")), "2026-2027")
 })
@@ -184,7 +123,7 @@ t("السنة التالية بعد 2026-2027 هي 2027-2028", () => {
   eq(mod.getNextAcademicYear("2026-2027"), "2027-2028")
 })
 
-console.log("\n\x1b[1mسيناريو 6: إغلاق العام الدراسي واستعادته\x1b[0m")
+console.log("\n\x1b[1mسيناريو 3: إغلاق العام الدراسي واستعادته\x1b[0m")
 t("الإغلاق يؤرشف كل البيانات ويفرّغ النشطة", () => {
   reset()
   mod.saveGrades([grade("g", "الصف الأول", [group("gg", "م1")])])
@@ -200,7 +139,7 @@ t("الاستعادة تُرجع البيانات كاملة", () => {
   eq(mod.getGrades().length, 1)
 })
 
-console.log("\n\x1b[1mسيناريو 7: لوحة الشرف\x1b[0m")
+console.log("\n\x1b[1mسيناريو 4: لوحة الشرف\x1b[0m")
 t("المكرَّم يظهر في شهره فقط", () => {
   const h = { id: "h", studentName: "أحمد", groupId: "g", reason: "تفوق", month: 9, year: 2026, createdAt: "" }
   eq(mod.isHonoreeActive(h, new Date("2026-09-10")), true, "سبتمبر:")
@@ -220,7 +159,7 @@ t("مدة الأيام تتحكم في الظهور (افتراضي 30 يوم م
   eq(mod.isHonoreeActive(legacy, new Date("2026-09-30")), true, "بدون days — نهاية الشهر:")
 })
 
-console.log("\n\x1b[1mسيناريو 7-ب: ترتيب الصفوف حسب المرحلة\x1b[0m")
+console.log("\n\x1b[1mسيناريو 4-ب: ترتيب الصفوف حسب المرحلة\x1b[0m")
 t("sortGradesByLevel يرتب بالاسم العربي: الرابع → السادس → الثانوي → الخامس في الآخر", () => {
   const input = [
     { name: "الصف السادس" },
@@ -249,7 +188,7 @@ t("الترتيب ثابت للمتساويين (لا يخلط المجموعا�
   eq(out.join("|"), "فريقA|فريقB|فريقC", "نفس الترتيب النسبي:")
 })
 
-console.log("\n\x1b[1mسيناريو 8: getAllGroups يربط الصف بالمجموعة\x1b[0m")
+console.log("\n\x1b[1mسيناريو 5: getAllGroups يربط الصف بالمجموعة\x1b[0m")
 t("كل مجموعة تحمل gradeId و gradeName الصحيحين", () => {
   const gs = mod.getAllGroups([
     grade("A", "الصف الأول", [group("a1", "م1"), group("a2", "م2")]),
@@ -270,7 +209,7 @@ t("getGroupsOfGrade لا تُرجع مجموعات صف آخر", () => {
   eq(mod.getGroupsOfGrade(grades).length, 0)
 })
 
-console.log("\n\x1b[1mسيناريو 9: حضور يومي بدون حصص يدوية\x1b[0m")
+console.log("\n\x1b[1mسيناريو 6: حضور يومي بدون حصص يدوية\x1b[0m")
 t("حفظ حضور المجموعة ليوم ينشئ سجلاً داخلياً ويحفظ الحاضر والغائب", () => {
   reset()
   mod.saveGrades([grade("A", "الصف الرابع", [group("g1", "مجموعة السبت")])])
@@ -314,7 +253,7 @@ t("يحمّل حضور السجلات القديمة لنفس اليوم دون 
   eq(mod.getAttendanceForGroup("g1").filter((a) => a.studentId === "s1").length, 1)
 })
 
-console.log("\n\x1b[1mسيناريو 10: لوحة الشرف التلقائية من نتيجة الاختبار\x1b[0m")
+console.log("\n\x1b[1mسيناريو 7: لوحة الشرف التلقائية من نتيجة الاختبار\x1b[0m")
 t("يُضاف المتفوق عند تفعيل الخيار وتحقيق النسبة", () => {
   reset()
   const exam = {
@@ -351,7 +290,7 @@ t("لا يكرر نفس الطالب لنفس الاختبار في نفس ال�
 })
 
 
-console.log("\n\x1b[1mسيناريو 11: التصحيح الآلي للاختبار الإلكتروني\x1b[0m")
+console.log("\n\x1b[1mسيناريو 8: التصحيح الآلي للاختبار الإلكتروني\x1b[0m")
 t("اختيار صحيح يمنح الدرجة واختيار خاطئ لا يمنحها", () => {
   const exam = {
     questions: [{
@@ -399,7 +338,7 @@ const pubMod = await import(
   "data:text/javascript;base64," + Buffer.from(pubJs).toString("base64")
 )
 
-console.log("\n\x1b[1mسيناريو 12: إخفاء مفاتيح التصحيح عن واجهة الطالب\x1b[0m")
+console.log("\n\x1b[1mسيناريو 9: إخفاء مفاتيح التصحيح عن واجهة الطالب\x1b[0m")
 t("stripExamAnswers يحذف isCorrect والإجابة النموذجية", () => {
   const exam = {
     id: "e1",
@@ -452,7 +391,7 @@ const tplMod = await import(
   "data:text/javascript;base64," + Buffer.from(tplJs).toString("base64")
 )
 
-console.log("\n\x1b[1mسيناريو 13: تقسيم أسئلة الامتحان ديناميكياً على الصفحات وعدم شطر أي سؤال\x1b[0m")
+console.log("\n\x1b[1mسيناريو 10: تقسيم أسئلة الامتحان ديناميكياً على الصفحات وعدم شطر أي سؤال\x1b[0m")
 t("امتحان 5 أسئلة يملأ الصفحة الأولى [3 أسئلة كاملة] و [سؤالين كاملين في الصفحة 2]", () => {
   const makeQ = (id, type) => ({
     id, questionType: type, questionNumber: 1, orderNumber: 1, headerText: "",
@@ -480,7 +419,7 @@ t("امتحان أكثر من 5 أسئلة يتوزع تلقائياً على 3 
   eq(allIds.length, 7)
 })
 
-console.log("\n\x1b[1mسيناريو 14: أنواع الأسئلة الجديدة (المصطلح العلمي، التعريفات، السؤال الحر، واختيار الكلمات التفاعلي)\x1b[0m")
+console.log("\n\x1b[1mسيناريو 11: أنواع الأسئلة الجديدة (المصطلح العلمي، التعريفات، السؤال الحر، واختيار الكلمات التفاعلي)\x1b[0m")
 t("التعرف على رؤوس الأسئلة للأنواع 6 و 7 و 8 وإمكانية تخصيص رأس السؤال", () => {
   const q6 = { id: "q6", questionType: 6, questionNumber: 1, orderNumber: 1, headerText: "", subQuestions: [] }
   const q7 = { id: "q7", questionType: 7, questionNumber: 2, orderNumber: 2, headerText: "", subQuestions: [] }
@@ -508,7 +447,7 @@ t("تحديد الكلمات في صوب ما تحته خط بدقة عبر getU
   eq(words[0].underlined, false)
 })
 
-console.log("\n\x1b[1mسيناريو 15: منتقي الوقت السهل المخصص للجوال (12 ساعة، الدقائق، الفترات ص/م، وحساب المدة)\x1b[0m")
+console.log("\n\x1b[1mسيناريو 12: منتقي الوقت السهل المخصص للجوال (12 ساعة، الدقائق، الفترات ص/م، وحساب المدة)\x1b[0m")
 t("تحويل الوقت من 24 إلى 12 ساعة مع العربية formatTime12", () => {
   let utilsSrc = readFileSync("src/lib/utils.ts", "utf8")
   utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"tailwind-merge"/, "")

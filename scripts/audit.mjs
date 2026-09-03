@@ -2,7 +2,8 @@
  * تدقيق شامل للمشروع — يُشغَّل بـ: node scripts/audit.mjs
  *
  * يفحص:
- *  1. منطق اكتشاف البيانات التجريبية (الخطر الأكبر: حذف بيانات حقيقية)
+ *  1. ألّا تعود ميزة «البيانات التجريبية» القديمة (شريط يقترح إزالة جماعية للصفوف)
+ *     — أُلغيت نهائياً بطلب من المالك لأنها سببت قلقاً من حذف بيانات حقيقية
  *  2. القوائم المنسدلة: هل تُصفّى المجموعات حسب الصف المختار؟
  *  3. خرائط Supabase: تطابق الأعمدة مع مخطط قاعدة البيانات
  *  4. أعمدة NOT NULL: هل يمكن أن تصلها قيمة null؟
@@ -43,44 +44,26 @@ function walk(dir, out = []) {
 }
 
 // ============================================================
-section("1) منطق البيانات التجريبية (حماية من فقدان البيانات)")
+section("1) ميزة «البيانات التجريبية» أُلغيت نهائياً")
 // ============================================================
+// بطلب من المالك: كان يظهر في صفحة الصفوف والمجموعات شريط «بيانات تجريبية قديمة»
+// يقترح إزالة جماعية، وهو ما أوحى بأن بيانات مسجَّلة فعلاً قد تُحذف. وبما أن كل
+// البيانات الآن في Supabase ولا تُنشأ أي صفوف تجريبية في الإصدارات الحالية،
+// حُذف الشريط ومنطق الكشف وواجهة الاستعادة من الإعدادات بالكامل.
+const srcFiles = walk("src")
+const srcText = srcFiles.map((f) => readFileSync(f, "utf8")).join("\n")
+// محتوى data-storage — يُستخدم في أقسام لاحقة (السلامة المالية، السنة الدراسية)
 const storage = read("src/lib/data-storage.ts")
 
 check(
-  "يشترط معرّفاً ثابتاً للبذرة القديمة (لا يعتمد على الاسم وحده)",
-  storage.includes("SAMPLE_GRADE_IDS") &&
-    /SAMPLE_GRADE_IDS\.includes\(String\(grade\.id\)\)/.test(storage)
+  "لا وجود لشريط البيانات التجريبية ولا لمنطقه في الكود",
+  !/SampleDataBanner|sample-data-banner|getSampleGrades|removeSampleGrades|restoreSampleGrades|SAMPLE_GRADE_IDS|SAMPLE_GRADE_NAMES/.test(
+    srcText
+  )
 )
-check(
-  "يستبعد أي صف عليه طلاب",
-  /students\.some\(s =>[\s\S]{0,120}groupIds\.includes\(s\.groupId\)/.test(storage)
-)
-check("يستبعد أي صف عليه اختبارات", /exams\.some\(e =>/.test(storage))
-check("يستبعد أي صف عليه حصص", /sessions\.some\(se =>/.test(storage))
-check("يستبعد أي صف عليه استحقاقات", /dues\.some\(d =>/.test(storage))
-check(
-  "الإزالة لا تحذف أي طالب إطلاقاً",
-  !/saveStudents\(remainingStudents\)/.test(storage) &&
-    /removedStudents: 0/.test(storage)
-)
-check(
-  "توجد نسخة احتياطية للتراجع قبل الحذف (في ذاكرة الجلسة — لا تُكتب على الجهاز)",
-  storage.includes("sampleBackup") && storage.includes("restoreSampleGrades")
-)
-check(
-  "data-storage لا يكتب أي بيان في التخزين المحلي",
-  !/localStorage\.setItem|sessionStorage/.test(storage)
-)
-
-const banner = read("src/components/sample-data-banner.tsx")
-check("الشريط يطلب تأكيداً قبل الحذف", banner.includes("confirming"))
-check("الشريط يعرض أسماء الصفوف التي ستُحذف", /samples\.map\(/.test(banner))
-check("الشريط يوفر زر تراجع", banner.includes("restoreSampleGrades"))
-
 check(
   "لا توجد أي بذرة بيانات تجريبية في الكود (لن تعود البيانات الافتراضية)",
-  !walk("src").some((f) => {
+  !srcFiles.some((f) => {
     const c = readFileSync(f, "utf8")
     // نبحث عن كتابة فعلية للبذرة (setItem)، لا عن تنظيفها (removeItem)
     return (

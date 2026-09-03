@@ -61,20 +61,8 @@ export function setStudentReportsEnabled(enabled: boolean): void {
 // تشفير كلمة المرور (بصمة فقط)
 // ------------------------------------------------------------
 
-/** بصمة SHA-256 سداسية عشرية — مع بديل محلي إن لم يتوفر WebCrypto */
-export async function sha256Hex(input: string): Promise<string> {
-  try {
-    if (typeof globalThis !== "undefined" && globalThis.crypto?.subtle) {
-      const data = new TextEncoder().encode(input)
-      const digest = await globalThis.crypto.subtle.digest("SHA-256", data)
-      return Array.from(new Uint8Array(digest))
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("")
-    }
-  } catch {
-    /* fallback */
-  }
-  // بديل مبسط (FNV-1a مزدوج) — يُستخدم فقط إن لم يتوفر WebCrypto
+/** دالة FNV-1a المزدوجة (تحتفظ بها القراءة فقط للبصمات القديمة — لا تُكتب أبداً) */
+function legacyFnvHex(input: string): string {
   let h1 = 0x811c9dc5
   let h2 = 0x01000193
   for (let i = 0; i < input.length; i++) {
@@ -83,6 +71,45 @@ export async function sha256Hex(input: string): Promise<string> {
     h2 = ((h2 + c) * 0x85ebca6b) >>> 0
   }
   return `fnv$${h1.toString(16).padStart(8, "0")}${h2.toString(16).padStart(8, "0")}`
+}
+
+/** هل البصمة من النوع القديم الضعيف (FNV)؟ — لا تُنشأ منه بصمات جديدة أبداً */
+function isLegacyFnvHash(stored: string): boolean {
+  return /^fnv\$[0-9a-f]{16}$/.test(stored || "")
+}
+
+/**
+ * بصمة SHA-256 سداسية عشرية.
+ * بدون أي «بديل محلي»: إن لم يتوفر WebCrypto تُرفض العملية برسالة واضحة بدل
+ * تخفيض الأمان بصمتٍّ (كان هناك بديل FNV سابق غير مناسب لكلمات المرور).
+ */
+export async function sha256Hex(input: string): Promise<string> {
+  const subtle = typeof globalThis !== "undefined" ? globalThis.crypto?.subtle : null
+  if (!subtle) {
+    throw new Error("متصفحك لا يدعم تشفير كلمات المرور — حدّث متصفحك أو جرّب متصفحاً آخر")
+  }
+  try {
+    const data = new TextEncoder().encode(input)
+    const digest = await subtle.digest("SHA-256", data)
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("")
+  } catch {
+    throw new Error("تعذر تشفير كلمة المرور على هذا الجهاز — أعد المحاولة")
+  }
+}
+
+/**
+ * مطابقة كلمة مرور مع بصمة مخزنة:
+ *  - البصمات الحديثة SHA-256 تُقارن بعد التجزئة.
+ *  - بصمات FNV القديمة (من إصدارات سابقة) تُقارن بنفس الخوارزمية للسماح بدخول
+ *    الحسابات القائمة فقط — ولا تُكتب بصمة FNV جديدة أبداً.
+ */
+export async function passwordMatches(input: string, stored?: string): Promise<boolean> {
+  if (!stored) return false
+  if (isLegacyFnvHash(stored)) return legacyFnvHex(input) === stored
+  const hash = await sha256Hex(input)
+  return hash === stored
 }
 
 // ------------------------------------------------------------
@@ -260,7 +287,12 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     return { ok: false, error: `تم التسجيل بهذا الرقم حديثاً — انتظر موافقة المعلم، ويمكن إعادة التقديم بعد ~${hoursLeft} ساعة` }
   }
 
-  const passwordHash = await sha256Hex(input.password)
+  let passwordHash: string
+  try {
+    passwordHash = await sha256Hex(input.password)
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "تعذر تشفير كلمة المرور — أعد المحاولة" }
+  }
   const request: RegistrationRequest = {
     id: `reg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     name,
@@ -410,9 +442,15 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     return { ok: false, error: "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
   }
 
-  const hash = await sha256Hex(password)
-  const matchesRequest = requestIsAuthoritative && hash === request.passwordHash
-  const matchesAccount = account && account.active !== false && account.passwordHash ? hash === account.passwordHash : false
+  // مقارنة آمنة: SHA-256 حديثاً + قراءة FNV القديم فقط (بلا كتابة جديدة)
+  let matchesRequest = false
+  let matchesAccount = false
+  try {
+    matchesRequest = requestIsAuthoritative && (await passwordMatches(password, request.passwordHash))
+    matchesAccount = !!(account && account.active !== false && (await passwordMatches(password, account.passwordHash)))
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "تعذر التحقق من كلمة المرور على هذا الجهاز" }
+  }
   if (!matchesRequest && !matchesAccount) {
     // حد محاولات التخمين: 5 فشل/15 دقيقة لكل بريد
     const failBucket = `login-fail:${norm(mail)}`
@@ -938,7 +976,12 @@ export async function resetStudentPasswordByTeacher(studentId: string): Promise<
     for (let i = 0; i < 7; i++) temp += alphabet[Math.floor(Math.random() * alphabet.length)]
   }
 
-  const passwordHash = await sha256Hex(temp)
+  let passwordHash: string
+  try {
+    passwordHash = await sha256Hex(temp)
+  } catch (e) {
+    return { ok: false, message: (e as Error)?.message || "تعذر تشفير كلمة المرور على هذا الجهاز" }
+  }
   saveStudentAccounts(
     accounts.map(a => (a.id === account.id ? { ...a, passwordHash, active: true } : a))
   )
@@ -1104,7 +1147,7 @@ export function isStudentPortalActive(studentId: string): boolean {
   return account ? account.active : true
 }
 
-/** حذف حساب البوابة عند حذف الطالب */
+/** حذف حساب البوابة عند حذف الطالب (تستدعيها واجهات سابقة مباشرة؛ والحذف المتسلسل يمسحها مع بقية صفوف الطالب) */
 export function removeStudentPortalAccount(studentId: string): void {
   const accounts = getStudentAccounts()
   saveStudentAccounts(accounts.filter(a => a.studentId !== studentId))
