@@ -6,6 +6,7 @@
 
 import { Announcement, Exam, ExamAccessMode, Grade, Group } from "./data-storage"
 import { isValidPhone, isValidStudentName, normalizeDigits } from "./student-accounts"
+import { readSetting, writeSetting } from "./memory-store"
 
 /** إعلانات تخص هذا الصف فقط — المستهدف فارغ = إعلان عام للجميع */
 export function announcementsForGrade(announcements: Announcement[], gradeId: string): Announcement[] {
@@ -210,15 +211,16 @@ export function effectiveAttemptScore(attempt: { score: number; manualOverride?:
     : attempt.score
 }
 
-/** مفتاح آخر ظهور للإعلانات (لشارة «جديد» في بوابة الطالب) */
+/**
+ * مفتاح آخر ظهور للإعلانات (لشارة «جديد» في بوابة الطالب).
+ * حالة واجهة داخل ذاكرة الجلسة فقط — لا تُكتب على الجهاز ولا تُعدّ بيانات.
+ */
 export const ANNOUNCEMENTS_SEEN_KEY = "studentSeenAnnouncementsAt"
 
 export function markAnnouncementsSeen(): void {
-  if (typeof window === "undefined") return
-  localStorage.setItem(ANNOUNCEMENTS_SEEN_KEY, new Date().toISOString())
+  writeSetting(ANNOUNCEMENTS_SEEN_KEY, new Date().toISOString())
 }
 
 export function lastAnnouncementsSeenAt(): string {
-  if (typeof window === "undefined") return ""
-  return localStorage.getItem(ANNOUNCEMENTS_SEEN_KEY) || ""
+  return readSetting(ANNOUNCEMENTS_SEEN_KEY, "")
 }

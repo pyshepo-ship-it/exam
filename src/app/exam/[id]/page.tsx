@@ -215,7 +215,7 @@ export default function TakeExamPage() {
           return
         }
 
-        // حد عدد مرات الاجتياز للأعضاء — محلياً + العدّاد السحابي (عبر الأجهزة).
+        // حد عدد مرات الاجتياز للأعضاء — محاولات ذاكرة الجلسة + العدّاد السحابي (عبر الأجهزة).
         // أما الزائر فيُفحص حدّه عند الضغط على «بدء الاختبار» (بعد معرفة اسمه ومجموعته)
         if (portal && me && asMember) {
           const remote = await fetchAttemptCount(found.id, portal.studentId).catch(() => null)
@@ -346,7 +346,7 @@ export default function TakeExamPage() {
       return
     }
 
-    // حد المحاولات للزائر: المحلي + السحابي (بالاسم والمجموعة — يسري عبر الأجهزة)
+    // حد المحاولات للزائر: ذاكرة الجلسة + السحابي (بالاسم والمجموعة — يسري عبر الأجهزة)
     setStarting(true)
     const remote = await fetchGuestAttemptCount(exam.id, check.identity.name, check.identity.groupId).catch(() => null)
     const at = attemptsStatus(

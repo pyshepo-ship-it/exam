@@ -28,7 +28,9 @@ import {
   saveSetting,
 } from "./data-storage"
 import {
-  fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest, fetchRegistrationRequestByEmail } from "./supabase/sync"
+  fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
+  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail } from "./supabase/sync"
+import { clearStore } from "./memory-store"
 
 // ------------------------------------------------------------
 // إعدادات المعلم (مفاتيح عامة تُزامن عبر Supabase)
@@ -130,8 +132,12 @@ const REGISTRATION_COOLDOWN_MS = 48 * 60 * 60 * 1000
 // ============================================================
 // حدود الطلبات (Rate Limit) — حماية من إغراق النظام بطلبات وهمية
 //  • عالمي: 20 طلب تسجيل كحد أقصى في الساعة + 10 طلبات نقل + 20 استفسار
-//  • لكل جهاز (localStorage): طلب تسجيل واحد كل 10 دقائق، ونقل واحد كل ساعة
+//  • لكل جهاز: طلب تسجيل واحد كل 10 دقائق، ونقل واحد كل ساعة
 //  • فشل تسجيل الدخول: 5 محاولات كل 15 دقيقة لكل بريد (حماية التخمين)
+//
+// هذه عدّادات أرقام فقط (عدد + وقت بداية النافذة) وليست بيانات:
+// لا اسم ولا هاتف ولا بريد ولا درجات — لذلك تُحفظ على الجهاز لحماية
+// قاعدة البيانات من الإغراق، بينما كل البيانات الحقيقية في Supabase وحدها.
 // ============================================================
 const RATE_LIMITS_KEY = "studentRateLimits"
 
@@ -287,8 +293,13 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
 // جلسة الطالب
 // ------------------------------------------------------------
 
+/** مفتاح قديم كان يُستخدم لنسخة الجلسة في localStorage — يُمسح ولا يُكتب مجدداً */
 const PORTAL_SESSION_KEY = "studentPortalSession"
-/** كوكي مرآة الجلسة — يتيح للسيرفر (Middleware) معرفة أن الزائر طالب */
+/**
+ * الجلسة تعيش في كوكي واحد فقط (توكين دخول — ليست بيانات):
+ * يتيح للسيرفر (Middleware) معرفة أن الزائر طالب، ويبقيه مسجلاً 30 يوماً.
+ * كل بيانات الطالب نفسها تُجلب من Supabase في كل مرة — لا نسخة منها على الجهاز.
+ */
 const PORTAL_SESSION_COOKIE = "studentPortalSession"
 /** مدة صلاحية جلسة الطالب: 30 يوماً ثم يُطلب الدخول من جديد */
 const PORTAL_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000
@@ -329,17 +340,10 @@ function writeSessionCookie(session: PortalSession | null): void {
   } catch { /* تجاهل */ }
 }
 
-/** الجلسة الحالية — تُقرأ من الكوكي أو localStorage ويُرفض ما انتهت صلاحيته */
+/** الجلسة الحالية — من الكوكي فقط، ويُرفض ما انتهت صلاحيته */
 export function getPortalSession(): PortalSession | null {
   if (typeof window === "undefined") return null
-  let session: PortalSession | null = null
-  try {
-    const raw = localStorage.getItem(PORTAL_SESSION_KEY)
-    session = raw ? (JSON.parse(raw) as PortalSession) : null
-  } catch {
-    session = null
-  }
-  if (!session) session = readSessionCookie()
+  const session = readSessionCookie()
   if (!session) return null
   // جلسة قديمة الشكل (قبل إضافة الصلاحية) أو منتهية → تُلغى
   if (!session.exp || Date.now() >= session.exp) {
@@ -351,9 +355,13 @@ export function getPortalSession(): PortalSession | null {
 
 export function portalLogout(): void {
   if (typeof window === "undefined") return
-  localStorage.removeItem(PORTAL_SESSION_KEY)
   writeSessionCookie(null)
-  try { sessionStorage.removeItem(PORTAL_SESSION_KEY) } catch { /* تجاهل */ }
+  // مسح أي نسخة قديمة من الجلسة وذاكرة البيانات (لا يبقى شيء على الجهاز)
+  try {
+    window.localStorage.removeItem(PORTAL_SESSION_KEY)
+    window.sessionStorage.removeItem(PORTAL_SESSION_KEY)
+  } catch { /* تجاهل */ }
+  clearStore()
 }
 
 export type LoginResult =
@@ -365,8 +373,18 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   const mail = (email || "").trim().toLowerCase()
   if (!mail || !password) return { ok: false, error: "يرجى إدخال البريد وكلمة المرور" }
 
-  // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد من المدرس)
-  const account = getStudentAccounts().find(a => norm(a.email) === norm(mail))
+  // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد وكلمة المرور من المدرس).
+  // لا نسخة محلية دائمة: إن لم يكن في ذاكرة الجلسة يُجلب من Supabase مباشرة،
+  // فيدخل الطالب من أي جهاز في العالم بأحدث حالة لحسابه (تفعيل/كلمة المرور).
+  let account = getStudentAccounts().find(a => norm(a.email) === norm(mail))
+  if (!account) {
+    const remoteAccount = await fetchStudentAccountByEmail(mail).catch(() => null)
+    if (remoteAccount) {
+      const accounts = getStudentAccounts()
+      saveStudentAccounts([...accounts.filter(a => norm(a.email) !== norm(mail)), remoteAccount])
+      account = remoteAccount
+    }
+  }
 
   // أحدث طلب لنفس البريد هو المعتمد (إعادة التقديم بعد الرفض تلغي القديم)
   let request = getRegistrationRequests()
@@ -454,8 +472,8 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     iat: now,
     exp: now + PORTAL_SESSION_TTL_MS,
   }
+  // الجلسة كوكي فقط — لا تُكتب أي بيانات للطالب على جهازه
   if (typeof window !== "undefined") {
-    localStorage.setItem(PORTAL_SESSION_KEY, JSON.stringify(session))
     writeSessionCookie(session)
   }
   return { ok: true, session }

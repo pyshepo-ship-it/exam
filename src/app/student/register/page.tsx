@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Grade, getGrades } from "@/lib/data-storage"
+import { STORAGE_KEYS } from "@/lib/storage-keys"
+import { writeRows } from "@/lib/memory-store"
 import { fetchPublicData } from "@/lib/supabase/sync"
 import toast from "react-hot-toast"
 import { registerStudentAccount, isRegistrationOpen } from "@/lib/student-accounts"
@@ -43,7 +45,7 @@ export default function StudentRegisterPage() {
     setRegistrationOpen(isRegistrationOpen())
 
     const load = async () => {
-      // الصفوف من Supabase مباشرة — المصدر الوحيد (المرآة المحلية احتياط للمهلة فقط)
+      // الصفوف من Supabase مباشرة — المصدر الوحيد (لا تخزين محلي على الجهاز)
       const pub = await fetchPublicData()
       if (pub && pub.grades.length > 0) {
         const list = pub.grades.map(g => ({
@@ -64,16 +66,16 @@ export default function StudentRegisterPage() {
             })),
         }))
         setGrades(list)
-        // نسخة عرض سريعة فقط (كاش) — لا تُعد مصدراً للحقيقة
-        try { localStorage.setItem("grades", JSON.stringify(list)) } catch { /* تجاهل */ }
+        // في ذاكرة الجلسة فقط (تُمسح عند تحديث الصفحة) — لا يُكتب شيء على الجهاز
+        writeRows(STORAGE_KEYS.GRADES, list)
       } else {
-        // تعذر السحاب (انقطاع/صلاحيات) — نستخدم الكاش إن وجد ونخبر الزائر
+        // تعذر السحاب (انقطاع/صلاحيات) — نخبر الزائر أن المصدر هو Supabase
         const cached = getGrades()
         if (cached.length > 0) {
           setGrades(cached)
-          toast("تعذر تحديث قائمة الصفوف مباشرة — تُعرض نسخة محفوظة مؤقتاً", { icon: "⚠️" })
+          toast("تعذر تحديث قائمة الصفوف من Supabase الآن — حاول مجدداً", { icon: "⚠️" })
         } else {
-          toast.error("تعذر تحميل قائمة الصفوف — تحقق من اتصال الإنترنت وأعد المحاولة", { duration: 6000 })
+          toast.error("تعذر تحميل قائمة الصفوف من Supabase — تحقق من اتصال الإنترنت وأعد المحاولة", { duration: 6000 })
         }
       }
       setMounted(true)

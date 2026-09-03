@@ -175,6 +175,10 @@ const { createRoot } = await import("react-dom/client")
 const Page = (await import(pathToFileURL(built.get(ENTRY_EXAM)).href)).default
 const HomePage = (await import(pathToFileURL(built.get(ENTRY_HOME)).href)).default
 const DashboardExams = (await import(pathToFileURL(built.get(ENTRY_DASHBOARD)).href)).default
+// مخزن ذاكرة الجلسة (المكان الوحيد المؤقت للبيانات — لا تخزين محلي)
+const MEM = (await import(
+  pathToFileURL(built.get(resolve(ROOT, "src/lib/memory-store.ts"))).href
+))
 
 // ------------------------------------------------------------
 // أدوات الاختبار
@@ -187,11 +191,27 @@ const eq = (name, cond, extra = "") => {
 }
 const section = (t) => console.log(`\n${"=".repeat(56)}\n${t}\n${"=".repeat(56)}`)
 
-const seed = (data) => {
-  window.localStorage.clear()
-  for (const [k, v] of Object.entries(data)) window.localStorage.setItem(k, JSON.stringify(v))
+// التغذية كما تفعل pullAllData من Supabase: في ذاكرة الجلسة فقط.
+// الجلسة تُكتب كوكي (لا نسخة محلية). ولا يُكتب أي بيان في localStorage.
+const SESSION_COOKIE = "studentPortalSession"
+const setSessionCookie = (session) => {
+  if (!session) {
+    document.cookie = `${SESSION_COOKIE}=; path=/; max-age=0`
+    return
+  }
+  const b64 = Buffer.from(JSON.stringify(session), "utf8").toString("base64")
+  document.cookie = `${SESSION_COOKIE}=${encodeURIComponent(b64)}; path=/; max-age=2592000`
 }
-const readKey = (k) => JSON.parse(window.localStorage.getItem(k) || "[]")
+const seed = (data) => {
+  MEM.clearStore()
+  window.localStorage.clear()
+  const { studentPortalSession, ...rows } = data
+  for (const [k, v] of Object.entries(rows)) MEM.writeRows(k, v)
+  setSessionCookie(studentPortalSession || null)
+}
+const readKey = (k) => MEM.readRows(k)
+/** كل مفاتيح localStorage الحالية (للتحقق من صفر تخزين محلي) */
+const localKeys = () => Object.keys(window.localStorage)
 
 const nowIso = new Date().toISOString()
 const mcq = (id) => ({
@@ -549,6 +569,34 @@ seed({ grades: [grade1], exams: [baseExam({ id: "ex-dash", allowOnline: false })
     }
   }
   await unmount()
+}
+
+// ------------------------------------------------------------
+section("صفر تخزين محلي — الاختبارات والنتائج في Supabase فقط")
+{
+  const DATA_KEYS = ["grades","students","exams","examAttempts","studentAccounts","announcements",
+    "honorees","sessions","attendance","dues","payments","manualGrades","registrationRequests",
+    "groupTransferRequests","studentHistory","inquiries","sharedFiles","importantLinks",
+    "yearArchives","currentAcademicYear","studentPortalSession","teacherName"]
+  const leaked = localKeys().filter((k) => DATA_KEYS.includes(k))
+  eq("بعد كل سيناريوهات الاختبار: لا بيانات في التخزين المحلي للجهاز", leaked.length === 0, leaked.join("، ") || "لا شيء")
+  eq("المسموح على الجهاز: عدّاد حماية الإغراق فقط",
+    localKeys().every((k) => k === "studentRateLimits"), localKeys().join("، ") || "لا شيء")
+
+  // حفظ نتيجة/محاولة لا يكتب على الجهاز
+  seed({ grades: [grade1], students: [student], exams: [baseExam({ accessMode: "members" })], studentPortalSession: session })
+  const before = localKeys().length
+  MEM.writeRows("examAttempts", [...MEM.readRows("examAttempts"), { id: "att-local-check", examId: "ex-1", studentId: "st-1", studentName: "طالب", groupId: "gr-1", gradeId: "g-1", answers: {}, score: 5, totalMarks: 10, startedAt: nowIso, submittedAt: nowIso, durationSeconds: 60 }])
+  eq("تسجيل محاولة في ذاكرة الجلسة لا يضيف أي مفتاح محلي", localKeys().length === before && readKey("examAttempts").length === 1)
+
+  // كاش قديم يُمسح نهائياً
+  window.localStorage.setItem("examAttempts", JSON.stringify([{ id: "legacy-att" }]))
+  window.localStorage.setItem("grades", JSON.stringify([{ id: "legacy-g", name: "قديم", groups: [] }]))
+  MEM.purgeLegacyLocalStorage()
+  eq("أي كاش قديم من إصدار سابق يُمسح من الجهاز نهائياً",
+    window.localStorage.getItem("examAttempts") === null && window.localStorage.getItem("grades") === null)
+  eq("الجلسة تبقى كوكي فقط (لا نسخة محلية)",
+    window.localStorage.getItem("studentPortalSession") === null && document.cookie.includes("studentPortalSession="))
 }
 
 // ------------------------------------------------------------

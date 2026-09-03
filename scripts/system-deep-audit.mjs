@@ -69,8 +69,17 @@ const transpileAndLoad = async (path, replacements = []) => {
 const weekdaysMod = await transpileAndLoad("src/lib/weekdays.ts")
 
 // Data storage (with mocked sync)
+// مخزن الذاكرة الحقيقي — يُنفَّذ كما في المتصفح (صفر تخزين محلي للبيانات)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { readRows as __readRows, writeRows as __writeRows, clearStore as __clearStore," +
+  " readSetting as __readSetting, writeSetting as __writeSetting," +
+  " purgeLegacyLocalStorage as __purgeLegacy, adoptLegacyIntoMemory as __adoptLegacy };\n"
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+
 const weekdaysRaw = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
-const storageRaw = readFileSync("src/lib/data-storage.ts", "utf8")
+const storageRaw = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
   .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
@@ -111,10 +120,14 @@ const pushSetting = () => Promise.resolve();
 const pushExamAttempts = () => Promise.resolve();
 `
 
-const storageJs = ts.transpileModule(mockSyncHeader + "\n" + storageRaw, {
+const storageJs = ts.transpileModule(mockSyncHeader + "\n" + memoryStore + "\n" + storageRaw, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
 const storageMod = await import("data:text/javascript;base64," + Buffer.from(storageJs).toString("base64"))
+
+// تفريغ ذاكرة الجلسة مع كل تفريغ للتخزين الصوري بين الاختبارات
+const __lsClear = globalThis.localStorage.clear
+globalThis.localStorage.clear = () => { __lsClear(); storageMod.__clearStore() }
 
 // Exam Grade
 const gradeMod = await transpileAndLoad("src/lib/exam-grade.ts", [
@@ -174,16 +187,20 @@ test("حفظ واسترجاع الصفوف مع بنية المجموعات كا
   assertEq(loaded[0].groups[0].days, ["السبت", "الثلاثاء"])
 })
 
-test("معالجة JSON تالف في LocalStorage دون انهيار التطبيق", () => {
+test("تخزين محلي تالف لا يؤثر على البيانات (المصدر: Supabase ثم ذاكرة الجلسة)", () => {
   store.set("grades", "{ broken json !!")
-  const loaded = storageMod.getGrades()
-  assertEq(loaded, [], "يجب أن يعيد مصفوفة فارغة بأمان")
+  const g = [{ id: "g1", name: "الصف الأول", academicYear: "2026-2027", groups: [], createdAt: "" }]
+  storageMod.saveGrades(g)
+  assertEq(storageMod.getGrades().length, 1, "القراءة من ذاكرة الجلسة لا من المتصفح")
+  storageMod.__purgeLegacy()
+  assertEq(store.has("grades"), false, "أي أثر محلي قديم يُمسح نهائياً")
 })
 
-test("معالجة بيانات غير مصفوفة (primitive أو object)", () => {
-  store.set("students", JSON.stringify({ not: "an array" }))
-  const loaded = storageMod.getStudents()
-  assertEq(loaded, [], "يجب أن يعيد مصفوفة فارغة إذا كانت القيمة كائناً")
+test("كيان لم تصل بياناته من السحابة بعد → مصفوفة فارغة بلا انهيار", () => {
+  storageMod.__clearStore()
+  assertEq(storageMod.getStudents(), [], "يجب أن يعيد مصفوفة فارغة بأمان")
+  storageMod.__writeRows("students", { not: "an array" })
+  assertEq(storageMod.getStudents(), [], "قيمة غير مصفوفة تُهمل بأمان")
 })
 
 test("حفظ واسترجاع الطلاب مع الملاحظات ورقم الهاتف", () => {

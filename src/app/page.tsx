@@ -128,7 +128,7 @@ export default function HomePage() {
           signature: publicData.settings?.teacherSignatureLine || undefined,
         })
       } else {
-        // 2) وضع محلي (عند عدم تهيئة Supabase): من متصفح الجهاز
+        // 2) تعذر الوصول إلى Supabase: تُعرض ذاكرة الجلسة فقط (لا تخزين محلي على الجهاز)
         setGrades(getGrades())
         setAnnouncements(getAnnouncements())
         setHonorees(getHonorees())

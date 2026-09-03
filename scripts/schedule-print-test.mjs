@@ -29,12 +29,21 @@ const utils = readFileSync("src/lib/utils.ts", "utf8").replace(/import[\s\S]*?fr
 const weekdays = readFileSync("src/lib/weekdays.ts", "utf8").replace(/export /g, "")
 const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")
 
-let ds = readFileSync("src/lib/data-storage.ts", "utf8")
+// مخزن الذاكرة الحقيقي — يُنفَّذ كما في المتصفح (صفر تخزين محلي للبيانات)
+const memoryStore = readFileSync("src/lib/memory-store.ts", "utf8")
+  .replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
+  .replace(/export /g, "") +
+  "\nexport { readRows as __readRows, writeRows as __writeRows, clearStore as __clearStore," +
+  " readSetting as __readSetting, writeSetting as __writeSetting," +
+  " purgeLegacyLocalStorage as __purgeLegacy, adoptLegacyIntoMemory as __adoptLegacy };\n"
+const stripMemoryImport = (code) => code.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/memory-store"/, "")
+
+let ds = stripMemoryImport(readFileSync("src/lib/data-storage.ts", "utf8"))
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/storage-keys"/, "")
 ds = ds.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/weekdays"/, "")
 
-let branding = readFileSync("src/lib/branding.ts", "utf8")
+let branding = stripMemoryImport(readFileSync("src/lib/branding.ts", "utf8"))
 branding = branding.replace(/import\s*\{[\s\S]*?\}\s*from\s*"\.\/supabase\/sync"/, "")
 
 let sp = readFileSync("src/lib/schedule-print.ts", "utf8")
@@ -54,7 +63,7 @@ sched = sched
 const stubs = ["queuePush","pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
   .map(f => `const ${f} = () => Promise.resolve();`).join("\n")
 
-const prelude = utils + "\n" + weekdays + "\n" + storageKeys + "\n" + stubs + "\n"
+const prelude = utils + "\n" + weekdays + "\n" + storageKeys + "\n" + memoryStore + "\n" + stubs + "\n"
 const js = ts.transpileModule(prelude + ds + "\n" + branding + "\n" + sched + "\n" + sp, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
 }).outputText
@@ -109,10 +118,11 @@ const dues = [
 const payments = [
   { id: "p1", studentId: "s2", dueId: "d2", amount: 150, paymentDate: "2026-09-01", month: 9, year: 2026, createdAt: "" },
 ]
-store.set("grades", JSON.stringify(grades))
-store.set("students", JSON.stringify(students))
-store.set("dues", JSON.stringify(dues))
-store.set("payments", JSON.stringify(payments))
+// التغذية في ذاكرة الجلسة (كما تفعل pullAllData من Supabase) — لا تخزين محلي
+mod.__writeRows("grades", grades)
+mod.__writeRows("students", students)
+mod.__writeRows("dues", dues)
+mod.__writeRows("payments", payments)
 
 console.log("اختبار 1: نسخة المدرس التفصيلية (PDF HTML فعلي)")
 const t = mod.buildSchedulePagesHtml({ mode: "teacher", grades, students, academicYear: "2026-2027", teacherName: "أ/ ضحى العربي", signatureLine: "مع تمنياتي لكم بالتوفيق" })

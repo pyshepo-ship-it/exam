@@ -1,10 +1,21 @@
 // ============================================================
-// محرك المزامنة مع Supabase
-// قاعدة Supabase هي المصدر الحقيقي للبيانات، والـ localStorage
-// يعمل كمرآة محلية سريعة (وتعمل الصفحة الرئيسية العامة من Supabase مباشرة).
+// محرك المزامنة مع Supabase — السحابة هي المكان الوحيد لتسجيل البيانات
+// ============================================================
+// لا يوجد أي تخزين محلي للبيانات على الجهاز (لا localStorage ولا sessionStorage):
+//   • الجلب: كل صفحة تجلب بياناتها من Supabase تلقائياً عند فتحها
+//   • الحفظ: كل حفظ يُرفع إلى Supabase، ثم تُحدَّث ذاكرة الجلسة للعرض الفوري
+//   • ذاكرة الجلسة (memory-store) متغيّرات داخل التبويب تُمسح عند تحديث الصفحة
 // ============================================================
 
 import { createClient, isSupabaseConfigured } from "./client";
+import {
+  readRows as storeRows,
+  writeRows as setStore,
+  readSetting as storeSetting,
+  writeSetting as setStoreSetting,
+  notifyStoreUpdate,
+  purgeLegacyLocalStorage,
+} from "../memory-store";
 import { STORAGE_KEYS } from "../storage-keys";
 
 // ---------- أنواع بنيوية (للتجنب الاستيراد الدائري) ----------
@@ -524,19 +535,11 @@ export const fromArchiveRow = (row: any): YearArchiveShape => ({
 // أدوات عامة
 // ============================================================
 
-function localRows<T>(key: string): T[] {
-  if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(key);
-  try {
-    return raw ? (JSON.parse(raw) as T[]) : [];
-  } catch {
-    return [];
-  }
-}
+// القراءة من ذاكرة الجلسة (لا من الجهاز) — البيانات وصلت من Supabase
+const memoryRows = <T,>(key: string): T[] => storeRows<T>(key)
 
-function setLocal(key: string, rows: unknown[]) {
-  localStorage.setItem(key, JSON.stringify(rows));
-}
+// الكتابة في ذاكرة الجلسة فقط — الحفظ الدائم يحدث في Supabase
+const setMemory = (key: string, rows: unknown[]) => setStore(key, rows)
 
 function warnSyncError(err: unknown) {
   const e = err as any
@@ -620,25 +623,25 @@ function isMissingColumnError(err: any, column: string): boolean {
 }
 
 /**
- * رفع كل البيانات المحلية بالترتيب الصحيح للتبعيات:
+ * رفع كل بيانات ذاكرة الجلسة إلى Supabase بالترتيب الصحيح للتبعيات:
  * الصفوف والمجموعات ← الطلاب ← الاستحقاقات ← المدفوعات ← الحصص ← الحضور
  */
 async function pushAllOrdered(): Promise<void> {
-  await pushGrades(localRows<GradeShape>(STORAGE_KEYS.GRADES));
-  await pushStudents(localRows(STORAGE_KEYS.STUDENTS) as any[]);
-  await pushDues(localRows(STORAGE_KEYS.DUES) as any[]);
-  await pushPayments(localRows(STORAGE_KEYS.PAYMENTS) as any[]);
-  await pushExams(localRows(STORAGE_KEYS.EXAMS) as any[]);
-  await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
-  await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
-  await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
+  await pushGrades(memoryRows<GradeShape>(STORAGE_KEYS.GRADES));
+  await pushStudents(memoryRows(STORAGE_KEYS.STUDENTS) as any[]);
+  await pushDues(memoryRows(STORAGE_KEYS.DUES) as any[]);
+  await pushPayments(memoryRows(STORAGE_KEYS.PAYMENTS) as any[]);
+  await pushExams(memoryRows(STORAGE_KEYS.EXAMS) as any[]);
+  await pushExamAttempts(memoryRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
+  await pushSessions(memoryRows(STORAGE_KEYS.SESSIONS) as any[]);
+  await pushAttendance(memoryRows(STORAGE_KEYS.ATTENDANCE) as any[]);
   // جداول بوابة الطلاب (بعد الطلاب لأن student_accounts مرتبط بهم)
-  await pushManualGrades(localRows(STORAGE_KEYS.MANUAL_GRADES) as any[]);
-  await pushRegistrationRequests(localRows(STORAGE_KEYS.REGISTRATION_REQUESTS) as any[]);
-  await pushGroupTransferRequests(localRows(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS) as any[]);
-  await pushStudentHistory(localRows(STORAGE_KEYS.STUDENT_HISTORY) as any[]);
-  await pushStudentAccounts(localRows(STORAGE_KEYS.STUDENT_ACCOUNTS) as any[]);
-  await pushInquiries(localRows(STORAGE_KEYS.INQUIRIES) as any[]);
+  await pushManualGrades(memoryRows(STORAGE_KEYS.MANUAL_GRADES) as any[]);
+  await pushRegistrationRequests(memoryRows(STORAGE_KEYS.REGISTRATION_REQUESTS) as any[]);
+  await pushGroupTransferRequests(memoryRows(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS) as any[]);
+  await pushStudentHistory(memoryRows(STORAGE_KEYS.STUDENT_HISTORY) as any[]);
+  await pushStudentAccounts(memoryRows(STORAGE_KEYS.STUDENT_ACCOUNTS) as any[]);
+  await pushInquiries(memoryRows(STORAGE_KEYS.INQUIRIES) as any[]);
 }
 
 /** جدولة مزامنة فورية (متسلسلة — مع إعادة محاولة ذكية عند خطأ التبعيات) */
@@ -680,9 +683,9 @@ export function pushGrades(grades: GradeShape[]) {
 }
 
 export function pushStudents(rows: any[]) {
-  // تنظيف المراجع المعلّقة: إن كان الصف/المجموعة محذوفاً محلياً
+  // تنظيف المراجع المعلّقة: إن كان الصف/المجموعة محذوفاً من البيانات الحالية
   // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409)
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
@@ -695,8 +698,8 @@ export function pushStudents(rows: any[]) {
   return pushRows("students", cleaned);
 }
 export function pushDues(rows: any[]) {
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows
@@ -709,8 +712,8 @@ export function pushDues(rows: any[]) {
   return pushRows("dues", cleaned);
 }
 export function pushPayments(rows: any[]) {
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  const dueIds = new Set(localRows<any>(STORAGE_KEYS.DUES).map((d) => d.id));
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const dueIds = new Set(memoryRows<any>(STORAGE_KEYS.DUES).map((d) => d.id));
 
   const cleaned = rows
     .filter((p) => studentIds.has(p.studentId)) // student_id NOT NULL
@@ -722,7 +725,7 @@ export function pushPayments(rows: any[]) {
   return pushRows("payments", cleaned);
 }
 export function pushExams(rows: any[]) {
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
@@ -735,15 +738,15 @@ export function pushExams(rows: any[]) {
   return pushRows("exams", cleaned);
 }
 export function pushSessions(rows: any[]) {
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
   // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها
   const cleaned = rows.filter((s) => groupIds.has(s.groupId)).map(toSessionRow);
   return pushRows("sessions", cleaned);
 }
 export function pushAttendance(rows: any[]) {
-  const sessionIds = new Set(localRows<any>(STORAGE_KEYS.SESSIONS).map((s) => s.id));
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const sessionIds = new Set(memoryRows<any>(STORAGE_KEYS.SESSIONS).map((s) => s.id));
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
   const cleaned = rows
     .filter((a) => sessionIds.has(a.sessionId) && studentIds.has(a.studentId))
     .map(toAttendanceRow);
@@ -766,7 +769,7 @@ export function pushYearArchives(rows: YearArchiveShape[]) {
 }
 
 export function pushManualGrades(rows: any[]) {
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
   return pushRows("manual_grades", rows.filter((m) => studentIds.has(m.studentId)).map(toManualGradeRow));
 }
 export function pushRegistrationRequests(rows: any[]) {
@@ -776,7 +779,7 @@ export function pushGroupTransferRequests(rows: any[]) {
   return pushRows("group_transfer_requests", rows.map(toGroupTransferRequestRow));
 }
 export function pushStudentHistory(rows: any[]) {
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
   return pushRows("student_history", rows.filter((h) => studentIds.has(h.studentId)).map(toStudentHistoryRow));
 }
 export function pushStudentAccounts(rows: any[]) {
@@ -837,35 +840,35 @@ export async function fetchRegistrationRequestByEmail(email: string): Promise<an
 /** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
 export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
   const sb = getSupabase()
-  if (!sb) return localRows<any>(STORAGE_KEYS.INQUIRIES)
+  if (!sb) return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
   try {
     const { data, error } = await sb.from("inquiries").select("*").eq("student_id", studentId)
     if (error) {
       console.warn("fetchStudentInquiries:", error)
-      return localRows<any>(STORAGE_KEYS.INQUIRIES)
+      return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
     }
     return (data as any[] || []).map(fromInquiryRow)
   } catch (e) {
     console.warn("fetchStudentInquiries:", e)
-    return localRows<any>(STORAGE_KEYS.INQUIRIES)
+    return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
   }
 }
 
-/** الطالب يرسل استفساراً جديداً — حفظ محلي أولاً ثم إدراج في Supabase */
+/** الطالب يرسل استفساراً جديداً — الإدراج في Supabase أولاً ثم تحديث ذاكرة الجلسة */
 export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; error?: string }> {
-  const local = localRows<any>(STORAGE_KEYS.INQUIRIES)
-  try {
-    localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify([...local, thread]))
-  } catch { /* تجاهل */ }
   const sb = getSupabase()
-  if (!sb) return { ok: true }
+  if (!sb) {
+    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — لا يُكتب شيء على الجهاز
+    setStore(STORAGE_KEYS.INQUIRIES, [...storeRows<any>(STORAGE_KEYS.INQUIRIES), thread])
+    return { ok: true }
+  }
   const { error } = await sb.from("inquiries").insert(toInquiryRow(thread))
   if (error) {
     console.warn("submitInquiryThread:", error)
-    // تراجع — الطالب يعيد إرسال استفساره دون اعتراض «لديك استفسار مفتوح»
-    try { localStorage.setItem(STORAGE_KEYS.INQUIRIES, JSON.stringify(local)) } catch { /* تجاهل */ }
     return { ok: false, error: explainSupabaseError(error) }
   }
+  // بعد نجاح السحابة فقط نُحدِّث الذاكرة (فإن فشل الإرسال لا يرى الطالب استفساراً وهمياً)
+  setStore(STORAGE_KEYS.INQUIRIES, [...storeRows<any>(STORAGE_KEYS.INQUIRIES), thread])
   return { ok: true }
 }
 const toAttemptRow = (a: any) => ({
@@ -1016,7 +1019,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
     let migrated = false;
 
     // الصفوف والمجموعات
-    const localGrades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+    const localGrades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
     if ((groupsRes.data as any[]).length === 0 && (gradesRes.data as any[]).length === 0) {
       if (localGrades.length > 0) {
         migrated = true;
@@ -1024,7 +1027,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       }
     } else {
       const grades = (gradesRes.data as any[]).map((g) => fromGradeRow(g, groupsRes.data as any[]));
-      setLocal(STORAGE_KEYS.GRADES, grades);
+      setMemory(STORAGE_KEYS.GRADES, grades);
     }
     remoteIds["grades"] = new Set((gradesRes.data as any[]).map((r) => r.id));
     remoteIds["groups"] = new Set((groupsRes.data as any[]).map((r) => r.id));
@@ -1038,16 +1041,16 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       push: (rows: any[]) => Promise<void>;
       local: unknown[];
     }[] = [
-      { key: STORAGE_KEYS.STUDENTS, db: "students", rows: studentsRes.data as any[], fromRow: fromStudentRow, push: pushStudents, local: localRows(STORAGE_KEYS.STUDENTS) },
-      { key: STORAGE_KEYS.DUES, db: "dues", rows: duesRes.data as any[], fromRow: fromDueRow, push: pushDues, local: localRows(STORAGE_KEYS.DUES) },
-      { key: STORAGE_KEYS.PAYMENTS, db: "payments", rows: paymentsRes.data as any[], fromRow: fromPaymentRow, push: pushPayments, local: localRows(STORAGE_KEYS.PAYMENTS) },
-      { key: STORAGE_KEYS.EXAMS, db: "exams", rows: examsRes.data as any[], fromRow: fromExamRow, push: pushExams, local: localRows(STORAGE_KEYS.EXAMS) },
-      { key: STORAGE_KEYS.SESSIONS, db: "sessions", rows: sessionsRes.data as any[], fromRow: fromSessionRow, push: pushSessions, local: localRows(STORAGE_KEYS.SESSIONS) },
-      { key: STORAGE_KEYS.ATTENDANCE, db: "attendance", rows: attendanceRes.data as any[], fromRow: fromAttendanceRow, push: pushAttendance, local: localRows(STORAGE_KEYS.ATTENDANCE) },
-      { key: STORAGE_KEYS.ANNOUNCEMENTS, db: "announcements", rows: announcementsRes.data as any[], fromRow: fromAnnouncementRow, push: pushAnnouncements, local: localRows(STORAGE_KEYS.ANNOUNCEMENTS) },
-      { key: STORAGE_KEYS.HONOREES, db: "honorees", rows: honoreesRes.data as any[], fromRow: fromHonoreeRow, push: pushHonorees, local: localRows(STORAGE_KEYS.HONOREES) },
-      { key: STORAGE_KEYS.SHARED_FILES, db: "shared_files", rows: filesRes.data as any[], fromRow: fromSharedFileRow, push: pushSharedFiles, local: localRows(STORAGE_KEYS.SHARED_FILES) },
-      { key: STORAGE_KEYS.IMPORTANT_LINKS, db: "important_links", rows: linksRes.data as any[], fromRow: fromLinkRow, push: pushImportantLinks, local: localRows(STORAGE_KEYS.IMPORTANT_LINKS) },
+      { key: STORAGE_KEYS.STUDENTS, db: "students", rows: studentsRes.data as any[], fromRow: fromStudentRow, push: pushStudents, local: memoryRows(STORAGE_KEYS.STUDENTS) },
+      { key: STORAGE_KEYS.DUES, db: "dues", rows: duesRes.data as any[], fromRow: fromDueRow, push: pushDues, local: memoryRows(STORAGE_KEYS.DUES) },
+      { key: STORAGE_KEYS.PAYMENTS, db: "payments", rows: paymentsRes.data as any[], fromRow: fromPaymentRow, push: pushPayments, local: memoryRows(STORAGE_KEYS.PAYMENTS) },
+      { key: STORAGE_KEYS.EXAMS, db: "exams", rows: examsRes.data as any[], fromRow: fromExamRow, push: pushExams, local: memoryRows(STORAGE_KEYS.EXAMS) },
+      { key: STORAGE_KEYS.SESSIONS, db: "sessions", rows: sessionsRes.data as any[], fromRow: fromSessionRow, push: pushSessions, local: memoryRows(STORAGE_KEYS.SESSIONS) },
+      { key: STORAGE_KEYS.ATTENDANCE, db: "attendance", rows: attendanceRes.data as any[], fromRow: fromAttendanceRow, push: pushAttendance, local: memoryRows(STORAGE_KEYS.ATTENDANCE) },
+      { key: STORAGE_KEYS.ANNOUNCEMENTS, db: "announcements", rows: announcementsRes.data as any[], fromRow: fromAnnouncementRow, push: pushAnnouncements, local: memoryRows(STORAGE_KEYS.ANNOUNCEMENTS) },
+      { key: STORAGE_KEYS.HONOREES, db: "honorees", rows: honoreesRes.data as any[], fromRow: fromHonoreeRow, push: pushHonorees, local: memoryRows(STORAGE_KEYS.HONOREES) },
+      { key: STORAGE_KEYS.SHARED_FILES, db: "shared_files", rows: filesRes.data as any[], fromRow: fromSharedFileRow, push: pushSharedFiles, local: memoryRows(STORAGE_KEYS.SHARED_FILES) },
+      { key: STORAGE_KEYS.IMPORTANT_LINKS, db: "important_links", rows: linksRes.data as any[], fromRow: fromLinkRow, push: pushImportantLinks, local: memoryRows(STORAGE_KEYS.IMPORTANT_LINKS) },
     ];
 
     for (const t of simpleTables) {
@@ -1055,7 +1058,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
         migrated = true;
         queuePush(() => t.push(t.local as any[]));
       } else if (t.rows.length > 0) {
-        setLocal(t.key, t.rows.map(t.fromRow));
+        setMemory(t.key, t.rows.map(t.fromRow));
       }
       remoteIds[t.db] = new Set(t.rows.map((r) => r.id as string));
     }
@@ -1073,7 +1076,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       if (t.res.error) continue; // الجدول غير موجود بعد — سيُنشأ بتشغيل ترحيل 008
       const rows = (t.res.data as any[]) || [];
       if (rows.length === 0) continue;
-      setLocal(t.key, rows.map(t.fromRow));
+      setMemory(t.key, rows.map(t.fromRow));
     }
     for (const [t, db] of [
       [manualGradesRes, "manual_grades"],
@@ -1088,12 +1091,12 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
     }
 
     // الأرشيف
-    const localArchives = localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES);
+    const localArchives = memoryRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES);
     if ((archivesRes.data as any[]).length === 0 && localArchives.length > 0) {
       migrated = true;
       queuePush(() => pushYearArchives(localArchives));
     } else if ((archivesRes.data as any[]).length > 0) {
-      setLocal(STORAGE_KEYS.YEAR_ARCHIVES, (archivesRes.data as any[]).map(fromArchiveRow));
+      setMemory(STORAGE_KEYS.YEAR_ARCHIVES, (archivesRes.data as any[]).map(fromArchiveRow));
     }
     remoteIds["year_archives"] = new Set((archivesRes.data as any[]).map((r) => r.id));
 
@@ -1101,15 +1104,12 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
     const settingsRows = (settingsRes.data as any[]) || [];
     const yearSetting = settingsRows.find((s) => s.key === "currentAcademicYear");
     if (yearSetting) {
-      localStorage.setItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, yearSetting.value);
-    } else {
-      const localYear = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
-      if (localYear) queuePush(() => pushSetting("currentAcademicYear", localYear));
+      setStoreSetting(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, yearSetting.value);
     }
-    // باقي الإعدادات تُحفظ محلياً بنفس مفتاحها
+    // باقي الإعدادات تُحفظ في ذاكرة الجلسة بنفس مفتاحها (وأصلها app_settings في السحابة)
     for (const s of settingsRows) {
       if (s.key !== "currentAcademicYear") {
-        localStorage.setItem(s.key, s.value);
+        setStoreSetting(s.key, s.value);
       }
     }
 
@@ -1117,18 +1117,23 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
     try {
       const attemptsRes = await sb.from("exam_attempts").select("*")
       if (!attemptsRes.error) {
-        const localAttempts = localRows(STORAGE_KEYS.EXAM_ATTEMPTS)
+        const localAttempts = memoryRows(STORAGE_KEYS.EXAM_ATTEMPTS)
         if ((attemptsRes.data as any[]).length === 0 && localAttempts.length > 0) {
           migrated = true
           queuePush(() => pushExamAttempts(localAttempts as any[]))
         } else if ((attemptsRes.data as any[]).length > 0) {
-          setLocal(STORAGE_KEYS.EXAM_ATTEMPTS, (attemptsRes.data as any[]).map(fromAttemptRow))
+          setMemory(STORAGE_KEYS.EXAM_ATTEMPTS, (attemptsRes.data as any[]).map(fromAttemptRow))
         }
         remoteIds["exam_attempts"] = new Set((attemptsRes.data as any[]).map((r) => r.id))
       }
     } catch {
       /* الجدول غير موجود بعد */
     }
+
+    // بيانات السحابة الآن في ذاكرة الجلسة: نبلّغ الصفحات لتُحدِّث عرضها،
+    // ونمسح أي أثر قديم في المتصفح (لا تخزين محلي للبيانات إطلاقاً)
+    purgeLegacyLocalStorage();
+    notifyStoreUpdate();
 
     return { ok: true, migrated };
   } catch (err) {
@@ -1211,6 +1216,25 @@ export async function fetchStudentById(studentId: string): Promise<any | null> {
   return fromStudentRow(data)
 }
 
+/**
+ * حساب بوابة الطالب من السحابة بالبريد — يتيح الدخول من أي جهاز في العالم
+ * دون أي نسخة محلية (كلمة المرور الحالية وحالة التفعيل من Supabase مباشرة).
+ */
+export async function fetchStudentAccountByEmail(email: string): Promise<any | null> {
+  const sb = getSupabase();
+  const mail = (email || "").trim().toLowerCase();
+  if (!sb || !mail) return null;
+  // المعرف في الجدول هو البريد نفسه — ونبحث أيضاً في عمود email احتياطاً
+  const byId = await sb.from("student_accounts").select("*").eq("id", mail).limit(1);
+  const row = (!byId.error && byId.data && byId.data[0])
+    ? byId.data[0]
+    : null;
+  if (row) return fromStudentAccountRow(row);
+  const byMail = await sb.from("student_accounts").select("*").ilike("email", mail).limit(1);
+  if (byMail.error || !byMail.data || !byMail.data[0]) return null;
+  return fromStudentAccountRow(byMail.data[0]);
+}
+
 /** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
 export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
   const sb = getSupabase();
@@ -1278,9 +1302,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
 export async function submitRegistrationRequest(request: any): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabase()
   if (!sb) {
-    // وضع محلي خالص (بدون Supabase) — للتطوير فقط؛ الموقع المنشور لا يمر من هنا
-    const local = localRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS)
-    localStorage.setItem(STORAGE_KEYS.REGISTRATION_REQUESTS, JSON.stringify([...local, request]))
+    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — لا يُسجَّل أي شيء على الجهاز
+    setStore(STORAGE_KEYS.REGISTRATION_REQUESTS, [...storeRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS), request])
     return { ok: true }
   }
   // الموقع المنشور: الطلب يذهب إلى Supabase مباشرة — لا تخزين محلي للبيانات على جهاز الطالب
@@ -1289,6 +1312,8 @@ export async function submitRegistrationRequest(request: any): Promise<{ ok: boo
     console.warn("submitRegistrationRequest:", error)
     return { ok: false, error: explainSupabaseError(error) }
   }
+  // بعد نجاح السحابة فقط نُحدِّث ذاكرة الجلسة للعرض الفوري (الأصل في Supabase)
+  setStore(STORAGE_KEYS.REGISTRATION_REQUESTS, [...storeRows<any>(STORAGE_KEYS.REGISTRATION_REQUESTS), request])
   return { ok: true }
 }
 
@@ -1296,9 +1321,8 @@ export async function submitRegistrationRequest(request: any): Promise<{ ok: boo
 export async function submitGroupTransferRequest(request: any): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabase()
   if (!sb) {
-    // وضع التطوير المحلي فقط (بلا Supabase)
-    const local = localRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS)
-    localStorage.setItem(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, JSON.stringify([...local, request]))
+    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — لا يُسجَّل أي شيء على الجهاز
+    setStore(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, [...storeRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS), request])
     return { ok: true }
   }
   // سحابي خالص: الطلب يذهب لقاعدة البيانات مباشرة — لا نسخة على جهاز الطالب
@@ -1307,6 +1331,8 @@ export async function submitGroupTransferRequest(request: any): Promise<{ ok: bo
     console.warn("submitGroupTransferRequest:", error)
     return { ok: false, error: explainSupabaseError(error) }
   }
+  // بعد نجاح السحابة فقط نُحدِّث ذاكرة الجلسة للعرض الفوري (الأصل في Supabase)
+  setStore(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS, [...storeRows<any>(STORAGE_KEYS.GROUP_TRANSFER_REQUESTS), request])
   return { ok: true }
 }
 
@@ -1448,26 +1474,26 @@ export async function clearAllRemote(): Promise<void> {
   remoteIds = {};
 }
 
-/** دفع كل البيانات المحلية إلى Supabase (يُستخدم بعد الاستيراد) */
-export async function syncAllFromLocal(): Promise<void> {
+/** دفع كل بيانات ذاكرة الجلسة إلى Supabase (يُستخدم بعد استيراد ملف JSON) */
+export async function pushAllToCloud(): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
   await clearAllRemote();
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
   await pushGrades(grades);
-  await pushStudents(localRows(STORAGE_KEYS.STUDENTS) as any[]);
-  await pushDues(localRows(STORAGE_KEYS.DUES) as any[]);
-  await pushPayments(localRows(STORAGE_KEYS.PAYMENTS) as any[]);
-  await pushExams(localRows(STORAGE_KEYS.EXAMS) as any[]);
-  await pushSessions(localRows(STORAGE_KEYS.SESSIONS) as any[]);
-  await pushAttendance(localRows(STORAGE_KEYS.ATTENDANCE) as any[]);
-  await pushAnnouncements(localRows(STORAGE_KEYS.ANNOUNCEMENTS) as any[]);
-  await pushHonorees(localRows(STORAGE_KEYS.HONOREES) as any[]);
-  await pushSharedFiles(localRows(STORAGE_KEYS.SHARED_FILES) as any[]);
-  await pushImportantLinks(localRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
-  await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
-  await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
-  const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
+  await pushStudents(memoryRows(STORAGE_KEYS.STUDENTS) as any[]);
+  await pushDues(memoryRows(STORAGE_KEYS.DUES) as any[]);
+  await pushPayments(memoryRows(STORAGE_KEYS.PAYMENTS) as any[]);
+  await pushExams(memoryRows(STORAGE_KEYS.EXAMS) as any[]);
+  await pushSessions(memoryRows(STORAGE_KEYS.SESSIONS) as any[]);
+  await pushAttendance(memoryRows(STORAGE_KEYS.ATTENDANCE) as any[]);
+  await pushAnnouncements(memoryRows(STORAGE_KEYS.ANNOUNCEMENTS) as any[]);
+  await pushHonorees(memoryRows(STORAGE_KEYS.HONOREES) as any[]);
+  await pushSharedFiles(memoryRows(STORAGE_KEYS.SHARED_FILES) as any[]);
+  await pushImportantLinks(memoryRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
+  await pushYearArchives(memoryRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
+  await pushExamAttempts(memoryRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
+  const year = storeSetting(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, "");
   if (year) await pushSetting("currentAcademicYear", year);
 }
 
@@ -1803,13 +1829,13 @@ export async function forcePushAll(): Promise<{ ok: boolean; error?: string }> {
   if (!sb) return { ok: false, error: "Supabase غير مُعدّ" };
   try {
     await pushAllOrdered();
-    await pushAnnouncements(localRows(STORAGE_KEYS.ANNOUNCEMENTS) as any[]);
-    await pushHonorees(localRows(STORAGE_KEYS.HONOREES) as any[]);
-    await pushSharedFiles(localRows(STORAGE_KEYS.SHARED_FILES) as any[]);
-    await pushImportantLinks(localRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
-    await pushYearArchives(localRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
-    await pushExamAttempts(localRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
-    const year = localStorage.getItem(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR);
+    await pushAnnouncements(memoryRows(STORAGE_KEYS.ANNOUNCEMENTS) as any[]);
+    await pushHonorees(memoryRows(STORAGE_KEYS.HONOREES) as any[]);
+    await pushSharedFiles(memoryRows(STORAGE_KEYS.SHARED_FILES) as any[]);
+    await pushImportantLinks(memoryRows(STORAGE_KEYS.IMPORTANT_LINKS) as any[]);
+    await pushYearArchives(memoryRows<YearArchiveShape>(STORAGE_KEYS.YEAR_ARCHIVES));
+    await pushExamAttempts(memoryRows(STORAGE_KEYS.EXAM_ATTEMPTS) as any[]);
+    const year = storeSetting(STORAGE_KEYS.CURRENT_ACADEMIC_YEAR, "");
     if (year) await pushSetting("currentAcademicYear", year);
     return { ok: true };
   } catch (err) {
@@ -1833,7 +1859,7 @@ export interface RowFailure {
 
 export interface TableReport {
   table: string
-  localCount: number
+  memoryCount: number
   remoteCount: number
   pushed: number
   failures: RowFailure[]
@@ -1885,13 +1911,13 @@ export async function diagnoseSync(): Promise<SyncReport> {
     report.summary.push("⚠️ لا توجد جلسة دخول — الكتابة سترفض. سجّل الدخول مجدداً.")
   }
 
-  // 2) المراجع المتاحة محلياً (لكشف المراجع المعلّقة)
-  const grades = localRows<GradeShape>(STORAGE_KEYS.GRADES)
+  // 2) المراجع المتاحة في ذاكرة الجلسة (لكشف المراجع المعلّقة)
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES)
   const gradeIds = new Set(grades.map((g) => g.id))
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)))
-  const studentIds = new Set(localRows<any>(STORAGE_KEYS.STUDENTS).map((r) => r.id))
-  const dueIds = new Set(localRows<any>(STORAGE_KEYS.DUES).map((r) => r.id))
-  const sessionIds = new Set(localRows<any>(STORAGE_KEYS.SESSIONS).map((r) => r.id))
+  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((r) => r.id))
+  const dueIds = new Set(memoryRows<any>(STORAGE_KEYS.DUES).map((r) => r.id))
+  const sessionIds = new Set(memoryRows<any>(STORAGE_KEYS.SESSIONS).map((r) => r.id))
 
   // 3) تعريف الجداول بترتيب التبعيات
   const specs: {
@@ -1916,7 +1942,7 @@ export async function diagnoseSync(): Promise<SyncReport> {
     },
     {
       table: "students", key: STORAGE_KEYS.STUDENTS,
-      rows: () => localRows<any>(STORAGE_KEYS.STUDENTS), map: toStudentRow,
+      rows: () => memoryRows<any>(STORAGE_KEYS.STUDENTS), map: toStudentRow,
       label: (r) => r.name || r.id,
       refs: (r) => [
         { field: "grade_id", value: r.gradeId, pool: gradeIds },
@@ -1925,7 +1951,7 @@ export async function diagnoseSync(): Promise<SyncReport> {
     },
     {
       table: "dues", key: STORAGE_KEYS.DUES,
-      rows: () => localRows<any>(STORAGE_KEYS.DUES), map: (r) => toDueRow(r),
+      rows: () => memoryRows<any>(STORAGE_KEYS.DUES), map: (r) => toDueRow(r),
       label: (r) => `استحقاق ${r.month}/${r.year}`,
       refs: (r) => [
         { field: "student_id", value: r.studentId, pool: studentIds },
@@ -1934,7 +1960,7 @@ export async function diagnoseSync(): Promise<SyncReport> {
     },
     {
       table: "payments", key: STORAGE_KEYS.PAYMENTS,
-      rows: () => localRows<any>(STORAGE_KEYS.PAYMENTS), map: (r) => toPaymentRow(r),
+      rows: () => memoryRows<any>(STORAGE_KEYS.PAYMENTS), map: (r) => toPaymentRow(r),
       label: (r) => `دفعة ${r.amount}`,
       refs: (r) => [
         { field: "student_id", value: r.studentId, pool: studentIds },
@@ -1943,7 +1969,7 @@ export async function diagnoseSync(): Promise<SyncReport> {
     },
     {
       table: "exams", key: STORAGE_KEYS.EXAMS,
-      rows: () => localRows<any>(STORAGE_KEYS.EXAMS), map: toExamRow,
+      rows: () => memoryRows<any>(STORAGE_KEYS.EXAMS), map: toExamRow,
       label: (r) => r.title || r.id,
       refs: (r) => [
         { field: "grade_id", value: r.gradeId, pool: gradeIds },
@@ -1952,13 +1978,13 @@ export async function diagnoseSync(): Promise<SyncReport> {
     },
     {
       table: "sessions", key: STORAGE_KEYS.SESSIONS,
-      rows: () => localRows<any>(STORAGE_KEYS.SESSIONS), map: (r) => toSessionRow(r),
+      rows: () => memoryRows<any>(STORAGE_KEYS.SESSIONS), map: (r) => toSessionRow(r),
       label: (r) => `حصة ${r.sessionDate}`,
       refs: (r) => [{ field: "group_id", value: r.groupId, pool: groupIds }],
     },
     {
       table: "attendance", key: STORAGE_KEYS.ATTENDANCE,
-      rows: () => localRows<any>(STORAGE_KEYS.ATTENDANCE), map: (r) => toAttendanceRow(r),
+      rows: () => memoryRows<any>(STORAGE_KEYS.ATTENDANCE), map: (r) => toAttendanceRow(r),
       label: (r) => `حضور ${r.studentId}`,
       refs: (r) => [
         { field: "session_id", value: r.sessionId, pool: sessionIds },
@@ -1971,13 +1997,13 @@ export async function diagnoseSync(): Promise<SyncReport> {
     const localList = spec.rows()
     const tr: TableReport = {
       table: spec.table,
-      localCount: localList.length,
+      memoryCount: localList.length,
       remoteCount: 0,
       pushed: 0,
       failures: [],
     }
 
-    // كشف المراجع المعلّقة محلياً قبل حتى محاولة الرفع
+    // كشف المراجع المعلّقة في الذاكرة قبل حتى محاولة الرفع
     for (const r of localList) {
       for (const ref of spec.refs?.(r) ?? []) {
         if (ref.value && !ref.pool.has(ref.value)) {
@@ -2018,15 +2044,15 @@ export async function diagnoseSync(): Promise<SyncReport> {
 
   // 4) الخلاصة
   for (const t of report.tables) {
-    if (t.failures.length === 0 && t.localCount === t.remoteCount) continue
+    if (t.failures.length === 0 && t.memoryCount === t.remoteCount) continue
     if (t.failures.length > 0) {
       const f = t.failures[0]
       report.summary.push(
-        `❌ ${t.table}: فشل ${t.failures.length} من ${t.localCount} — "${f.label}": ${f.message}`
+        `❌ ${t.table}: فشل ${t.failures.length} من ${t.memoryCount} — "${f.label}": ${f.message}`
       )
-    } else if (t.localCount !== t.remoteCount) {
+    } else if (t.memoryCount !== t.remoteCount) {
       report.summary.push(
-        `⚠️ ${t.table}: ${t.localCount} محلياً مقابل ${t.remoteCount} في القاعدة.`
+        `⚠️ ${t.table}: ${t.memoryCount} في ذاكرة الجلسة مقابل ${t.remoteCount} في القاعدة.`
       )
     }
   }

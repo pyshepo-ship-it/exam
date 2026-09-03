@@ -17,7 +17,7 @@ import {
 export { saveInquiries }
 export const getInquiries = getInquiriesFromStorage
 import { submitInquiryThread, pushInquiries, fetchStudentInquiries, fetchStudentById } from "./supabase/sync"
-import { saveToStorage } from "./data-storage"
+import { saveToStore } from "./data-storage"
 import { STORAGE_KEYS } from "./storage-keys"
 
 export interface InquiryResult {
@@ -82,26 +82,26 @@ export async function sendStudentInquiry(studentId: string, text: string): Promi
   if (body.length < 5) return { ok: false, error: "اكتب استفسارك بوضوح (5 أحرف على الأقل)" }
   if (body.length > 1000) return { ok: false, error: "الاستفسار طويل جداً — اختصر في 1000 حرف" }
 
-  // بيانات الطالب وحالة قناته: من السحابة أولاً (والاحتياط المحلي)
+  // بيانات الطالب وحالة قناته: من Supabase أولاً ثم من ذاكرة الجلسة
   let student = getStudents().find(s => s.id === studentId)
   try {
     const cloudStudent = await fetchStudentById(studentId)
     if (cloudStudent) student = cloudStudent
-  } catch { /* الاحتياط المحلي */ }
+  } catch { /* تعذر السحاب — تُعرض ذاكرة الجلسة */ }
   if (!student) return { ok: false, error: "تعذر التحقق من بياناتك — أعد المحاولة" }
   if (student.inquiryBlocked === true) {
     return { ok: false, error: "أغلق المعلم قناة الاستفسار الخاصة بك — راجع المعلم مباشرة" }
   }
 
-  // خيوط الاستفسار: من السحابة — الكاش المحلي للعرض فقط
+  // خيوط الاستفسار: من Supabase — وذاكرة الجلسة للعرض الفوري فقط
   let threads: InquiryThread[] = getInquiries()
   try {
     const cloud = (await fetchStudentInquiries(studentId)) as InquiryThread[]
     if (Array.isArray(cloud)) {
       threads = cloud
-      saveToStorage(STORAGE_KEYS.INQUIRIES, cloud) // كاش قراءة — بلا دفع عكسي
+      saveToStore(STORAGE_KEYS.INQUIRIES, cloud) // ذاكرة جلسة للقراءة الفورية — بلا دفع عكسي
     }
-  } catch { /* الاحتياط المحلي */ }
+  } catch { /* تعذر السحاب — تُعرض ذاكرة الجلسة */ }
 
   const now = new Date().toISOString()
   const msg: InquiryMessage = { from: "student", text: body, at: now }
@@ -125,7 +125,7 @@ export async function sendStudentInquiry(studentId: string, text: string): Promi
       const m = (e as { message?: string })?.message || "خطأ اتصال — أعد المحاولة"
       return { ok: false, error: `تعذر إرسال الرد: ${m}` }
     }
-    saveToStorage(STORAGE_KEYS.INQUIRIES, updated)
+    saveToStore(STORAGE_KEYS.INQUIRIES, updated)
     return { ok: true, message: "تم إرسال ردك — سيرد المعلم عليه قريباً" }
   }
 
