@@ -17,6 +17,7 @@ import {
   Star,
   GraduationCap,
   Globe,
+  KeyRound,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -73,7 +74,8 @@ const MONTHS = [
 
 /**
  * الصفحة الرئيسية: لوحة الإعلانات ولوحة الشرف (عامة - بدون تسجيل دخول)
- * الدخول إلى لوحة التحكم يتم من زر "تسجيل الدخول" إلى صفحة /login
+ * أزرار أعلى الصفحة: "تسجيل طالب جديد" (/student/register)، "دخول الطالب" (/student/login)،
+ * و"دخول المعلم" (/login) للوصول إلى لوحة التحكم
  */
 export default function HomePage() {
   const [mounted, setMounted] = useState(false)
@@ -292,6 +294,16 @@ export default function HomePage() {
               className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold border-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-all"
             >
               دخول الطالب
+            </a>
+            {/* دخول المعلم: زر هادئ غير بارز (أيقونة مفتاح صغيرة + نص رمادي) — للوصول إلى لوحة التحكم */}
+            <a
+              href="/login"
+              aria-label="دخول المعلم"
+              title="دخول المعلم — للوصول إلى لوحة التحكم"
+              className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              دخول المعلم
             </a>
           </div>
         </div>

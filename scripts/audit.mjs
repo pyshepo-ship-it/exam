@@ -279,9 +279,13 @@ const noopener = allFiles.filter((f) => {
 })
 check("كل الروابط الخارجية تستخدم rel=noopener", noopener.length === 0, noopener.join(", "))
 
-// الصفحة العامة يجب ألا تعرض رابط تسجيل الدخول
+// قرار المالك: الصفحة العامة تعرض زر «دخول المعلم» بهيئة هادئة غير بارزة (أيقونة + نص رمادي صغير)
+// يؤول إلى لوحة التحكم /login — وأزرار الطلاب تبقى هي البارزة للزوار
 const home = read("src/app/page.tsx")
-check("الصفحة الرئيسية لا تحتوي رابط تسجيل الدخول", !/href="\/login"/.test(home))
+check(
+  "الصفحة الرئيسية تعرض زر دخول المعلم الهادئ المؤدي إلى /login",
+  /href="\/login"/.test(home) && /aria-label="دخول المعلم"/.test(home)
+)
 check(
   "صفحة الدخول بلا لافتة ملاحظة Supabase أسفل النموذج",
   !/ملاحظة مهمة/.test(read("src/app/login/page.tsx"))
