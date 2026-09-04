@@ -30,7 +30,7 @@ import {
 import {
   fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
   fetchRegistrationRequestByEmail, fetchStudentAccountByEmail,
-  studentLogin, studentLogout } from "./supabase/sync"
+  studentLogin, studentLogout, studentRegisterAuto, changeStudentPassword } from "./supabase/sync"
 import { clearStore } from "./memory-store"
 import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
@@ -40,6 +40,8 @@ import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-se
 
 export const REGISTRATION_OPEN_KEY = "registrationOpen"
 export const STUDENT_REPORTS_ENABLED_KEY = "studentReportsEnabled"
+/** تفعيل مباشر: أي طالب يسجّل يُفعّل حسابه فوراً بدون موافقة المعلم */
+export const AUTO_APPROVE_REGISTRATION_KEY = "autoApproveRegistration"
 
 /** هل التسجيل مفتوح للطلاب؟ (افتراضياً مفتوح — والمعلم يغلقه متى شاء) */
 export function isRegistrationOpen(): boolean {
@@ -48,6 +50,15 @@ export function isRegistrationOpen(): boolean {
 
 export function setRegistrationOpen(open: boolean): void {
   saveSetting(REGISTRATION_OPEN_KEY, open ? "1" : "")
+}
+
+/** هل التفعيل المباشر مفعّل؟ (افتراضياً مغلق — الطالب ينتظر موافقة المعلم) */
+export function isAutoApproveRegistration(): boolean {
+  return getSetting(AUTO_APPROVE_REGISTRATION_KEY, "") !== ""
+}
+
+export function setAutoApproveRegistration(enabled: boolean): void {
+  saveSetting(AUTO_APPROVE_REGISTRATION_KEY, enabled ? "1" : "")
 }
 
 /** هل تقارير الطلاب مفعّلة في البوابة؟ (افتراضياً مفعّلة) */
@@ -308,6 +319,33 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     createdAt: new Date().toISOString(),
   }
 
+  // التفعيل المباشر: أنشئ الحساب فوراً عبر الدالة الآمنة بدلاً من طلب ينتظر الموافقة
+  if (isAutoApproveRegistration()) {
+    const auto = await studentRegisterAuto({
+      name,
+      phone,
+      guardianPhone,
+      email,
+      passwordHash,
+      gradeId: input.gradeId,
+      groupId: input.groupId,
+    })
+    if (auto.ok) {
+      consumeRate("reg-device-min", 5, 60 * 1000)
+      consumeRate("reg-device-hour", 20, 60 * 60 * 1000)
+      consumeRate("reg-global", 100, 60 * 60 * 1000)
+      return { ok: true, message: "تم إنشاء حسابك بنجاح 🎉 — تسجيل الدخول متاح مباشرة بنفس البريد وكلمة المرور" }
+    }
+    if (auto.code === "closed") {
+      return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
+    }
+    if (auto.code !== "not_enabled") {
+      // فشل شبكة/خادم (وليس تغيّر إعداد) — نُبلغ الطالب ولا نحسبها ضمن الحد
+      return { ok: false, error: `تعذر إنشاء حسابك: ${auto.error || "تعذر الاتصال بقاعدة البيانات"}` }
+    }
+    // auto.code === "not_enabled" → الإعداد تغيّر من جهاز آخر: نرسل طلباً عادياً للموافقة
+  }
+
   const res = await submitRegistrationRequest(request)
   if (!res.ok) {
     // فشل الإرسال لا يُحسب ضمن الحد — الطالب يعيد المحاولة فوراً
@@ -406,6 +444,43 @@ export function portalLogout(): void {
   clearStore()
   // أسرار نتائج الاختبارات قدرات خاصة بهذا المتصفح؛ تمسح عند تسجيل الخروج.
   clearRememberedOnlineExamResultSessions()
+}
+
+export type ChangePasswordResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string }
+
+/**
+ * الطالب يغيّر كلمة مروره من داخل بوابته (قسم الطلبات):
+ * يتحقق من كلمة المرور القديمة بصرياً ثم يرسل البصمتين إلى الدالة الآمنة
+ * change_student_password (SECURITY DEFINER) التي تتأكد من صحة القديمة
+ * وتُحدّث حسابه في السحابة — لا تُحفظ كلمة المرور نصاً في أي مكان.
+ */
+export async function changePortalPassword(
+  token: string,
+  oldPassword: string,
+  newPassword: string
+): Promise<ChangePasswordResult> {
+  const oldPw = String(oldPassword || "")
+  const newPw = String(newPassword || "")
+  if (!oldPw) return { ok: false, error: "اكتب كلمة المرور القديمة" }
+  if (newPw.length < 6) return { ok: false, error: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل" }
+  if (newPw === oldPw) return { ok: false, error: "كلمة المرور الجديدة لا بد أن تختلف عن القديمة" }
+  let oldHash: string, oldFnv: string, newHash: string
+  try {
+    oldHash = await sha256Hex(oldPw)
+    oldFnv = legacyFnvHex(oldPw)
+    newHash = await sha256Hex(newPw)
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "تعذر تشفير كلمة المرور على هذا الجهاز" }
+  }
+  const res = await changeStudentPassword(token, oldHash, oldFnv, newHash)
+  if (!res.ok) {
+    if (res.code === "wrong_old") return { ok: false, error: "كلمة المرور القديمة غير صحيحة" }
+    if (res.code === "invalid") return { ok: false, error: "انتهت صلاحية جلسة الدخول — سجّل الدخول من جديد" }
+    return { ok: false, error: res.error || "تعذر تغيير كلمة المرور — أعد المحاولة" }
+  }
+  return { ok: true, message: "تم تغيير كلمة المرور بنجاح — استخدمها في تسجيل الدخول القادم" }
 }
 
 export type LoginResult =

@@ -1664,6 +1664,108 @@ export async function studentLogout(token: string): Promise<void> {
   }
 }
 
+/** نتيجة التسجيل المباشر (تفعيل فوري بدون موافقة المعلم) */
+export interface StudentRegisterResult {
+  ok: boolean
+  code?: 'ok' | 'closed' | 'not_enabled' | 'email_taken' | 'bad_input' | 'unavailable'
+  error?: string
+  studentId?: string
+  name?: string
+}
+
+/**
+ * تسجيل مباشر عبر الدالة الآمنة student_register (SECURITY DEFINER):
+ * ينشئ الطالب + الطلب (approved) + الحساب دفعة واحدة في السحابة، فيتمكن
+ * الطالب من تسجيل الدخول فوراً. يُستدعى فقط عندما يكون «التفعيل المباشر» مفعّلاً.
+ */
+export async function studentRegisterAuto(input: {
+  name: string
+  phone: string
+  guardianPhone: string
+  email: string
+  passwordHash: string
+  gradeId: string
+  groupId: string
+}): Promise<StudentRegisterResult> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
+  const msg = (e: any) => String(e?.message || e || "")
+  try {
+    const res = await sb.rpc("student_register", {
+      p_name: input.name,
+      p_phone: input.phone,
+      p_guardian_phone: input.guardianPhone,
+      p_email: input.email,
+      p_password_hash: input.passwordHash,
+      p_grade_id: input.gradeId,
+      p_group_id: input.groupId,
+    })
+    if (res.error) {
+      console.warn("studentRegisterAuto:", res.error)
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة التسجيل المباشر غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
+      }
+    }
+    const data = (res.data || {}) as Record<string, any>
+    return { ok: data.ok === true, code: data.code as any, error: data.error, studentId: data.studentId, name: data.name }
+  } catch (e) {
+    console.warn("studentRegisterAuto:", e)
+    return { ok: false, code: "unavailable", error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" }
+  }
+}
+
+/** نتيجة تغيير كلمة المرور من بوابة الطالب */
+export interface ChangePasswordResult {
+  ok: boolean
+  code?: 'ok' | 'invalid' | 'bad_input' | 'wrong_old' | 'unavailable'
+  error?: string
+}
+
+/**
+ * تغيير الطالب لكلمة مروره عبر الدالة الآمنة change_student_password:
+ * تتحقق من الجلسة (التوكين) ومن كلمة المرور القديمة وتُحدّث البصمة في
+ * الحساب والطلب المعتمد — كل ذلك داخل الخادم، بلا قراءة خام.
+ */
+export async function changeStudentPassword(
+  token: string,
+  oldPasswordHash: string,
+  oldLegacyFnv: string | null,
+  newPasswordHash: string
+): Promise<ChangePasswordResult> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
+  const msg = (e: any) => String(e?.message || e || "")
+  try {
+    const res = await sb.rpc("change_student_password", {
+      p_token: token,
+      p_old_password_hash: oldPasswordHash,
+      p_old_legacy_fnv: oldLegacyFnv || null,
+      p_new_password_hash: newPasswordHash,
+    })
+    if (res.error) {
+      console.warn("changeStudentPassword:", res.error)
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة تغيير كلمة المرور غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — أعد المحاولة",
+      }
+    }
+    const data = (res.data || {}) as Record<string, any>
+    return { ok: data.ok === true, code: data.code as any, error: data.error }
+  } catch (e) {
+    console.warn("changeStudentPassword:", e)
+    return { ok: false, code: "unavailable", error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" }
+  }
+}
+
 /** نص خام لقراءة بيانات الطالب عبر الدالة الآمنة (لا تعرض بيانات غيره) */
 export async function getStudentPortalRecord(token: string): Promise<{
   student: any

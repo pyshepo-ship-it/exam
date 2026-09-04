@@ -95,6 +95,7 @@ const LEGACY_SETTING_KEYS: string[] = [
   "whatsappNumber",
   "schedulePublished",
   "registrationOpen",
+  "autoApproveRegistration",
   "studentReportsEnabled",
 ]
 

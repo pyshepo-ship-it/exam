@@ -48,6 +48,7 @@ import {
   portalLogout,
   requestGroupTransfer,
   areStudentReportsEnabled,
+  changePortalPassword,
 } from "@/lib/student-accounts"
 import { sendStudentInquiry } from "@/lib/inquiries"
 import {
@@ -121,6 +122,10 @@ export default function StudentPortalPage() {
   const [reviewExam, setReviewExam] = useState<Exam | null>(null)
   const [inquiryText, setInquiryText] = useState("")
   const [inquiryBusy, setInquiryBusy] = useState(false)
+  const [oldPw, setOldPw] = useState("")
+  const [newPw, setNewPw] = useState("")
+  const [confirmPw, setConfirmPw] = useState("")
+  const [pwBusy, setPwBusy] = useState(false)
 
   // ===== التحميل: من Supabase مباشرة — المصدر الوحيد للحقيقة =====
   // لا اعتماد على تخزين محلي للبيانات: إن فشل الاتصال يُخبَر الطالب بوضوح
@@ -207,6 +212,23 @@ export default function StudentPortalPage() {
       setInquiries(inq as any)
     } else {
       toast.error(res.error || "تعذر الإرسال")
+    }
+  }
+
+  const handleChangePassword = async () => {
+    if (!session) return
+    if (newPw !== confirmPw) {
+      toast.error("كلمة المرور الجديدة وتأكيدها غير متطابقين")
+      return
+    }
+    setPwBusy(true)
+    const res = await changePortalPassword(session.token || "", oldPw, newPw)
+    setPwBusy(false)
+    if (res.ok) {
+      toast.success(res.message, { duration: 6000 })
+      setOldPw(""); setNewPw(""); setConfirmPw("")
+    } else {
+      toast.error(res.error || "تعذر تغيير كلمة المرور")
     }
   }
 
@@ -1008,6 +1030,53 @@ export default function StudentPortalPage() {
                       })}
                     </div>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* تغيير كلمة المرور */}
+              <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-sm">
+                <CardContent className="p-5 space-y-3">
+                  <p className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                    <Lock className="w-5 h-5 text-amber-500" />
+                    تغيير كلمة المرور
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    اكتب كلمة المرور الحالية ثم الجديدة وتأكيدها — تُحدَّث في حسابك فوراً ولا تُحفظ بصيغة نصية.
+                  </p>
+                  <div className="space-y-2">
+                    <input
+                      type="password"
+                      value={oldPw}
+                      onChange={e => setOldPw(e.target.value)}
+                      placeholder="كلمة المرور الحالية"
+                      autoComplete="current-password"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <input
+                      type="password"
+                      value={newPw}
+                      onChange={e => setNewPw(e.target.value)}
+                      placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)"
+                      autoComplete="new-password"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <input
+                      type="password"
+                      value={confirmPw}
+                      onChange={e => setConfirmPw(e.target.value)}
+                      placeholder="تأكيد كلمة المرور الجديدة"
+                      autoComplete="new-password"
+                      className="w-full rounded-xl border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    />
+                  </div>
+                  <Button
+                    onClick={handleChangePassword}
+                    disabled={pwBusy || !oldPw || newPw.length < 6 || !confirmPw}
+                    className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white"
+                  >
+                    {pwBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
+                    <span>{pwBusy ? "جاري التحديث..." : "تحديث كلمة المرور"}</span>
+                  </Button>
                 </CardContent>
               </Card>
 
