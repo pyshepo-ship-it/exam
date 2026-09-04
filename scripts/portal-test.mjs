@@ -62,7 +62,9 @@ const printElement = () => {}
 const fetchRegistrationRequestByEmail = async () => null
 const fetchStudentAccountByEmail = async (mail) =>
   __cloud.studentAccounts.find((a) => a.email === String(mail || "").trim().toLowerCase()) || null
-const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null`
+const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null
+const studentLogin = async (_email, _pw, _fnv) => ({ ok: true, token: "test-token", name: "" })
+const studentLogout = async () => {}`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)
 const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")

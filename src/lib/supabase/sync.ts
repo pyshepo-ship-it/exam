@@ -882,17 +882,20 @@ export async function fetchRegistrationRequestByEmail(email: string): Promise<an
   }
 }
 
-/** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
-export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
+/**
+ * الطالب يجلب استفساراته الخاصة عبر دالة آمنة SECURITY DEFINER بسرّ جلسته —
+ * لا قراءة خام لجدول inquiries من anon (لا تسريب لاستفسارات باقي الطلاب).
+ */
+export async function fetchStudentInquiries(token: string): Promise<any[]> {
   const sb = getSupabase()
-  if (!sb) return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
+  if (!sb || !token) return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
   try {
-    const { data, error } = await sb.from("inquiries").select("*").eq("student_id", studentId)
-    if (error) {
+    const { data, error } = await sb.rpc("get_student_inquiries", { p_token: token })
+    if (error || !data || data.ok !== true) {
       console.warn("fetchStudentInquiries:", error)
       return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
     }
-    return (data as any[] || []).map(fromInquiryRow)
+    return ((data.inquiries as any[]) || []).map(fromInquiryRow)
   } catch (e) {
     console.warn("fetchStudentInquiries:", e)
     return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
@@ -1588,86 +1591,163 @@ export interface StudentPortalData {
   gradeGroups: { id: string; name: string; days: string[]; startTime: string; endTime: string }[]
 }
 
+export interface StudentLoginResult {
+  ok: boolean
+  status?: 'pending' | 'rejected' | 'blocked'
+  error?: string
+  studentId?: string
+  name?: string
+  token?: string
+}
+
 /**
- * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة عامة — بياناته فقط تُعرض).
- * تعتمد على سياسات القراءة العامة الموجودة في المخطط.
+ * جلسة آمنة: دالة student_login (SECURITY DEFINER) تتحقق من كلمة المرور
+ * داخل قاعدة البيانات (بصمة SHA-256) وتُصدر توكين جلسة عشوائي. لا يقرأ
+ * anon بيانات حسابات الطلاب؛ الجلسة لا تُنحتَل لمجرد قراءة بصمة كلمة المرور.
  */
-export async function fetchStudentPortalData(studentId: string): Promise<StudentPortalData | null> {
+export async function studentLogin(
+  email: string,
+  password: string,
+  legacyFnv?: string
+): Promise<StudentLoginResult> {
   const sb = getSupabase()
-  if (!sb) return null
+  if (!sb) return { ok: false, error: "Supabase غير متصل" }
+  let data: Record<string, any>
+  try {
+    const res = await sb.rpc("student_login", {
+      p_email: email,
+      p_password: password,
+      p_legacy_fnv: legacyFnv || null,
+    })
+    if (res.error || !res.data || typeof res.data !== "object") {
+      console.warn("studentLogin:", res.error)
+      return { ok: false, error: res.error?.message || "تعذر إنشاء الجلسة" }
+    }
+    data = res.data as Record<string, any>
+  } catch (e) {
+    console.warn("studentLogin:", e)
+    return { ok: false, error: "تعذر إنشاء الجلسة" }
+  }
+  if (data.ok !== true) {
+    return { ok: false, status: data.status as any, error: data.error }
+  }
+  return { ok: true, studentId: data.studentId, name: data.name, token: data.token }
+}
+
+/** يُلغي جلسة الطالب في قاعدة البيانات (يُستدعى عند تسجيل الخروج) */
+export async function studentLogout(token: string): Promise<void> {
+  const sb = getSupabase()
+  if (!sb || !token) return
+  try {
+    await sb.rpc("student_logout", { p_token: token })
+  } catch {
+    /* الإلغاء سحابي بأمان — النجاح في المحاولة التالية */
+  }
+}
+
+/** نص خام لقراءة بيانات الطالب عبر الدالة الآمنة (لا تعرض بيانات غيره) */
+export async function getStudentPortalRecord(token: string): Promise<{
+  student: any
+  manualGrades: any[]
+  dues: any[]
+  payments: any[]
+  attendance: any[]
+  history: any[]
+  transferRequests: any[]
+} | null> {
+  const sb = getSupabase()
+  if (!sb || !token) return null
+  let data: Record<string, any>
+  try {
+    const res = await sb.rpc("get_student_portal_data", { p_token: token })
+    if (res.error || !res.data || typeof res.data !== "object") {
+      console.warn("getStudentPortalRecord:", res.error)
+      return null
+    }
+    data = res.data as Record<string, any>
+  } catch (e) {
+    console.warn("getStudentPortalRecord:", e)
+    return null
+  }
+  if (data.ok !== true || !data.student) return null
+  return {
+    student: data.student,
+    manualGrades: Array.isArray(data.manualGrades) ? data.manualGrades : [],
+    dues: Array.isArray(data.dues) ? data.dues : [],
+    payments: Array.isArray(data.payments) ? data.payments : [],
+    attendance: Array.isArray(data.attendance) ? data.attendance : [],
+    history: Array.isArray(data.history) ? data.history : [],
+    transferRequests: Array.isArray(data.transferRequests) ? data.transferRequests : [],
+  }
+}
+
+/**
+ * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة مقيّدة عبر دالة آمنة).
+ * بيانات الطالب نفسه تأتي من get_student_portal_data بسرّ جلسته، أما
+ * الفئات العامة (الصفوف/المجموعات/الشرّاف/الإعلانات) فتُقرأ كمثلها العام.
+ */
+export async function fetchStudentPortalData(token: string): Promise<StudentPortalData | null> {
+  const sb = getSupabase()
+  if (!sb || !token) return null
 
   try {
-    const [studentsRes, groupsRes, gradesRes, manualRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
-      await Promise.all([
-        sb.from("students").select("*"),
-        sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
-        sb.from("grades").select("id,name"),
-        sb.from("manual_grades").select("*"),
-        sb.from("dues").select("*"),
-        sb.from("payments").select("*"),
-        sb.from("attendance").select("*"),
-        sb.from("honorees").select("*"),
-        sb.from("student_history").select("*"),
-        sb.from("group_transfer_requests").select("*"),
-        sb.from("announcements").select("*"),
-        // لا نقرأ exams الخام من بوابة الطالب؛ RPC 015 ينقّي المفاتيح أولاً.
-        sb.rpc("get_public_online_exams"),
-      ])
+    const [raw, groupsRes, gradesRes, honRes, annRes, examsRes] = await Promise.all([
+      getStudentPortalRecord(token),
+      sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
+      sb.from("grades").select("id,name"),
+      sb.from("honorees").select("*"),
+      sb.from("announcements").select("*"),
+      // لا نقرأ exams الخام من بوابة الطالب؛ RPC 015 ينقّي المفاتيح أولاً.
+      sb.rpc("get_public_online_exams"),
+    ])
 
-    if (studentsRes.error) return null
-    const student = (studentsRes.data as any[]).find((s) => s.id === studentId)
-    if (!student) return null
+    if (!raw || !raw.student) return null
+    const student = fromStudentRow(raw.student)
 
-    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.group_id)
-    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.grade_id)
+    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.groupId)
+    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.gradeId)
 
-    const manual = manualRes.error ? [] : (manualRes.data as any[] || [])
-    const dues = duesRes.error ? [] : (duesRes.data as any[] || [])
-    const payments = paymentsRes.error ? [] : (paymentsRes.data as any[] || [])
-    const att = attRes.error ? [] : (attRes.data as any[] || [])
     const hon = honRes.error ? [] : (honRes.data as any[] || [])
-    const hist = histRes.error ? [] : (histRes.data as any[] || [])
-    const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
     const anns = annRes.error ? [] : (annRes.data as any[] || [])
     const examRows = examsRes.error || !Array.isArray(examsRes.data) ? [] : examsRes.data as any[]
 
     // مجموعات صفه (لطلب النقل + جدول مواعيده)
-    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.grade_id)
+    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.gradeId)
     const gradeGroupIds = new Set(gradeGroupsAll.map((g) => g.id))
 
     return {
-      student: fromStudentRow(student),
+      student,
       gradeName: grade?.name || "",
       groupName: group?.name || "",
       groupStartTime: group?.start_time || "",
       groupEndTime: group?.end_time || "",
       groupDays: Array.isArray(group?.days) ? group.days : [],
-      manualGrades: manual.filter((m) => m.student_id === studentId).map(fromManualGradeRow),
+      manualGrades: (raw.manualGrades || []).map(fromManualGradeRow),
       // تعاد محاولات الاختبار من RPC get_online_exam_result بسر الجلسة في
       // صفحة الطالب؛ لا نقرأ جدول exam_attempts الخام من بوابة anon.
       examAttempts: [],
-      dues: dues.filter((d) => d.student_id === studentId).map(fromDueRow),
-      payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
-      attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),
-      honorees: hon.filter((h) => h.student_id === studentId).map(fromHonoreeRow),
+      dues: (raw.dues || []).map(fromDueRow),
+      payments: (raw.payments || []).map(fromPaymentRow),
+      attendance: (raw.attendance || []).map(fromAttendanceRow),
+      honorees: hon.filter((h) => h.student_id === student.id).map(fromHonoreeRow),
       // لوحة شرف صفه: متفوقو مجموعات صفه فقط
       gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
-      history: hist.filter((h) => h.student_id === studentId).map(fromStudentHistoryRow),
-      transferRequests: transfers.filter((t) => t.student_id === studentId).map(fromGroupTransferRequestRow),
+      history: (raw.history || []).map(fromStudentHistoryRow),
+      transferRequests: (raw.transferRequests || []).map(fromGroupTransferRequestRow),
       // إعلانات صفه فقط (المستهدف فارغ = عام)
       announcements: anns
         .map(fromAnnouncementRow)
         .filter((a: any) => {
           const targets = a.targetGradeIds || []
-          return targets.length === 0 || targets.includes(student.grade_id)
+          return targets.length === 0 || targets.includes(student.gradeId)
         }),
       // اختبارات صفه/مجموعته فقط
       exams: examRows
         .map(fromExamRow)
-        .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
+        .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.gradeId))
         .filter((e: any) => {
           const targets = e.targetGroupIds || []
-          return targets.length === 0 || targets.includes(student.group_id)
+          return targets.length === 0 || targets.includes(student.groupId)
         }),
       gradeGroups: gradeGroupsAll.map((g) => ({
         id: g.id,

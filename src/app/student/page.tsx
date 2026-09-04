@@ -134,7 +134,7 @@ export default function StudentPortalPage() {
     setReportsEnabled(areStudentReportsEnabled())
     setLoadError("")
 
-    const portalData = await fetchStudentPortalData(s.studentId)
+    const portalData = await fetchStudentPortalData(s.token || "")
     if (!portalData) {
       setLoadError("تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك بالإنترنت ثم أعد المحاولة")
       setMounted(true)
@@ -165,7 +165,7 @@ export default function StudentPortalPage() {
     setPortalAnnouncements(portalData.announcements as Announcement[])
     setPortalExams((portalData.exams as Exam[]).filter(e => isExamForStudent(e, portalData.student.gradeId, portalData.student.groupId)))
 
-    const inq = await fetchStudentInquiries(s.studentId)
+    const inq = await fetchStudentInquiries(s.token || "")
     setInquiries(inq as any)
     markAnnouncementsSeen()
     setMounted(true)
@@ -198,12 +198,12 @@ export default function StudentPortalPage() {
   const handleSendInquiry = async () => {
     if (!session) return
     setInquiryBusy(true)
-    const res = await sendStudentInquiry(session.studentId, inquiryText)
+    const res = await sendStudentInquiry(session.studentId, inquiryText, session.token || "")
     setInquiryBusy(false)
     if (res.ok) {
       toast.success(res.message || "تم الإرسال", { duration: 6000 })
       setInquiryText("")
-      const inq = await fetchStudentInquiries(session.studentId)
+      const inq = await fetchStudentInquiries(session.token || "")
       setInquiries(inq as any)
     } else {
       toast.error(res.error || "تعذر الإرسال")

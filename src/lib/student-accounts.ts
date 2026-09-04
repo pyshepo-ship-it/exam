@@ -29,7 +29,8 @@ import {
 } from "./data-storage"
 import {
   fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
-  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail } from "./supabase/sync"
+  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail,
+  studentLogin, studentLogout } from "./supabase/sync"
 import { clearStore } from "./memory-store"
 import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
@@ -345,6 +346,11 @@ export interface PortalSession {
   iat: number
   /** لحظة انتهاء الجلسة (ms) — بعدها يُطلب تسجيل الدخول مجدداً */
   exp: number
+  /**
+   * سرّ جلوس أصدره student_login (SECURITY DEFINER) بعد التحقق من كلمة المرور.
+   * يستخدمه get_student_portal_data لجلب بيانات الطالب دون قراءة خام من anon.
+   */
+  token?: string
 }
 
 /** قراءة كوكي بالاسم (قيم بسيطة base64) */
@@ -388,6 +394,9 @@ export function getPortalSession(): PortalSession | null {
 
 export function portalLogout(): void {
   if (typeof window === "undefined") return
+  // إلغاء جلسة الطالب في قاعدة البيانات (أفضل جهد — لا يكسر الخروج إن فشل).
+  const token = readSessionCookie()?.token
+  if (token) { void studentLogout(token) }
   writeSessionCookie(null)
   // مسح أي نسخة قديمة من الجلسة وذاكرة البيانات (لا يبقى شيء على الجهاز)
   try {
@@ -501,8 +510,27 @@ export async function portalLogin(email: string, password: string): Promise<Logi
       error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
     }
   }
-  if (student.status === "inactive") {
+  // جلسة آمنة: إنشاء توكين جلوس عبر student_login (التحقق من كلمة المرور في قاعدة
+  // البيانات + إصدار السر). يوفّر أيضاً الاسم من الخادم إن تعذر جلبه محلياً.
+  let sessionToken = ""
+  try {
+    const mint = await studentLogin(mail, password, legacyFnvHex(password))
+    if (mint.ok) {
+      sessionToken = mint.token || ""
+      if (!student && mint.name && !mint.status) {
+        student = { id: studentId, name: mint.name } as any
+      }
+    }
+  } catch { /* بدون Supabase — نكمل بجلسة غير موقعة في وضع العرض فقط */ }
+
+  if (student && student.status === "inactive") {
     return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
+  }
+  if (!student) {
+    return {
+      ok: false,
+      error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
+    }
   }
 
   const now = Date.now()
@@ -512,6 +540,7 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     name: student.name,
     iat: now,
     exp: now + PORTAL_SESSION_TTL_MS,
+    token: sessionToken || undefined,
   }
   // الجلسة كوكي فقط — لا تُكتب أي بيانات للطالب على جهازه
   if (typeof window !== "undefined") {
