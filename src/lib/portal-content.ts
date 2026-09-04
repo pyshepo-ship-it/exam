@@ -4,7 +4,7 @@
 //  • الاختبارات الإلكترونية: لصفه ومجموعاته المستهدفة وضمن الإتاحة الزمنية
 // ============================================================
 
-import { Announcement, Exam, ExamAccessMode, Grade, Group } from "./data-storage"
+import { Announcement, Exam, ExamAccessMode, Grade, Group, isOnlineExam } from "./data-storage"
 import { isValidPhone, isValidStudentName, normalizeDigits } from "./student-accounts"
 import { readSetting, writeSetting } from "./memory-store"
 
@@ -27,7 +27,7 @@ export interface ExamAvailability {
 
 /** إتاحة الاختبار الزمنية: دائماً مفتوح أو خلال فترة يحددها المعلم */
 export function examAvailability(exam: Exam, now: Date = new Date()): ExamAvailability {
-  if (!exam.allowOnline) return { open: false, reason: "هذا الاختبار غير منشور للطلاب" }
+  if (!isOnlineExam(exam) || !exam.allowOnline) return { open: false, reason: "هذا الاختبار غير منشور للطلاب" }
   if (exam.availabilityMode !== "scheduled") return { open: true }
   const from = exam.availableFrom ? new Date(exam.availableFrom) : null
   const until = exam.availableUntil ? new Date(exam.availableUntil) : null
@@ -52,7 +52,7 @@ export function examAvailability(exam: Exam, now: Date = new Date()): ExamAvaila
 
 /** هل الاختبار مخصص لهذا الطالب (صفه ومجموعته)؟ — العزل التام حسب الصف */
 export function isExamForStudent(exam: Exam, gradeId: string, groupId: string): boolean {
-  if (!exam.allowOnline) return false
+  if (!isOnlineExam(exam) || !exam.allowOnline) return false
   if (exam.gradeId && exam.gradeId !== gradeId) return false
   const targets = exam.targetGroupIds || []
   if (targets.length > 0 && groupId && !targets.includes(groupId)) return false
@@ -74,7 +74,7 @@ export function examAccessMode(exam: Exam): ExamAccessMode {
 
 /** هل يقبل الاختبار زواراً بلا حساب ولا تسجيل دخول؟ */
 export function isExamOpenToGuests(exam: Exam): boolean {
-  return !!exam.allowOnline && examAccessMode(exam) === "public"
+  return isOnlineExam(exam) && !!exam.allowOnline && examAccessMode(exam) === "public"
 }
 
 /**

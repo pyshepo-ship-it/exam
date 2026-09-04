@@ -43,6 +43,7 @@ import {
   getGrades,
   getStudents,
   getGroupsOfGrade,
+  isOnlineExam,
   getExamAttempts,
   saveExamAttempts,
   maybeAutoHonor,
@@ -258,7 +259,7 @@ export default function TakeExamPage() {
       }
       setGrades(nextGrades)
       setStudents(nextStudents)
-      if (!found || !found.allowOnline) {
+      if (!found || !isOnlineExam(found) || !found.allowOnline) {
         setStep("missing")
       } else {
         setStep("identify")

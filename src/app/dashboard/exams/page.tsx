@@ -55,7 +55,11 @@ import {
   Question,
   SubQuestion,
   ExamAccessMode,
+  ExamDeliveryMode,
   ExamTemplateId,
+  examDeliveryMode,
+  getOnlineExamReadiness,
+  isOnlineExam,
   getGrades,
   getExams,
   saveExams,
@@ -82,9 +86,29 @@ import { Switch } from "@/components/ui/switch"
 import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
 import { ScienceIcon } from "@/components/exam/science-ornaments"
 
+/** لا نعرض اختباراً مجدولاً للطلاب ما لم تكن له فترة صحيحة ومكتملة. */
+function scheduledAvailabilityIssue(
+  availabilityMode: "always" | "scheduled",
+  availableFrom: string,
+  availableUntil: string
+): string | null {
+  if (availabilityMode !== "scheduled") return null
+  if (!availableFrom || !availableUntil) return "حدّد وقت فتح الاختبار ووقت إغلاقه، أو اختر «مفتوح دائماً»"
+
+  const from = new Date(availableFrom)
+  const until = new Date(availableUntil)
+  if (Number.isNaN(from.getTime()) || Number.isNaN(until.getTime())) {
+    return "أدخل وقتَي فتح وإغلاق صحيحين"
+  }
+  if (from >= until) return "يجب أن يكون وقت الإغلاق بعد وقت الفتح"
+  return null
+}
+
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [exams, setExams] = useState<Exam[]>([])
+  /** تظهر أولاً لاختيار مسار الاختبار، ثم يفتح محرر النوع المختار */
+  const [examTypeDialogOpen, setExamTypeDialogOpen] = useState(false)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [editingExam, setEditingExam] = useState<Exam | null>(null)
@@ -120,6 +144,7 @@ export default function ExamsPage() {
     showDecorations: true,
     teacherName: TEACHER_NAME,
     schoolName: "",
+    deliveryMode: "offline" as ExamDeliveryMode,
     allowOnline: false,
     accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
@@ -168,19 +193,40 @@ export default function ExamsPage() {
 
   const savePanel = () => {
     if (!panelExam) return
+    // الاختبارات القديمة لا تحمل deliveryMode؛ فتح لوحة النشر فيها يعني تحويلها
+    // صراحةً إلى اختبار أونلاين عند الحفظ، من دون كسر الاختبارات السابقة.
+    if (panelExam.deliveryMode === "offline") {
+      toast.error("لوحة النشر متاحة لاختبارات أونلاين فقط")
+      return
+    }
+    const readiness = getOnlineExamReadiness({ questions: panelExam.questions })
+    if (panelForm.allowOnline && !readiness.ready) {
+      toast.error(`أكمل الاختبار قبل نشره: ${readiness.issues[0]}`)
+      return
+    }
+    const scheduleIssue = scheduledAvailabilityIssue(
+      panelForm.availabilityMode,
+      panelForm.availableFrom,
+      panelForm.availableUntil
+    )
+    if (panelForm.allowOnline && scheduleIssue) {
+      toast.error(scheduleIssue)
+      return
+    }
     const maxN = Math.max(0, parseInt(panelForm.maxAttempts || "0", 10) || 0)
-    const updatedExams = exams.map(e =>
+    const updatedExams: Exam[] = exams.map(e =>
       e.id === panelExam.id
         ? {
             ...e,
+            deliveryMode: "online",
             allowOnline: panelForm.allowOnline,
-            accessMode: panelForm.allowOnline ? panelForm.accessMode : undefined,
-            availabilityMode: panelForm.allowOnline ? panelForm.availabilityMode : undefined,
-            availableFrom: panelForm.allowOnline && panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
+            accessMode: panelForm.accessMode,
+            availabilityMode: panelForm.availabilityMode,
+            availableFrom: panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
               ? new Date(panelForm.availableFrom).toISOString() : undefined,
-            availableUntil: panelForm.allowOnline && panelForm.availabilityMode === "scheduled" && panelForm.availableUntil
+            availableUntil: panelForm.availabilityMode === "scheduled" && panelForm.availableUntil
               ? new Date(panelForm.availableUntil).toISOString() : undefined,
-            targetGroupIds: panelForm.allowOnline ? panelForm.targetGroupIds : undefined,
+            targetGroupIds: panelForm.targetGroupIds,
             maxAttempts: maxN > 0 ? maxN : undefined,
             reviewOpen: panelForm.reviewOpen,
             updatedAt: new Date().toISOString(),
@@ -521,7 +567,7 @@ export default function ExamsPage() {
     }))
   }
 
-  const emptyForm = () => ({
+  const emptyForm = (deliveryMode: ExamDeliveryMode = "offline") => ({
     gradeId: "",
     groupId: "",
     title: "",
@@ -535,6 +581,7 @@ export default function ExamsPage() {
     showDecorations: true,
     teacherName: TEACHER_NAME,
     schoolName: "",
+    deliveryMode,
     allowOnline: false,
     accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
@@ -546,7 +593,7 @@ export default function ExamsPage() {
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
-  const openCreateDialog = (exam?: Exam) => {
+  const openCreateDialog = (exam?: Exam, mode: ExamDeliveryMode = "offline") => {
     if (exam) {
       setEditingExam(exam)
       setExamForm({
@@ -563,6 +610,7 @@ export default function ExamsPage() {
         showDecorations: exam.showDecorations !== false,
         teacherName: exam.teacherName || TEACHER_NAME,
         schoolName: exam.schoolName || "",
+        deliveryMode: examDeliveryMode(exam),
         allowOnline: !!exam.allowOnline,
         accessMode: exam.accessMode === "public" ? "public" : "members",
         autoHonorBoard: !!exam.autoHonorBoard,
@@ -575,17 +623,44 @@ export default function ExamsPage() {
       })
     } else {
       setEditingExam(null)
-      setExamForm(emptyForm())
+      setExamForm(emptyForm(mode))
     }
     setExpandedQuestions([])
     setCreateDialogOpen(true)
   }
 
+  const openExamTypeDialog = () => {
+    setExamTypeDialogOpen(true)
+  }
+
+  const chooseExamType = (mode: ExamDeliveryMode) => {
+    setExamTypeDialogOpen(false)
+    openCreateDialog(undefined, mode)
+  }
+
   const saveExam = () => {
-    if (!examForm.title) {
+    if (!examForm.title.trim()) {
       toast.error("يرجى إدخال عنوان الاختبار")
       return
     }
+
+    const online = examForm.deliveryMode === "online"
+    const readiness = getOnlineExamReadiness({ questions: examForm.questions })
+    // يمكن حفظ مسودة أونلاين في أي وقت، لكن لا نسمح بنشر اختبار ناقص للطلاب.
+    if (online && examForm.allowOnline && !readiness.ready) {
+      toast.error(`لا يمكن نشر الاختبار بعد: ${readiness.issues[0]}`)
+      return
+    }
+    const scheduleIssue = scheduledAvailabilityIssue(
+      examForm.availabilityMode,
+      examForm.availableFrom,
+      examForm.availableUntil
+    )
+    if (online && examForm.allowOnline && scheduleIssue) {
+      toast.error(scheduleIssue)
+      return
+    }
+
     const totalMarks = getExamTotalMarks(examForm.questions)
     const examData: Exam = {
       id: editingExam?.id || Date.now().toString(),
@@ -602,17 +677,19 @@ export default function ExamsPage() {
       showDecorations: examForm.showDecorations,
       teacherName: examForm.teacherName || undefined,
       schoolName: examForm.schoolName || undefined,
-      allowOnline: examForm.allowOnline,
-      accessMode: examForm.allowOnline ? examForm.accessMode : undefined,
-      autoHonorBoard: examForm.autoHonorBoard,
-      honorMinPercent: examForm.honorMinPercent,
-      availabilityMode: examForm.allowOnline ? examForm.availabilityMode : undefined,
-      availableFrom: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableFrom
+      deliveryMode: examForm.deliveryMode,
+      // «أونلاين» و«منشور» قراران منفصلان: يمكن إعداد اختبار كامل كمسودة ثم نشره لاحقاً.
+      allowOnline: online ? examForm.allowOnline : false,
+      accessMode: online ? examForm.accessMode : undefined,
+      autoHonorBoard: online ? examForm.autoHonorBoard : false,
+      honorMinPercent: online ? examForm.honorMinPercent : undefined,
+      availabilityMode: online ? examForm.availabilityMode : undefined,
+      availableFrom: online && examForm.availabilityMode === "scheduled" && examForm.availableFrom
         ? new Date(examForm.availableFrom).toISOString() : undefined,
-      availableUntil: examForm.allowOnline && examForm.availabilityMode === "scheduled" && examForm.availableUntil
+      availableUntil: online && examForm.availabilityMode === "scheduled" && examForm.availableUntil
         ? new Date(examForm.availableUntil).toISOString() : undefined,
-      targetGroupIds: examForm.allowOnline ? examForm.targetGroupIds : undefined,
-      answerVisibility: examForm.allowOnline ? examForm.answerVisibility : undefined,
+      targetGroupIds: online ? examForm.targetGroupIds : undefined,
+      answerVisibility: online ? examForm.answerVisibility : undefined,
       createdAt: editingExam?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -622,7 +699,13 @@ export default function ExamsPage() {
     setExams(updatedExams)
     saveExams(updatedExams)
     setCreateDialogOpen(false)
-    toast.success(editingExam ? "تم تحديث الاختبار بنجاح" : "تم إنشاء الاختبار بنجاح")
+    toast.success(
+      editingExam
+        ? "تم تحديث الاختبار بنجاح"
+        : online
+        ? (examForm.allowOnline ? "تم إنشاء ونشر الاختبار الأونلاين بنجاح" : "تم حفظ مسودة الاختبار الأونلاين بنجاح")
+        : "تم إنشاء اختبار الأوف لاين بنجاح"
+    )
   }
 
   const deleteExam = (examId: string) => {
@@ -669,6 +752,8 @@ export default function ExamsPage() {
   const totalSubQuestions = examForm.questions.reduce((s, q) => s + q.subQuestions.length, 0)
   const liveTotalMarks = getExamTotalMarks(examForm.questions)
   const selectedGradeName = getGradeName(examForm.gradeId)
+  const isOnlineForm = examForm.deliveryMode === "online"
+  const onlineReadiness = getOnlineExamReadiness({ questions: examForm.questions })
 
   return (
     <div className="space-y-6">
@@ -680,11 +765,11 @@ export default function ExamsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">الاختبارات</h1>
           <p className="text-gray-500 dark:text-gray-400">
-            ورقة امتحان للطباعة والتوزيع على الطلاب — من الجوال أو الكمبيوتر، بصيغة A4 والعربية
+            أنشئ اختبار أوف لاين للطباعة، أو اختبار أونلاين يؤديه الطلاب من بوابتهم وتصل نتيجته إليك مباشرة
           </p>
         </div>
         <Button
-          onClick={() => openCreateDialog()}
+          onClick={openExamTypeDialog}
           className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 shadow-lg"
         >
           <Plus className="w-5 h-5" />
@@ -720,6 +805,7 @@ export default function ExamsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <AnimatePresence>
           {exams.map((exam, index) => {
+            const online = isOnlineExam(exam)
             const tpl = getTemplate(exam.templateId)
             return (
               <motion.div
@@ -747,10 +833,23 @@ export default function ExamsPage() {
                   </CardHeader>
                   <CardContent>
                     <div className="flex flex-wrap gap-2 mb-4">
-                      <Badge variant="outline" className="bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                        <Palette className="w-3 h-3 ml-1" />
-                        {tpl.name}
-                      </Badge>
+                      {online ? (
+                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                          <Globe className="w-3 h-3 ml-1" />
+                          اختبار أونلاين
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                          <Printer className="w-3 h-3 ml-1" />
+                          اختبار أوف لاين
+                        </Badge>
+                      )}
+                      {!online && (
+                        <Badge variant="outline" className="bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                          <Palette className="w-3 h-3 ml-1" />
+                          {tpl.name}
+                        </Badge>
+                      )}
                       {exam.month && (
                         <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
                           <Calendar className="w-3 h-3 ml-1" />
@@ -760,13 +859,13 @@ export default function ExamsPage() {
                       {exam.unit && <Badge variant="outline">الوحدة: {exam.unit}</Badge>}
                       {exam.groupId && <Badge variant="outline">{getGroupName(exam.groupId)}</Badge>}
                       {exam.duration && <Badge variant="outline">{exam.duration} دقيقة</Badge>}
-                      {exam.showDecorations !== false && (
+                      {!online && exam.showDecorations !== false && (
                         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                           <Sparkles className="w-3 h-3 ml-1" />
                           زخارف
                         </Badge>
                       )}
-                      {exam.allowOnline ? (
+                      {online && (exam.allowOnline ? (
                         exam.accessMode === "public" ? (
                           <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
                             <Globe className="w-3 h-3 ml-1" />
@@ -779,19 +878,19 @@ export default function ExamsPage() {
                           </Badge>
                         )
                       ) : (
-                        <Badge variant="outline" className="bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                        <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
                           <EyeOff className="w-3 h-3 ml-1" />
-                          مخفي من الطلاب
+                          مسودة غير منشورة
                         </Badge>
-                      )}
-                      {!!exam.maxAttempts && exam.maxAttempts > 0 && (
+                      ))}
+                      {online && !!exam.maxAttempts && exam.maxAttempts > 0 && (
                         <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
                           المحاولات: {exam.maxAttempts} لكل طالب
                         </Badge>
                       )}
                       {(() => {
                         const av = examAvailability(exam)
-                        if (!exam.allowOnline) return null
+                        if (!online || !exam.allowOnline) return null
                         return av.open ? (
                           <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300">
                             <Timer className="w-3 h-3 ml-1" />
@@ -810,7 +909,7 @@ export default function ExamsPage() {
                         <Eye className="w-4 h-4" />
                         <span>معاينة</span>
                       </Button>
-                      {exam.allowOnline && (
+                      {online && exam.allowOnline && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -820,7 +919,7 @@ export default function ExamsPage() {
                           <ClipboardList className="w-4 h-4" />
                         </Button>
                       )}
-                      {exam.allowOnline && (
+                      {online && exam.allowOnline && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -832,15 +931,17 @@ export default function ExamsPage() {
                           <Link2 className="w-4 h-4" />
                         </Button>
                       )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        title="لوحة تحكم الظهور والمحاولات"
-                        onClick={() => openPanel(exam)}
-                        className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
-                      >
-                        <Settings2 className="w-4 h-4" />
-                      </Button>
+                      {(online || exam.deliveryMode === undefined) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          title="لوحة تحكم الظهور والمحاولات"
+                          onClick={() => openPanel(exam)}
+                          className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                        >
+                          <Settings2 className="w-4 h-4" />
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)}>
                         <Edit2 className="w-4 h-4" />
                       </Button>
@@ -864,7 +965,7 @@ export default function ExamsPage() {
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="col-span-full text-center py-12">
             <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
             <p className="text-gray-500 dark:text-gray-400 mb-4">لا توجد اختبارات بعد</p>
-            <Button onClick={() => openCreateDialog()} className="bg-gradient-to-r from-red-500 to-rose-600">
+            <Button onClick={openExamTypeDialog} className="bg-gradient-to-r from-red-500 to-rose-600">
               <Plus className="w-4 h-4" />
               <span>إنشاء أول اختبار</span>
             </Button>
@@ -872,13 +973,73 @@ export default function ExamsPage() {
         )}
       </div>
 
+      {/* اختيار نوع الاختبار — يظهر قبل المحرر عند إنشاء اختبار جديد */}
+      <Dialog open={examTypeDialogOpen} onOpenChange={setExamTypeDialogOpen}>
+        <DialogContent className="max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl">اختر نوع الاختبار</DialogTitle>
+            <DialogDescription>
+              اختر طريقة أداء الطلاب أولاً؛ ستفتح لك واجهة مناسبة لكل نوع.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-2">
+            <button
+              type="button"
+              onClick={() => chooseExamType("offline")}
+              className="group text-right rounded-2xl border-2 border-slate-200 dark:border-slate-700 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-gray-900 p-5 transition-all hover:border-slate-500 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-slate-500"
+            >
+              <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-600 to-slate-800 text-white shadow-lg transition-transform group-hover:scale-105">
+                <Printer className="h-6 w-6" />
+              </span>
+              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار أوف لاين</span>
+              <span className="mt-2 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                الاختبار المعتاد: تكتب الأسئلة، تعاين الورقة، ثم تطبعها أو تحمّلها PDF لتوزيعها على الطلاب.
+              </span>
+              <span className="mt-4 inline-flex items-center rounded-full bg-slate-200 px-3 py-1 text-xs font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                ورقة مطبوعة
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => chooseExamType("online")}
+              className="group text-right rounded-2xl border-2 border-indigo-200 dark:border-indigo-800 bg-gradient-to-br from-indigo-50 to-purple-50 dark:from-indigo-950/40 dark:to-purple-950/30 p-5 transition-all hover:border-indigo-500 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/25 transition-transform group-hover:scale-105">
+                <Globe className="h-6 w-6" />
+              </span>
+              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار أونلاين</span>
+              <span className="mt-2 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                يجيب الطلاب من بوابة الموقع؛ تضبط الإتاحة وطريقة الدخول ومفتاح التصحيح، وتصل النتائج إليك فوراً.
+              </span>
+              <span className="mt-4 inline-flex items-center rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                أداء إلكتروني ونتائج مباشرة
+              </span>
+            </button>
+          </div>
+
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            يمكنك حفظ اختبار الأونلاين كمسودة، ولن يظهر للطلاب حتى تفعّل النشر بعد استكمال الأسئلة ومفاتيح التصحيح.
+          </p>
+        </DialogContent>
+      </Dialog>
+
       {/* Create / Edit */}
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="inset-0 left-0 top-0 h-[100dvh] w-[100dvw] max-w-none max-h-[100dvh] translate-x-0 translate-y-0 rounded-none p-3 pb-28 overflow-y-auto sm:inset-auto sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-6xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6">
           <DialogHeader>
-            <DialogTitle>{editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}</DialogTitle>
+            <div className="flex items-center gap-2 pl-8">
+              <DialogTitle>{editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}</DialogTitle>
+              <Badge className={isOnlineForm ? "bg-indigo-600 text-white" : "bg-slate-700 text-white"}>
+                {isOnlineForm ? <Globe className="w-3 h-3 ml-1" /> : <Printer className="w-3 h-3 ml-1" />}
+                {isOnlineForm ? "اختبار أونلاين" : "اختبار أوف لاين"}
+              </Badge>
+            </div>
             <DialogDescription>
-              ورقة للطباعة والتوزيع — اكتب الأسئلة من الجوال بسهولة ثم عاينها قبل التصدير
+              {isOnlineForm
+                ? "اكتب الأسئلة ومفاتيح التصحيح، ثم انشره للطلاب عندما يصبح جاهزاً."
+                : "اكتب ورقة الاختبار المعتادة من الجوال بسهولة، ثم عاينها واطبعها أو حمّلها PDF."}
             </DialogDescription>
           </DialogHeader>
 
@@ -943,7 +1104,7 @@ export default function ExamsPage() {
             <section className="space-y-3">
               <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">2</span>
-                بيانات الورقة
+                {isOnlineForm ? "بيانات الاختبار" : "بيانات الورقة"}
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
@@ -1011,8 +1172,9 @@ export default function ExamsPage() {
               </div>
             </section>
 
-            {/* 3. Templates */}
-            <section className="space-y-3">
+            {/* 3. Templates — للأوف لاين فقط */}
+            {!isOnlineForm && (
+              <section className="space-y-3">
               <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
                 قالب الورقة (5 قوالب احترافية)
@@ -1037,18 +1199,20 @@ export default function ExamsPage() {
                   </p>
                 </div>
               </label>
-            </section>
+              </section>
+            )}
 
-            <section className="space-y-3">
-              <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-gray-400 text-white text-xs flex items-center justify-center">3ب</span>
-                اختبار إلكتروني (تجريبي — حجر أساس)
-              </h3>
-              <p className="text-xs text-gray-500 leading-relaxed">
-                الورقة المطبوعة لا تحتاج إجابة نموذجية. الاختبار على الموقع تجريبي ولن يُنشر الآن،
-                وسيُطوَّر لاحقاً ليكون اختياراً من متعدد فقط.
-              </p>
-              <label className="flex items-start gap-3 p-3 rounded-xl border border-dashed border-gray-300 dark:border-gray-700 cursor-pointer">
+            {/* إعدادات اختبار أونلاين — مسودة أو منشور للطلاب */}
+            {isOnlineForm && (
+              <section className="space-y-3">
+                <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
+                  اختبار أونلاين
+                </h3>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  اضبط طريقة الدخول والإتاحة ومفاتيح التصحيح. يمكنك حفظه كمسودة ثم نشره عندما تكتمل بياناته.
+                </p>
+                <label className="flex items-start gap-3 p-3 rounded-xl border-2 border-indigo-200 dark:border-indigo-900 bg-indigo-50/50 dark:bg-indigo-950/20 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={examForm.allowOnline}
@@ -1057,12 +1221,34 @@ export default function ExamsPage() {
                 />
                 <Globe className="w-4 h-4 text-indigo-600 mt-0.5" />
                 <div>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">تفعيل الأساس التجريبي على الموقع</p>
-                  <p className="text-xs text-gray-500">لا تستخدمه مع الطلاب الآن — للتطوير لاحقاً</p>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">نشر الاختبار للطلاب على الموقع</p>
+                  <p className="text-xs text-gray-500">
+                    {examForm.allowOnline
+                      ? "سيظهر للطلاب وفق إعدادات الدخول والإتاحة أدناه بعد الحفظ"
+                      : "مسودة خاصة بك — يمكنك استكمالها الآن ثم نشرها عندما تصبح جاهزة"}
+                  </p>
                 </div>
               </label>
-              {examForm.allowOnline && (
-                <label className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 cursor-pointer">
+
+              <div className={`rounded-xl border px-3 py-2.5 text-xs leading-relaxed ${
+                onlineReadiness.ready
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200"
+                  : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200"
+              }`}>
+                <p className="font-extrabold">
+                  {onlineReadiness.ready ? "✓ الاختبار جاهز للنشر" : "أكمل هذه العناصر قبل النشر"}
+                </p>
+                {onlineReadiness.ready ? (
+                  <p className="mt-1">{onlineReadiness.notes.join(" • ") || "الأسئلة ومفاتيح التصحيح مكتملة"}</p>
+                ) : (
+                  <ul className="mt-1 list-disc pr-4 space-y-0.5">
+                    {onlineReadiness.issues.slice(0, 3).map(issue => <li key={issue}>{issue}</li>)}
+                    {onlineReadiness.issues.length > 3 && <li>و{onlineReadiness.issues.length - 3} عناصر أخرى</li>}
+                  </ul>
+                )}
+              </div>
+
+              <label className="flex items-start gap-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={examForm.autoHonorBoard}
@@ -1086,10 +1272,8 @@ export default function ExamsPage() {
                     </div>
                   </div>
                 </label>
-              )}
 
-              {examForm.allowOnline && (
-                <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-4">
+              <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-4">
                   {/* من يستطيع فتح الاختبار */}
                   <div>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">من يستطيع فتح الاختبار؟</p>
@@ -1245,8 +1429,8 @@ export default function ExamsPage() {
                     </p>
                   </div>
                 </div>
-              )}
-            </section>
+              </section>
+            )}
 
             {/* 4. Add questions */}
             <section className="space-y-3">
@@ -1461,9 +1645,9 @@ export default function ExamsPage() {
                                           </div>
                                         ))}
                                       </div>
-                                      {examForm.allowOnline && (
+                                      {isOnlineForm && (
                                         <div className="flex items-center gap-2">
-                                          <Label className="text-xs shrink-0">مفتاح التصحيح (تجريبي):</Label>
+                                          <Label className="text-xs shrink-0">مفتاح التصحيح:</Label>
                                           <Select
                                             value={sq.choices?.find(c => c.isCorrect)?.id}
                                             onValueChange={(val) => setCorrectChoice(question.id, sq.id, val)}
@@ -1521,9 +1705,9 @@ export default function ExamsPage() {
                                       <p className="text-sm text-gray-600 dark:text-gray-300 bg-white dark:bg-gray-900 rounded-md p-2 border border-gray-100 dark:border-gray-800">
                                         {renderCompletePreview(sq)}
                                       </p>
-                                      {examForm.allowOnline && (
+                                      {isOnlineForm && (
                                         <div>
-                                          <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                          <Label className="text-xs">مفتاح التصحيح</Label>
                                           <Input
                                             placeholder="الكلمة أو الجملة الناقصة"
                                             value={sq.correctAnswer || ""}
@@ -1547,9 +1731,9 @@ export default function ExamsPage() {
                                           className="mt-1"
                                         />
                                       </div>
-                                      {examForm.allowOnline && (
+                                      {isOnlineForm && (
                                         <div className="flex items-center gap-2">
-                                          <Label className="text-xs shrink-0">مفتاح التصحيح (تجريبي):</Label>
+                                          <Label className="text-xs shrink-0">مفتاح التصحيح:</Label>
                                           <Button
                                             type="button"
                                             size="sm"
@@ -1614,15 +1798,23 @@ export default function ExamsPage() {
                                           </SelectContent>
                                         </Select>
                                       </div>
-                                      {examForm.allowOnline && (
+                                      {isOnlineForm && (
                                         <div>
-                                          <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                          <Label className="text-xs">
+                                            {question.questionType === 4
+                                              ? "نموذج إجابة (اختياري — للمراجعة اليدوية)"
+                                              : question.questionType === 8
+                                              ? "مفتاح التصحيح (اختياري؛ اتركه فارغاً للمراجعة اليدوية)"
+                                              : "مفتاح التصحيح"}
+                                          </Label>
                                           <Input
                                             placeholder={
                                               question.questionType === 6
                                                 ? "المصطلح العلمي الصحيح (مثال: السرعة)"
                                                 : question.questionType === 7
                                                 ? "التعريف النموذجي"
+                                                : question.questionType === 4
+                                                ? "إجابة استرشادية للمراجعة اليدوية"
                                                 : "الإجابة النموذجية"
                                             }
                                             value={sq.correctAnswer || ""}
@@ -1729,9 +1921,9 @@ export default function ExamsPage() {
                                           </div>
                                         )}
 
-                                        {examForm.allowOnline && (
+                                        {isOnlineForm && (
                                           <div>
-                                            <Label className="text-xs">مفتاح التصحيح (تجريبي)</Label>
+                                            <Label className="text-xs">مفتاح التصحيح</Label>
                                             <Input
                                               placeholder="الكلمة الصحيحة بدل ما تحته خط"
                                               value={sq.corrections?.[0]?.correctAnswer || ""}

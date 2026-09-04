@@ -199,46 +199,63 @@ const fromPaymentRow = (row: any) => ({
   createdAt: row.created_at,
 });
 
-export const toExamRow = (e: any) => ({
-  id: e.id,
-  grade_id: e.gradeId || null,
-  group_id: e.groupId || null,
-  title: e.title || "اختبار",
-  month: e.month ?? null,
-  unit: e.unit || null,
-  // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
-  academic_year: e.academicYear || "",
-  duration: e.duration ?? null,
-  total_marks: e.totalMarks ?? null,
-  // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
-  questions: {
-    _v: 2,
-    items: e.questions || [],
-    templateId: e.templateId || "classic",
-    showDecorations: e.showDecorations !== false,
-    teacherName: e.teacherName || "",
-    schoolName: e.schoolName || "",
-    allowOnline: !!e.allowOnline,
-    // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
-    accessMode: e.accessMode === "public" ? "public" : "members",
-    autoHonorBoard: !!e.autoHonorBoard,
-    honorMinPercent: e.honorMinPercent ?? 100,
-    availabilityMode: e.availabilityMode || "always",
-    availableFrom: e.availableFrom || null,
-    availableUntil: e.availableUntil || null,
-    targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
-    answerVisibility: e.answerVisibility || "never",
-    maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
-    reviewOpen: !!e.reviewOpen,
-  },
-  // created_at / updated_at أعمدة NOT NULL أيضاً
-  created_at: e.createdAt || new Date().toISOString(),
-  updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
-});
+/**
+ * النوع الصريح يحسم المسار. أما السجل القديم، فـ allowOnline=true هو الدليل
+ * الوحيد المتاح على أنه أونلاين؛ ونبقي القديم غير المنشور بلا نوع حتى لا
+ * نحوّله تلقائياً إلى أوف لاين قبل أن يختار المعلم مساره.
+ */
+const persistedExamDeliveryMode = (exam: any): "online" | "offline" | undefined => {
+  if (exam.deliveryMode === "online") return "online"
+  if (exam.deliveryMode === "offline") return "offline"
+  return exam.allowOnline ? "online" : undefined
+}
+
+export const toExamRow = (e: any) => {
+  const deliveryMode = persistedExamDeliveryMode(e)
+  return {
+    id: e.id,
+    grade_id: e.gradeId || null,
+    group_id: e.groupId || null,
+    title: e.title || "اختبار",
+    month: e.month ?? null,
+    unit: e.unit || null,
+    // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
+    academic_year: e.academicYear || "",
+    duration: e.duration ?? null,
+    total_marks: e.totalMarks ?? null,
+    // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
+    questions: {
+      _v: 3,
+      items: e.questions || [],
+      templateId: e.templateId || "classic",
+      showDecorations: e.showDecorations !== false,
+      teacherName: e.teacherName || "",
+      schoolName: e.schoolName || "",
+      // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
+      deliveryMode,
+      allowOnline: deliveryMode === "online" && !!e.allowOnline,
+      // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
+      accessMode: e.accessMode === "public" ? "public" : "members",
+      autoHonorBoard: !!e.autoHonorBoard,
+      honorMinPercent: e.honorMinPercent ?? 100,
+      availabilityMode: e.availabilityMode || "always",
+      availableFrom: e.availableFrom || null,
+      availableUntil: e.availableUntil || null,
+      targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
+      answerVisibility: e.answerVisibility || "never",
+      maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
+      reviewOpen: !!e.reviewOpen,
+    },
+    // created_at / updated_at أعمدة NOT NULL أيضاً
+    created_at: e.createdAt || new Date().toISOString(),
+    updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
+  }
+};
 
 export const fromExamRow = (row: any) => {
   const q = row.questions
   const wrapped = q && typeof q === "object" && !Array.isArray(q) && Array.isArray(q.items)
+  const deliveryMode = wrapped ? persistedExamDeliveryMode(q) : undefined
   return {
     id: row.id,
     gradeId: row.grade_id,
@@ -254,7 +271,10 @@ export const fromExamRow = (row: any) => {
     showDecorations: wrapped ? q.showDecorations !== false : true,
     teacherName: wrapped ? (q.teacherName || undefined) : undefined,
     schoolName: wrapped ? (q.schoolName || undefined) : undefined,
-    allowOnline: wrapped ? !!q.allowOnline : false,
+    // توافق رجعي: المنشور القديم يُستنتج كأونلاين، أما غير المنشور فنتركه
+    // بلا نوع صريح كي يستطيع المعلم اختيار مساره لاحقاً.
+    deliveryMode,
+    allowOnline: deliveryMode === "online" && !!q.allowOnline,
     accessMode: wrapped && q.accessMode === "public" ? ("public" as const) : ("members" as const),
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
     honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
@@ -1290,7 +1310,9 @@ export async function fetchPublicData(): Promise<PublicData | null> {
       endTime: g.end_time || "",
     })),
     settings: settingsMap,
-    exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
+    exams: exams.error ? [] : (exams.data as any[])
+      .map(fromExamRow)
+      .filter((e: any) => e.deliveryMode === "online" && e.allowOnline),
   };
 }
 
@@ -1436,7 +1458,7 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
       // اختبارات صفه/مجموعته فقط
       exams: examRows
         .map(fromExamRow)
-        .filter((e: any) => !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
+        .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
         .filter((e: any) => {
           const targets = e.targetGroupIds || []
           return targets.length === 0 || targets.includes(student.group_id)

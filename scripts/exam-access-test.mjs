@@ -572,6 +572,48 @@ seed({ grades: [grade1], exams: [baseExam({ id: "ex-dash", allowOnline: false })
 }
 
 // ------------------------------------------------------------
+section("11) إنشاء اختبار: الاختيار الصريح بين أوف لاين وأونلاين")
+
+const openNewExam = async (expectedMode) => {
+  seed({ grades: [grade1], exams: [] })
+  const mounted = await mount("/dashboard/exams", DashboardExams)
+  await flush()
+  const createBtn = [...window.document.querySelectorAll("button")].find(b =>
+    (b.textContent || "").includes("إنشاء أول اختبار"))
+  eq(`زر إنشاء اختبار جديد ظاهر (${expectedMode})`, !!createBtn)
+  if (!createBtn) return mounted
+  await click(createBtn)
+  await flush()
+  const chooserText = text(window.document.body)
+  eq("تظهر نافذة اختيار نوع الاختبار", chooserText.includes("اختر نوع الاختبار"))
+  eq("خيار اختبار أوف لاين ظاهر", chooserText.includes("اختبار أوف لاين"))
+  eq("خيار اختبار أونلاين ظاهر", chooserText.includes("اختبار أونلاين"))
+  const choice = [...window.document.querySelectorAll("button")].find(b =>
+    (b.textContent || "").includes(expectedMode === "online" ? "أداء إلكتروني ونتائج مباشرة" : "ورقة مطبوعة"))
+  eq(`يمكن اختيار اختبار ${expectedMode === "online" ? "أونلاين" : "أوف لاين"}`, !!choice)
+  if (choice) {
+    await click(choice)
+    await flush()
+  }
+  return mounted
+}
+
+{
+  const { unmount } = await openNewExam("offline")
+  const editorText = text(window.document.body)
+  eq("محرر الأوف لاين يوضح الطباعة وPDF", editorText.includes("اختبار أوف لاين") && editorText.includes("اطبعها أو حمّلها PDF"))
+  eq("محرر الأوف لاين لا يعرض إعدادات النشر", !editorText.includes("نشر الاختبار للطلاب على الموقع"))
+  await unmount()
+}
+{
+  const { unmount } = await openNewExam("online")
+  const editorText = text(window.document.body)
+  eq("محرر الأونلاين يعرض إعدادات النشر", editorText.includes("اختبار أونلاين") && editorText.includes("نشر الاختبار للطلاب على الموقع"))
+  eq("محرر الأونلاين يوضح أنه مسودة قبل النشر", editorText.includes("مسودة خاصة بك"))
+  await unmount()
+}
+
+// ------------------------------------------------------------
 section("صفر تخزين محلي — الاختبارات والنتائج في Supabase فقط")
 {
   const DATA_KEYS = ["grades","students","exams","examAttempts","studentAccounts","announcements",

@@ -138,6 +138,9 @@ export interface Payment {
 
 export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
 
+/** نوع الاختبار عند إنشائه: ورقة أوف لاين، أو اختبار يؤديه الطلاب على الموقع. */
+export type ExamDeliveryMode = "offline" | "online"
+
 /**
  * من يستطيع فتح الاختبار الإلكتروني:
  *  - members: الأعضاء المسجلون فقط — يظهر للطالب في بوابته حسب صفه،
@@ -164,7 +167,12 @@ export interface Exam {
   showDecorations?: boolean
   teacherName?: string
   schoolName?: string
-  /** نشر الاختبار للطلاب على الموقع ليؤدوه خلال المدة المحددة */
+  /**
+   * مسار الاختبار الذي اختاره المعلم عند الإنشاء.
+   * السجلات القديمة بلا هذا الحقل تظل متوافقة: allowOnline=true يعني اختبار أونلاين.
+   */
+  deliveryMode?: ExamDeliveryMode
+  /** نشر الاختبار الأونلاين للطلاب على الموقع ليؤدوه خلال المدة المحددة */
   allowOnline?: boolean
   /** من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بدون تسجيل */
   accessMode?: ExamAccessMode
@@ -213,6 +221,153 @@ export interface SubQuestion {
   correctAnswer?: string
   /** العبارة صحيحة؟ (النوع 3 — صح وخطأ) */
   isTrue?: boolean
+}
+
+/**
+ * يعيد نوع الاختبار مع الحفاظ على توافق الاختبارات القديمة.
+ * قبل إضافة خيار النوع كانت allowOnline هي الإشارة الوحيدة: true = أونلاين،
+ * لذلك لا تتحول الاختبارات المنشورة سابقاً إلى أوف لاين عند التحديث.
+ */
+export function examDeliveryMode(exam: Pick<Exam, "deliveryMode" | "allowOnline">): ExamDeliveryMode {
+  if (exam.deliveryMode === "online") return "online"
+  if (exam.deliveryMode === "offline") return "offline"
+  return exam.allowOnline ? "online" : "offline"
+}
+
+/** هل الاختبار من نوع أونلاين بصرف النظر عن كونه منشوراً أو مسودة؟ */
+export function isOnlineExam(exam: Pick<Exam, "deliveryMode" | "allowOnline">): boolean {
+  return examDeliveryMode(exam) === "online"
+}
+
+export interface OnlineExamReadiness {
+  /** صالح للنشر والأداء إلكترونياً، ولا توجد حقول أو مفاتيح تصحيح ناقصة */
+  ready: boolean
+  /** عناصر تمنع نشر الاختبار حتى تُستكمل */
+  issues: string[]
+  /** معلومات مفيدة لا تمنع النشر، مثل الدرجات التي تحتاج تصحيحاً يدوياً */
+  notes: string[]
+  /** درجات الأسئلة التي سيصححها النظام تلقائياً */
+  autoMarks: number
+  /** درجات الإجابات المقالية التي تحتاج مراجعة المعلم */
+  manualMarks: number
+  /** عدد الأسئلة الفرعية في الاختبار */
+  questionCount: number
+}
+
+const onlineText = (value?: string): string => (value || "").trim()
+const onlineMarks = (sq: SubQuestion): number => (sq.marks && sq.marks > 0 ? sq.marks : 1)
+
+/**
+ * مراجعة جاهزية اختبار أونلاين قبل النشر.
+ * الأسئلة المقالية (علل، أو السؤال الحر بلا نموذج إجابة) مسموحة، لكنها تُحسب
+ * كدرجات مراجعة يدوية كي لا يُنشر اختبار ناقص أو يحصل الطالب على درجة مضللة.
+ */
+export function getOnlineExamReadiness(exam: Pick<Exam, "questions">): OnlineExamReadiness {
+  const issues: string[] = []
+  const notes: string[] = []
+  const questions = exam.questions || []
+  let autoMarks = 0
+  let manualMarks = 0
+  let questionCount = 0
+
+  if (questions.length === 0) {
+    issues.push("أضف سؤالاً واحداً على الأقل قبل نشر الاختبار أونلاين")
+  }
+
+  questions.forEach((question, qIndex) => {
+    const subs = question.subQuestions || []
+    if (subs.length === 0) {
+      issues.push(`السؤال ${qIndex + 1}: أضف سؤالاً فرعياً واحداً على الأقل`)
+      return
+    }
+
+    subs.forEach((sq, sqIndex) => {
+      questionCount += 1
+      const label = `السؤال ${qIndex + 1}، الفرعي ${sqIndex + 1}`
+      const marks = onlineMarks(sq)
+      const hasQuestionText = !!onlineText(sq.questionText)
+
+      if (question.questionType === 1) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        const choices = sq.choices || []
+        if (choices.length < 2 || choices.some(choice => !onlineText(choice.choiceText))) {
+          issues.push(`${label}: اكتب نص كل خيارات الإجابة`)
+        }
+        const correct = choices.filter(choice => choice.isCorrect)
+        if (correct.length !== 1 || !onlineText(correct[0]?.choiceText)) {
+          issues.push(`${label}: حدّد إجابة صحيحة واحدة للتصحيح الآلي`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 2) {
+        const hasSentence = (sq.parts || []).some(part => !!onlineText(part.partText)) || hasQuestionText
+        if (!hasSentence) issues.push(`${label}: اكتب العبارة المراد إكمالها`)
+        if (!onlineText(sq.correctAnswer)) {
+          issues.push(`${label}: اكتب الإجابة الصحيحة للفراغ`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 3) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص العبارة`)
+        if (typeof sq.isTrue !== "boolean") {
+          issues.push(`${label}: اختر صح أو خطأ للتصحيح الآلي`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 5) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص العبارة`)
+        const correction = sq.corrections?.[0]
+        if (!correction || !correction.wordPosition || correction.wordPosition < 1) {
+          issues.push(`${label}: حدّد الكلمة أو الكلمات المطلوب تصويبها`)
+        }
+        if (!onlineText(correction?.correctAnswer)) {
+          issues.push(`${label}: اكتب التصويب الصحيح`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 4) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        manualMarks += marks
+        return
+      }
+
+      if (question.questionType === 6 || question.questionType === 7) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        if (!onlineText(sq.correctAnswer)) {
+          issues.push(`${label}: اكتب مفتاح التصحيح`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      // السؤال الحر: يمكن تركه للمراجعة اليدوية، أو إدخال نموذج مختصر ليصححه النظام.
+      if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+      if (onlineText(sq.correctAnswer)) autoMarks += marks
+      else manualMarks += marks
+    })
+  })
+
+  if (manualMarks > 0) {
+    notes.push(`${manualMarks} درجة تحتاج مراجعة يدوية بعد التسليم`)
+  }
+  if (autoMarks > 0) {
+    notes.push(`${autoMarks} درجة ستُصحَّح تلقائياً`)
+  }
+
+  return { ready: issues.length === 0, issues, notes, autoMarks, manualMarks, questionCount }
 }
 
 export interface Choice {
