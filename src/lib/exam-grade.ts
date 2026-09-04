@@ -1,4 +1,9 @@
-import type { Exam, ExamAttemptAnswer, SubQuestion } from "./data-storage"
+import {
+  type Exam,
+  type ExamAttemptAnswer,
+  type ExamAttemptAnswerReview,
+  type SubQuestion,
+} from "./data-storage"
 
 export interface GradedItem {
   subQuestionId: string
@@ -46,6 +51,12 @@ export function gradeExam(
   let autoTotal = 0
   let manualTotal = 0
   const details: GradedItem[] = []
+  // لا نغيّر طريقة تصحيح الاختبارات القديمة غير المصنفة؛ وجود النمط الصريح
+  // فقط هو ما يجعل السؤال المقالي يدوياً حتماً حتى لو احتوى نموذج إجابة.
+  const isOnline = exam.deliveryMode === "online" || (!exam.deliveryMode && exam.allowOnline === true)
+  const onlineMode = isOnline && (
+    exam.onlineExamMode === "objective" || exam.onlineExamMode === "essay" || exam.onlineExamMode === "mixed"
+  ) ? exam.onlineExamMode : undefined
 
   for (const question of exam.questions || []) {
     for (const sq of question.subQuestions || []) {
@@ -54,7 +65,13 @@ export function gradeExam(
       let auto = false
       let correct = false
 
-      if (question.questionType === 1) {
+      const manualEssay = onlineMode && (
+        question.questionType === 4 || question.questionType === 8 ||
+        (onlineMode === "essay" && question.questionType !== 1 && question.questionType !== 3)
+      )
+      if (manualEssay) {
+        // يضاف إلى المجموع اليدوي في الكتلة الموحدة أدناه.
+      } else if (question.questionType === 1) {
         auto = true
         const expected = sq.choices?.find(c => c.isCorrect)
         correct = Boolean(expected && ans.choiceId && expected.id === ans.choiceId)
@@ -112,6 +129,101 @@ export function gradeExam(
     autoTotal,
     manualTotal,
     percent: autoTotal > 0 ? (score / autoTotal) * 100 : 0,
+    details,
+  }
+}
+
+export interface AttemptReviewItem extends GradedItem {
+  review?: ExamAttemptAnswerReview
+  /** الدرجة الفعلية بعد أي تدخل يدوي في هذا السؤال */
+  effectiveAwarded: number
+  /** لا تصبح النتيجة النهائية جاهزة قبل مراجعة هذا العنصر */
+  pendingManualReview: boolean
+}
+
+export interface AttemptReviewSummary {
+  autoScore: number
+  autoTotal: number
+  manualScore: number
+  manualTotal: number
+  score: number
+  totalMarks: number
+  pendingManualCount: number
+  reviewedManualCount: number
+  status: "pending_review" | "partially_reviewed" | "reviewed"
+  details: AttemptReviewItem[]
+}
+
+function clampMarks(value: number, maximum: number): number {
+  return Math.round(Math.min(maximum, Math.max(0, value)) * 100) / 100
+}
+
+/** الدرجة المقترحة عند الضغط على أزرار صحيح / نصف حل / خطأ. */
+export function marksForReviewVerdict(
+  verdict: NonNullable<ExamAttemptAnswerReview["verdict"]>,
+  maximum: number
+): number {
+  if (verdict === "correct") return maximum
+  if (verdict === "half") return Math.round((maximum / 2) * 100) / 100
+  if (verdict === "incorrect") return 0
+  return 0
+}
+
+/**
+ * يجمع نتيجة التصحيح الآلي مع مراجعة المعلم لكل إجابة. هذا هو المصدر الوحيد
+ * للدرجة النهائية في الاختبارات المقالية والمختلطة؛ تعديل الدرجة الكلية يبقى
+ * طبقة استثنائية منفصلة للتوافق مع المحاولات القديمة.
+ */
+export function summarizeAttemptReview(
+  exam: Exam,
+  answers: Record<string, ExamAttemptAnswer>
+): AttemptReviewSummary {
+  const automatic = gradeExam(exam, answers)
+  let autoScore = 0
+  let autoTotal = 0
+  let manualScore = 0
+  let manualTotal = 0
+  let pendingManualCount = 0
+  let reviewedManualCount = 0
+
+  const details: AttemptReviewItem[] = automatic.details.map(detail => {
+    const review = answers[detail.subQuestionId]?.review
+    const hasManualAward = typeof review?.awardedMarks === "number" && Number.isFinite(review.awardedMarks)
+    const awarded = hasManualAward
+      ? clampMarks(review!.awardedMarks!, detail.marks)
+      : detail.awarded
+    const pendingManualReview = !detail.auto && !hasManualAward
+
+    if (detail.auto) {
+      autoTotal += detail.marks
+      autoScore += awarded
+    } else {
+      manualTotal += detail.marks
+      if (hasManualAward) {
+        manualScore += awarded
+        reviewedManualCount += 1
+      } else {
+        pendingManualCount += 1
+      }
+    }
+
+    return { ...detail, review, effectiveAwarded: awarded, pendingManualReview }
+  })
+
+  const status = pendingManualCount > 0
+    ? reviewedManualCount > 0 ? "partially_reviewed" : "pending_review"
+    : "reviewed"
+
+  return {
+    autoScore,
+    autoTotal,
+    manualScore,
+    manualTotal,
+    score: Math.round((autoScore + manualScore) * 100) / 100,
+    totalMarks: Math.round((autoTotal + manualTotal) * 100) / 100,
+    pendingManualCount,
+    reviewedManualCount,
+    status,
     details,
   }
 }

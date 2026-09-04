@@ -199,6 +199,17 @@ const fromPaymentRow = (row: any) => ({
   createdAt: row.created_at,
 });
 
+/**
+ * النوع الصريح يحسم المسار. أما السجل القديم، فـ allowOnline=true هو الدليل
+ * الوحيد المتاح على أنه أونلاين؛ ونبقي القديم غير المنشور بلا نوع حتى لا
+ * نحوّله تلقائياً إلى أوف لاين قبل أن يختار المعلم مساره.
+ */
+const persistedExamDeliveryMode = (exam: any): "online" | "offline" | undefined => {
+  if (exam.deliveryMode === "online") return "online"
+  if (exam.deliveryMode === "offline") return "offline"
+  return exam.allowOnline ? "online" : undefined
+}
+
 export const toExamRow = (e: any) => ({
   id: e.id,
   grade_id: e.gradeId || null,
@@ -212,13 +223,20 @@ export const toExamRow = (e: any) => ({
   total_marks: e.totalMarks ?? null,
   // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
   questions: {
-    _v: 2,
+    _v: 4,
     items: e.questions || [],
     templateId: e.templateId || "classic",
     showDecorations: e.showDecorations !== false,
+    ornamentSize: e.ornamentSize,
+    ornamentDensity: e.ornamentDensity,
     teacherName: e.teacherName || "",
     schoolName: e.schoolName || "",
-    allowOnline: !!e.allowOnline,
+    // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
+    deliveryMode: persistedExamDeliveryMode(e),
+    onlineExamMode: e.onlineExamMode === "objective" || e.onlineExamMode === "essay" || e.onlineExamMode === "mixed"
+      ? e.onlineExamMode
+      : undefined,
+    allowOnline: persistedExamDeliveryMode(e) === "online" && !!e.allowOnline,
     // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
     accessMode: e.accessMode === "public" ? "public" : "members",
     autoHonorBoard: !!e.autoHonorBoard,
@@ -235,10 +253,10 @@ export const toExamRow = (e: any) => ({
   created_at: e.createdAt || new Date().toISOString(),
   updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
 });
-
 export const fromExamRow = (row: any) => {
   const q = row.questions
   const wrapped = q && typeof q === "object" && !Array.isArray(q) && Array.isArray(q.items)
+  const deliveryMode = wrapped ? persistedExamDeliveryMode(q) : undefined
   return {
     id: row.id,
     gradeId: row.grade_id,
@@ -252,9 +270,17 @@ export const fromExamRow = (row: any) => {
     questions: wrapped ? q.items : (Array.isArray(q) ? q : []),
     templateId: wrapped ? (q.templateId || "classic") : "classic",
     showDecorations: wrapped ? q.showDecorations !== false : true,
+    ornamentSize: wrapped ? q.ornamentSize : undefined,
+    ornamentDensity: wrapped ? q.ornamentDensity : undefined,
     teacherName: wrapped ? (q.teacherName || undefined) : undefined,
     schoolName: wrapped ? (q.schoolName || undefined) : undefined,
-    allowOnline: wrapped ? !!q.allowOnline : false,
+    // توافق رجعي: المنشور القديم يُستنتج كأونلاين، أما غير المنشور فنتركه
+    // بلا نوع صريح كي يستطيع المعلم اختيار مساره لاحقاً.
+    deliveryMode,
+    onlineExamMode: wrapped && (q.onlineExamMode === "objective" || q.onlineExamMode === "essay" || q.onlineExamMode === "mixed")
+      ? q.onlineExamMode
+      : undefined,
+    allowOnline: deliveryMode === "online" && !!q.allowOnline,
     accessMode: wrapped && q.accessMode === "public" ? ("public" as const) : ("members" as const),
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
     honorMinPercent: wrapped ? (q.honorMinPercent ?? 100) : 100,
@@ -684,71 +710,90 @@ export function pushGrades(grades: GradeShape[]) {
 
 export function pushStudents(rows: any[]) {
   // تنظيف المراجع المعلّقة: إن كان الصف/المجموعة محذوفاً من البيانات الحالية
-  // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409)
+  // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409).
+  // مهم: القائمة الفارغة تعني «لم تُحمَّل بعد» وليست «محذوفة» — لذلك لا نُفرّغ
+  // أي مرجع إلا إذا كانت قائمة الصفوف محمّلة فعلاً، حتى لا تُفقد بيانات صحيحة
+  // (صف/مجموعة الطالب) عند محاولة رفع قبل وصول الصفوف من السحابة.
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows.map((s) => {
     const row = toStudentRow(s);
-    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
-    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    if (gradesLoaded && row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
     return row;
   });
   return pushRows("students", cleaned);
 }
 export function pushDues(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  // لا نُصفّر / لا نُسقط بناءً على قائمة غير محمّلة (فقد تُفقد بيانات صحيحة)
+  const studentsLoaded = students.length > 0;
+  const gradesLoaded = grades.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows
-    .filter((d) => studentIds.has(d.studentId)) // student_id NOT NULL
+    .filter((d) => !studentsLoaded || studentIds.has(d.studentId)) // student_id NOT NULL
     .map((d) => {
       const row = toDueRow(d);
-      if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+      if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
       return row;
     });
   return pushRows("dues", cleaned);
 }
 export function pushPayments(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  const dueIds = new Set(memoryRows<any>(STORAGE_KEYS.DUES).map((d) => d.id));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const dues = memoryRows<any>(STORAGE_KEYS.DUES);
+  const studentsLoaded = students.length > 0;
+  const duesLoaded = dues.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  const dueIds = new Set(dues.map((d) => d.id));
 
   const cleaned = rows
-    .filter((p) => studentIds.has(p.studentId)) // student_id NOT NULL
+    .filter((p) => !studentsLoaded || studentIds.has(p.studentId)) // student_id NOT NULL
     .map((p) => {
       const row = toPaymentRow(p);
-      if (row.due_id && !dueIds.has(row.due_id)) row.due_id = null;
+      if (duesLoaded && row.due_id && !dueIds.has(row.due_id)) row.due_id = null;
       return row;
     });
   return pushRows("payments", cleaned);
 }
 export function pushExams(rows: any[]) {
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows.map((e) => {
     const row = toExamRow(e);
-    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
-    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    if (gradesLoaded && row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
     return row;
   });
   return pushRows("exams", cleaned);
 }
 export function pushSessions(rows: any[]) {
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
-  // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها
-  const cleaned = rows.filter((s) => groupIds.has(s.groupId)).map(toSessionRow);
+  // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها.
+  // إن لم تكن الصفوف محمّلة بعد لا نُسقط أي حصة (قد تكون مراجعها صحيحة).
+  const cleaned = (gradesLoaded ? rows.filter((s) => groupIds.has(s.groupId)) : rows).map(toSessionRow);
   return pushRows("sessions", cleaned);
 }
 export function pushAttendance(rows: any[]) {
-  const sessionIds = new Set(memoryRows<any>(STORAGE_KEYS.SESSIONS).map((s) => s.id));
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const sessions = memoryRows<any>(STORAGE_KEYS.SESSIONS);
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const sessionsLoaded = sessions.length > 0;
+  const studentsLoaded = students.length > 0;
+  const sessionIds = new Set(sessions.map((s) => s.id));
+  const studentIds = new Set(students.map((s) => s.id));
   const cleaned = rows
-    .filter((a) => sessionIds.has(a.sessionId) && studentIds.has(a.studentId))
+    .filter((a) => (!sessionsLoaded || sessionIds.has(a.sessionId)) && (!studentsLoaded || studentIds.has(a.studentId)))
     .map(toAttendanceRow);
   return pushRows("attendance", cleaned);
 }
@@ -769,8 +814,10 @@ export function pushYearArchives(rows: YearArchiveShape[]) {
 }
 
 export function pushManualGrades(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  return pushRows("manual_grades", rows.filter((m) => studentIds.has(m.studentId)).map(toManualGradeRow));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const studentsLoaded = students.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  return pushRows("manual_grades", rows.filter((m) => !studentsLoaded || studentIds.has(m.studentId)).map(toManualGradeRow));
 }
 export function pushRegistrationRequests(rows: any[]) {
   return pushRows("registration_requests", rows.map(toRegistrationRequestRow));
@@ -779,8 +826,10 @@ export function pushGroupTransferRequests(rows: any[]) {
   return pushRows("group_transfer_requests", rows.map(toGroupTransferRequestRow));
 }
 export function pushStudentHistory(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  return pushRows("student_history", rows.filter((h) => studentIds.has(h.studentId)).map(toStudentHistoryRow));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const studentsLoaded = students.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  return pushRows("student_history", rows.filter((h) => !studentsLoaded || studentIds.has(h.studentId)).map(toStudentHistoryRow));
 }
 export function pushStudentAccounts(rows: any[]) {
   return pushRows("student_accounts", rows.map(toStudentAccountRow));
@@ -837,17 +886,20 @@ export async function fetchRegistrationRequestByEmail(email: string): Promise<an
   }
 }
 
-/** الطالب يجلب استفساراته الخاصة من Supabase (بدون تخزين محلي — القراءة فقط) */
-export async function fetchStudentInquiries(studentId: string): Promise<any[]> {
+/**
+ * الطالب يجلب استفساراته الخاصة عبر دالة آمنة SECURITY DEFINER بسرّ جلسته —
+ * لا قراءة خام لجدول inquiries من anon (لا تسريب لاستفسارات باقي الطلاب).
+ */
+export async function fetchStudentInquiries(token: string): Promise<any[]> {
   const sb = getSupabase()
-  if (!sb) return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
+  if (!sb || !token) return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
   try {
-    const { data, error } = await sb.from("inquiries").select("*").eq("student_id", studentId)
-    if (error) {
+    const { data, error } = await sb.rpc("get_student_inquiries", { p_token: token })
+    if (error || !data || data.ok !== true) {
       console.warn("fetchStudentInquiries:", error)
       return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
     }
-    return (data as any[] || []).map(fromInquiryRow)
+    return ((data.inquiries as any[]) || []).map(fromInquiryRow)
   } catch (e) {
     console.warn("fetchStudentInquiries:", e)
     return memoryRows<any>(STORAGE_KEYS.INQUIRIES)
@@ -871,42 +923,78 @@ export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; e
   setStore(STORAGE_KEYS.INQUIRIES, [...storeRows<any>(STORAGE_KEYS.INQUIRIES), thread])
   return { ok: true }
 }
-const toAttemptRow = (a: any) => ({
-  id: a.id,
-  exam_id: a.examId,
-  student_id: a.studentId || null,
-  student_name: a.studentName || "",
-  // هاتف الزائر في الاختبارات المفتوحة للجميع (عمود اختياري — يُتجاهل إن لم تُرحَّل القاعدة بعد)
-  phone: a.phone || null,
-  group_id: a.groupId || "",
-  grade_id: a.gradeId || "",
-  answers: a.answers || {},
-  score: a.score ?? 0,
-  total_marks: a.totalMarks ?? 0,
-  started_at: a.startedAt || new Date().toISOString(),
-  submitted_at: a.submittedAt || new Date().toISOString(),
-  duration_seconds: a.durationSeconds ?? 0,
-  manual_override: a.manualOverride ? { score: a.manualOverride.score, reason: a.manualOverride.reason || null, at: a.manualOverride.at } : null,
-});
+const toAttemptRow = (a: any) => {
+  // نستخدم العمود JSONB الموجود manual_override لحفظ بيانات المراجعة الجديدة
+  // أيضاً؛ وبذلك تتوافق القاعدة المنشورة القديمة من دون انتظار عمود SQL جديد.
+  const reviewMeta = {
+    ...(a.manualOverride ? {
+      score: a.manualOverride.score,
+      reason: a.manualOverride.reason || null,
+      at: a.manualOverride.at,
+    } : {}),
+    ...(typeof a.autoScore === "number" ? { autoScore: a.autoScore } : {}),
+    ...(typeof a.autoTotal === "number" ? { autoTotal: a.autoTotal } : {}),
+    ...(typeof a.manualScore === "number" ? { manualScore: a.manualScore } : {}),
+    ...(typeof a.manualTotal === "number" ? { manualTotal: a.manualTotal } : {}),
+    ...(a.gradingStatus ? { gradingStatus: a.gradingStatus } : {}),
+    ...(a.resultReleasedAt ? { resultReleasedAt: a.resultReleasedAt } : {}),
+    ...(a.reviewedAt ? { reviewedAt: a.reviewedAt } : {}),
+    ...(a.timedOut === true ? { timedOut: true } : {}),
+  }
+  return {
+    id: a.id,
+    exam_id: a.examId,
+    student_id: a.studentId || null,
+    student_name: a.studentName || "",
+    // هاتف الزائر في الاختبارات المفتوحة للجميع (عمود اختياري — يُتجاهل إن لم تُرحَّل القاعدة بعد)
+    phone: a.phone || null,
+    group_id: a.groupId || "",
+    grade_id: a.gradeId || "",
+    answers: a.answers || {},
+    score: a.score ?? 0,
+    total_marks: a.totalMarks ?? 0,
+    started_at: a.startedAt || new Date().toISOString(),
+    submitted_at: a.submittedAt || new Date().toISOString(),
+    duration_seconds: a.durationSeconds ?? 0,
+    manual_override: Object.keys(reviewMeta).length > 0 ? reviewMeta : null,
+  }
+};
 
-const fromAttemptRow = (row: any) => ({
-  id: row.id,
-  examId: row.exam_id,
-  studentId: nil(row.student_id),
-  studentName: row.student_name,
-  phone: nil(row.phone),
-  groupId: row.group_id,
-  gradeId: row.grade_id,
-  answers: row.answers || {},
-  score: Number(row.score) || 0,
-  totalMarks: Number(row.total_marks) || 0,
-  startedAt: row.started_at,
-  submittedAt: row.submitted_at,
-  durationSeconds: Number(row.duration_seconds) || 0,
-  manualOverride: row.manual_override && typeof row.manual_override === "object"
-    ? { score: Number(row.manual_override.score) || 0, reason: row.manual_override.reason || undefined, at: row.manual_override.at || "" }
-    : undefined,
-});
+const fromAttemptRow = (row: any) => {
+  const reviewMeta = row.manual_override && typeof row.manual_override === "object"
+    ? row.manual_override
+    : null
+  return {
+    id: row.id,
+    examId: row.exam_id,
+    studentId: nil(row.student_id),
+    studentName: row.student_name,
+    phone: nil(row.phone),
+    groupId: row.group_id,
+    gradeId: row.grade_id,
+    answers: row.answers || {},
+    score: Number(row.score) || 0,
+    totalMarks: Number(row.total_marks) || 0,
+    autoScore: typeof reviewMeta?.autoScore === "number" ? reviewMeta.autoScore : undefined,
+    autoTotal: typeof reviewMeta?.autoTotal === "number" ? reviewMeta.autoTotal : undefined,
+    manualScore: typeof reviewMeta?.manualScore === "number" ? reviewMeta.manualScore : undefined,
+    manualTotal: typeof reviewMeta?.manualTotal === "number" ? reviewMeta.manualTotal : undefined,
+    gradingStatus: reviewMeta?.gradingStatus === "submitted" || reviewMeta?.gradingStatus === "pending_review" ||
+      reviewMeta?.gradingStatus === "partially_reviewed" || reviewMeta?.gradingStatus === "reviewed" ||
+      reviewMeta?.gradingStatus === "released"
+      ? reviewMeta.gradingStatus
+      : undefined,
+    resultReleasedAt: typeof reviewMeta?.resultReleasedAt === "string" ? reviewMeta.resultReleasedAt : undefined,
+    reviewedAt: typeof reviewMeta?.reviewedAt === "string" ? reviewMeta.reviewedAt : undefined,
+    timedOut: reviewMeta?.timedOut === true || undefined,
+    startedAt: row.started_at,
+    submittedAt: row.submitted_at,
+    durationSeconds: Number(row.duration_seconds) || 0,
+    manualOverride: reviewMeta && typeof reviewMeta.score === "number"
+      ? { score: Number(reviewMeta.score) || 0, reason: reviewMeta.reason || undefined, at: reviewMeta.at || "" }
+      : undefined,
+  }
+};
 
 export function pushExamAttempts(rows: any[]) {
   return (async () => {
@@ -1155,47 +1243,203 @@ export interface PublicData {
   /** حقول الجدول الآمنة فقط: بدون أسعار أو أعداد طلاب */
   groups: { id: string; gradeId: string; name: string; days: string[]; startTime: string; endTime: string }[];
   settings: Record<string, string>;
+  /** false = Supabase متصل لكن ترحيل API الآمن للاختبارات غير موجود/فشل. */
+  examsAvailable: boolean;
   exams: ReturnType<typeof fromExamRow>[];
 }
 
-/**
- * إرسال محاولة طالب من الصفحة العامة (بدون تسجيل دخول).
- * لو كانت القاعدة لم تُرحَّل بعد (عمود phone غير موجود — خطأ 42703)
- * نُعيد الإرسال بدون العمود حتى لا تضيع محاولة الطالب أبداً.
- */
-export async function submitPublicAttempt(attempt: any): Promise<void> {
+// ============================================================
+// جلسة الاختبار ذات ساعة الخادم (Migration 015)
+// ============================================================
+// لا تحمل هذه الدوال مفتاح التصحيح إلى الخادم من العميل. الخادم يحدد بداية
+// الجلسة ونهايتها، ولا يقبل حفظ إجابات جديدة بعد expiresAt.
+
+export interface OnlineExamSessionInput {
+  sessionId: string;
+  attemptId: string;
+  examId: string;
+  studentId?: string;
+  studentName: string;
+  phone?: string;
+  gradeId: string;
+  groupId: string;
+}
+
+export interface OnlineExamTimerSession {
+  id: string;
+  secret: string;
+  attemptId: string;
+  startedAt: string;
+  expiresAt: string;
+}
+
+export interface OnlineExamTimerStartResult {
+  /** false تعني بيئة معاينة بلا Supabase؛ لا نعاملها كخطأ ترحيل. */
+  configured: boolean;
+  session?: OnlineExamTimerSession;
+  error?: string;
+}
+
+/** يبدأ المؤقت من PostgreSQL. في موقع مهيأ لا نسمح بالبدء إن لم يُشغّل ترحيل 015. */
+export async function startOnlineExamTimerSession(input: OnlineExamSessionInput): Promise<OnlineExamTimerStartResult> {
   const sb = getSupabase();
-  if (!sb) return;
-  const row = toAttemptRow(attempt);
-  let { error } = await sb.from("exam_attempts").insert(row);
-  if (error && isMissingColumnError(error, "phone")) {
-    const withoutPhone: Record<string, unknown> = { ...row };
-    delete withoutPhone.phone;
-    ({ error } = await sb.from("exam_attempts").insert(withoutPhone));
+  if (!sb) {
+    return isSupabaseConfigured()
+      ? { configured: true, error: "تعذر الاتصال بخدمة جلسات الاختبار" }
+      : { configured: false };
   }
-  if (error && error.code !== "23505") {
-    console.warn("submitPublicAttempt:", error);
+  const { data, error } = await sb.rpc("start_online_exam_session", {
+    p_session_id: input.sessionId,
+    p_attempt_id: input.attemptId,
+    p_exam_id: input.examId,
+    p_student_id: input.studentId || null,
+    p_student_name: input.studentName,
+    p_phone: input.phone || null,
+    p_grade_id: input.gradeId,
+    p_group_id: input.groupId,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("startOnlineExamTimerSession:", error);
+    return { configured: true, error: error?.message || "تعذر بدء جلسة الاختبار الآمنة" };
+  }
+  const row = data as Record<string, unknown>;
+  if (typeof row.id !== "string" || typeof row.secret !== "string" ||
+      typeof row.attemptId !== "string" || typeof row.startedAt !== "string" ||
+      typeof row.expiresAt !== "string") {
+    return { configured: true, error: "استجابة جلسة الاختبار غير صالحة" };
+  }
+  return {
+    configured: true,
+    session: {
+      id: row.id,
+      secret: row.secret,
+      attemptId: row.attemptId,
+      startedAt: row.startedAt,
+      expiresAt: row.expiresAt,
+    },
+  };
+}
+
+/** يحفظ آخر إجابات الطالب في جلسة الخادم. */
+export async function saveOnlineExamTimerProgress(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  answers: Record<string, unknown>
+): Promise<{ ok: boolean; state?: "saved" | "expired" | "submitted"; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("save_online_exam_progress", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+    p_answers: answers,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("saveOnlineExamTimerProgress:", error);
+    return { ok: false, error: error?.message || "تعذر حفظ تقدم الاختبار" };
+  }
+  const state = (data as Record<string, unknown>).state;
+  if (state !== "saved" && state !== "expired" && state !== "submitted") {
+    return { ok: false, error: "استجابة حفظ التقدم غير صالحة" };
+  }
+  return { ok: state === "saved", state };
+}
+
+export interface OnlineExamAnswerFeedback {
+  choiceId?: string;
+  text?: string;
+  isTrue?: boolean;
+}
+
+/** مفاتيح مسموح بإظهارها لجلسة الطالب فقط بحسب إعداد afterEach / atEnd. */
+export async function getOnlineExamAnswerFeedback(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">
+): Promise<{ ok: boolean; answers?: Record<string, OnlineExamAnswerFeedback>; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("get_online_exam_answer_feedback", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("getOnlineExamAnswerFeedback:", error);
+    return { ok: false, error: error?.message || "تعذر جلب تغذية الإجابة الراجعة" };
+  }
+  const answers = (data as Record<string, unknown>).answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+    return { ok: false, error: "استجابة تغذية الإجابة غير صالحة" };
+  }
+  return { ok: true, answers: answers as Record<string, OnlineExamAnswerFeedback> };
+}
+
+/** نسخة محاولة آمنة مع مفاتيح موضوعية أصدرها الخادم لهذه الجلسة فقط. */
+export type OnlineExamTimerResultAttempt = ReturnType<typeof fromAttemptRow> & {
+  answerFeedback?: Record<string, OnlineExamAnswerFeedback>
+}
+
+/**
+ * يستعيد محاولة واحدة بالسر العشوائي الذي أصدره الخادم عند البدء. الدالة لا
+ * تقرأ exam_attempts مباشرة؛ التعليقات ودرجات المقال لا تصل قبل الإطلاق.
+ */
+export async function getOnlineExamTimerResult(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">
+): Promise<{
+  ok: boolean
+  state?: "in_progress" | "submitted"
+  attempt?: OnlineExamTimerResultAttempt
+  feedback?: Record<string, OnlineExamAnswerFeedback>
+  error?: string
+}> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: "Supabase غير متصل" }
+  const { data, error } = await sb.rpc("get_online_exam_result", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+  })
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    console.warn("getOnlineExamTimerResult:", error)
+    return { ok: false, error: error?.message || "تعذر استعادة نتيجة الاختبار" }
+  }
+  const row = data as Record<string, unknown>
+  if (row.state === "in_progress") return { ok: true, state: "in_progress" }
+  if (row.state !== "submitted" || !row.attempt || typeof row.attempt !== "object" || Array.isArray(row.attempt)) {
+    return { ok: false, error: "استجابة نتيجة الاختبار غير صالحة" }
+  }
+  const rawFeedback = row.feedback
+  const feedback = rawFeedback && typeof rawFeedback === "object" && !Array.isArray(rawFeedback)
+    ? rawFeedback as Record<string, OnlineExamAnswerFeedback>
+    : {}
+  return {
+    ok: true,
+    state: "submitted",
+    attempt: {
+      ...fromAttemptRow(row.attempt),
+      answerFeedback: feedback,
+    },
+    feedback,
   }
 }
 
-/** عدد محاولات زائر (بلا حساب) في اختبار — بالاسم والمجموعة، لحد المحاولات عبر الأجهزة */
-export async function fetchGuestAttemptCount(
-  examId: string,
-  studentName: string,
-  groupId: string
-): Promise<number | null> {
+/** يسلم الجلسة المعتمدة؛ يرجع المحاولة التي حسب الخادم جزأها الموضوعي. */
+export async function submitOnlineExamTimerSession(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  answers: Record<string, unknown>
+): Promise<{ ok: boolean; attempt?: any; timedOut?: boolean; error?: string }> {
   const sb = getSupabase();
-  const name = (studentName || "").trim();
-  if (!sb || !examId || !name) return null;
-  const { count, error } = await sb
-    .from("exam_attempts")
-    .select("id", { count: "exact", head: true })
-    .eq("exam_id", examId)
-    .eq("student_name", name)
-    .is("student_id", null)
-    .eq("group_id", groupId || "");
-  if (error) return null;
-  return count ?? 0;
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("submit_online_exam_session", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+    p_answers: answers,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("submitOnlineExamTimerSession:", error);
+    return { ok: false, error: error?.message || "تعذر تسليم الاختبار إلى الخادم" };
+  }
+  const row = data as Record<string, any>;
+  const attempt = row.attempt;
+  if (row.state !== "submitted" || !attempt || typeof attempt !== "object" || typeof attempt.id !== "string") {
+    return { ok: false, error: "لم يؤكد الخادم تسليم الاختبار" };
+  }
+  return { ok: true, attempt, timedOut: row.timedOut === true || attempt.timedOut === true };
 }
 
 export async function submitPublicHonoree(h: any): Promise<void> {
@@ -1235,20 +1479,6 @@ export async function fetchStudentAccountByEmail(email: string): Promise<any | n
   return fromStudentAccountRow(byMail.data[0]);
 }
 
-/** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
-export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
-  const { data, error } = await sb
-    .from("exam_attempt_counts")
-    .select("attempts")
-    .eq("exam_id", examId)
-    .eq("student_id", studentId)
-    .maybeSingle();
-  if (error) return null;
-  return (data as any)?.attempts ?? 0;
-}
-
 export async function fetchPublicData(): Promise<PublicData | null> {
   const sb = getSupabase();
   if (!sb) return null;
@@ -1262,7 +1492,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     // حقول الجدول الآمنة فقط (أيام + أوقات) — لا أسعار ولا أعداد طلاب
     sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
     sb.from("app_settings").select("key,value"),
-    sb.from("exams").select("*"),
+    // Migration 015: RPC تُنقّي مفاتيح الإجابات داخل PostgreSQL قبل الشبكة.
+    sb.rpc("get_public_online_exams"),
   ]);
 
   if (ann.error || hon.error || files.error || links.error || grades.error || groups.error || settings.error) {
@@ -1290,7 +1521,10 @@ export async function fetchPublicData(): Promise<PublicData | null> {
       endTime: g.end_time || "",
     })),
     settings: settingsMap,
-    exams: exams.error ? [] : (exams.data as any[]).map(fromExamRow).filter((e: any) => e.allowOnline),
+    examsAvailable: !exams.error && Array.isArray(exams.data),
+    exams: exams.error || !Array.isArray(exams.data) ? [] : (exams.data as any[])
+      .map(fromExamRow)
+      .filter((e: any) => e.deliveryMode === "online" && e.allowOnline),
   };
 }
 
@@ -1361,85 +1595,280 @@ export interface StudentPortalData {
   gradeGroups: { id: string; name: string; days: string[]; startTime: string; endTime: string }[]
 }
 
+export interface StudentLoginResult {
+  ok: boolean
+  status?: 'pending' | 'rejected' | 'blocked'
+  /** رمز مميز لنتيجة الدخول — لتمييز لا يوجد حساب / كلمة مرور خاطئة / إلخ */
+  code?: 'ok' | 'no_account' | 'wrong_password' | 'pending' | 'rejected' | 'blocked' | 'not_linked' | 'unavailable'
+  error?: string
+  studentId?: string
+  name?: string
+  token?: string
+}
+
 /**
- * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة عامة — بياناته فقط تُعرض).
- * تعتمد على سياسات القراءة العامة الموجودة في المخطط.
+ * جلسة آمنة: دالة student_login (SECURITY DEFINER) تتحقق من كلمة المرور
+ * داخل قاعدة البيانات (بصمة SHA-256) وتُصدر توكين جلسة عشوائي. لا يقرأ
+ * anon بيانات حسابات الطلاب؛ الجلسة لا تُنحتَل لمجرد قراءة بصمة كلمة المرور.
  */
-export async function fetchStudentPortalData(studentId: string): Promise<StudentPortalData | null> {
+export async function studentLogin(
+  email: string,
+  password: string,
+  legacyFnv?: string
+): Promise<StudentLoginResult> {
   const sb = getSupabase()
-  if (!sb) return null
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
+  let data: Record<string, any>
+  const msg = (e: any) => String(e?.message || e || "")
+  try {
+    const res = await sb.rpc("student_login", {
+      p_email: email,
+      p_password: password,
+      p_legacy_fnv: legacyFnv || null,
+    })
+    if (res.error) {
+      console.warn("studentLogin:", res.error)
+      // دالة غير موجودة/مخطط قديم → ننزل للخطة المحلية كي يبقى الدخول عاملاً
+      // حتى تشغيل سكربت الإصلاح (REVOKE + دوال SECURITY DEFINER).
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة الدخول غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
+      }
+    }
+    if (!res.data || typeof res.data !== "object") {
+      return { ok: false, code: "unavailable", error: "استجابة الدخول غير صالحة" }
+    }
+    data = res.data as Record<string, any>
+  } catch (e) {
+    console.warn("studentLogin:", e)
+    return { ok: false, code: "unavailable", error: "تعذر إنشاء الجلسة" }
+  }
+  if (data.ok !== true) {
+    return { ok: false, status: data.status as any, code: data.code as any, error: data.error }
+  }
+  return { ok: true, studentId: data.studentId, name: data.name, token: data.token }
+}
+
+/** يُلغي جلسة الطالب في قاعدة البيانات (يُستدعى عند تسجيل الخروج) */
+export async function studentLogout(token: string): Promise<void> {
+  const sb = getSupabase()
+  if (!sb || !token) return
+  try {
+    await sb.rpc("student_logout", { p_token: token })
+  } catch {
+    /* الإلغاء سحابي بأمان — النجاح في المحاولة التالية */
+  }
+}
+
+/** نتيجة التسجيل المباشر (تفعيل فوري بدون موافقة المعلم) */
+export interface StudentRegisterResult {
+  ok: boolean
+  code?: 'ok' | 'closed' | 'not_enabled' | 'email_taken' | 'bad_input' | 'unavailable'
+  error?: string
+  studentId?: string
+  name?: string
+}
+
+/**
+ * تسجيل مباشر عبر الدالة الآمنة student_register (SECURITY DEFINER):
+ * ينشئ الطالب + الطلب (approved) + الحساب دفعة واحدة في السحابة، فيتمكن
+ * الطالب من تسجيل الدخول فوراً. يُستدعى فقط عندما يكون «التفعيل المباشر» مفعّلاً.
+ */
+export async function studentRegisterAuto(input: {
+  name: string
+  phone: string
+  guardianPhone: string
+  email: string
+  passwordHash: string
+  gradeId: string
+  groupId: string
+}): Promise<StudentRegisterResult> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
+  const msg = (e: any) => String(e?.message || e || "")
+  try {
+    const res = await sb.rpc("student_register", {
+      p_name: input.name,
+      p_phone: input.phone,
+      p_guardian_phone: input.guardianPhone,
+      p_email: input.email,
+      p_password_hash: input.passwordHash,
+      p_grade_id: input.gradeId,
+      p_group_id: input.groupId,
+    })
+    if (res.error) {
+      console.warn("studentRegisterAuto:", res.error)
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة التسجيل المباشر غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
+      }
+    }
+    const data = (res.data || {}) as Record<string, any>
+    return { ok: data.ok === true, code: data.code as any, error: data.error, studentId: data.studentId, name: data.name }
+  } catch (e) {
+    console.warn("studentRegisterAuto:", e)
+    return { ok: false, code: "unavailable", error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" }
+  }
+}
+
+/** نتيجة تغيير كلمة المرور من بوابة الطالب */
+export interface ChangePasswordResult {
+  ok: boolean
+  code?: 'ok' | 'invalid' | 'bad_input' | 'wrong_old' | 'unavailable'
+  error?: string
+}
+
+/**
+ * تغيير الطالب لكلمة مروره عبر الدالة الآمنة change_student_password:
+ * تتحقق من الجلسة (التوكين) ومن كلمة المرور القديمة وتُحدّث البصمة في
+ * الحساب والطلب المعتمد — كل ذلك داخل الخادم، بلا قراءة خام.
+ */
+export async function changeStudentPassword(
+  token: string,
+  oldPasswordHash: string,
+  oldLegacyFnv: string | null,
+  newPasswordHash: string
+): Promise<ChangePasswordResult> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
+  const msg = (e: any) => String(e?.message || e || "")
+  try {
+    const res = await sb.rpc("change_student_password", {
+      p_token: token,
+      p_old_password_hash: oldPasswordHash,
+      p_old_legacy_fnv: oldLegacyFnv || null,
+      p_new_password_hash: newPasswordHash,
+    })
+    if (res.error) {
+      console.warn("changeStudentPassword:", res.error)
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة تغيير كلمة المرور غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — أعد المحاولة",
+      }
+    }
+    const data = (res.data || {}) as Record<string, any>
+    return { ok: data.ok === true, code: data.code as any, error: data.error }
+  } catch (e) {
+    console.warn("changeStudentPassword:", e)
+    return { ok: false, code: "unavailable", error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" }
+  }
+}
+
+/** نص خام لقراءة بيانات الطالب عبر الدالة الآمنة (لا تعرض بيانات غيره) */
+export async function getStudentPortalRecord(token: string): Promise<{
+  student: any
+  manualGrades: any[]
+  dues: any[]
+  payments: any[]
+  attendance: any[]
+  history: any[]
+  transferRequests: any[]
+} | null> {
+  const sb = getSupabase()
+  if (!sb || !token) return null
+  let data: Record<string, any>
+  try {
+    const res = await sb.rpc("get_student_portal_data", { p_token: token })
+    if (res.error || !res.data || typeof res.data !== "object") {
+      console.warn("getStudentPortalRecord:", res.error)
+      return null
+    }
+    data = res.data as Record<string, any>
+  } catch (e) {
+    console.warn("getStudentPortalRecord:", e)
+    return null
+  }
+  if (data.ok !== true || !data.student) return null
+  return {
+    student: data.student,
+    manualGrades: Array.isArray(data.manualGrades) ? data.manualGrades : [],
+    dues: Array.isArray(data.dues) ? data.dues : [],
+    payments: Array.isArray(data.payments) ? data.payments : [],
+    attendance: Array.isArray(data.attendance) ? data.attendance : [],
+    history: Array.isArray(data.history) ? data.history : [],
+    transferRequests: Array.isArray(data.transferRequests) ? data.transferRequests : [],
+  }
+}
+
+/**
+ * جلب كل بيانات طالب مسجَّل الدخول للبوابة (قراءة مقيّدة عبر دالة آمنة).
+ * بيانات الطالب نفسه تأتي من get_student_portal_data بسرّ جلسته، أما
+ * الفئات العامة (الصفوف/المجموعات/الشرّاف/الإعلانات) فتُقرأ كمثلها العام.
+ */
+export async function fetchStudentPortalData(token: string): Promise<StudentPortalData | null> {
+  const sb = getSupabase()
+  if (!sb || !token) return null
 
   try {
-    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
-      await Promise.all([
-        sb.from("students").select("*"),
-        sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
-        sb.from("grades").select("id,name"),
-        sb.from("manual_grades").select("*"),
-        sb.from("exam_attempts").select("*"),
-        sb.from("dues").select("*"),
-        sb.from("payments").select("*"),
-        sb.from("attendance").select("*"),
-        sb.from("honorees").select("*"),
-        sb.from("student_history").select("*"),
-        sb.from("group_transfer_requests").select("*"),
-        sb.from("announcements").select("*"),
-        sb.from("exams").select("*"),
-      ])
+    const [raw, groupsRes, gradesRes, honRes, annRes, examsRes] = await Promise.all([
+      getStudentPortalRecord(token),
+      sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
+      sb.from("grades").select("id,name"),
+      sb.from("honorees").select("*"),
+      sb.from("announcements").select("*"),
+      // لا نقرأ exams الخام من بوابة الطالب؛ RPC 015 ينقّي المفاتيح أولاً.
+      sb.rpc("get_public_online_exams"),
+    ])
 
-    if (studentsRes.error) return null
-    const student = (studentsRes.data as any[]).find((s) => s.id === studentId)
-    if (!student) return null
+    if (!raw || !raw.student) return null
+    const student = fromStudentRow(raw.student)
 
-    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.group_id)
-    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.grade_id)
+    const group = (groupsRes.data as any[] || []).find((g) => g.id === student.groupId)
+    const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.gradeId)
 
-    const attempts = attemptsRes.error ? [] : (attemptsRes.data as any[] || [])
-    const manual = manualRes.error ? [] : (manualRes.data as any[] || [])
-    const dues = duesRes.error ? [] : (duesRes.data as any[] || [])
-    const payments = paymentsRes.error ? [] : (paymentsRes.data as any[] || [])
-    const att = attRes.error ? [] : (attRes.data as any[] || [])
     const hon = honRes.error ? [] : (honRes.data as any[] || [])
-    const hist = histRes.error ? [] : (histRes.data as any[] || [])
-    const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
     const anns = annRes.error ? [] : (annRes.data as any[] || [])
-    const examRows = examsRes.error ? [] : (examsRes.data as any[] || [])
+    const examRows = examsRes.error || !Array.isArray(examsRes.data) ? [] : examsRes.data as any[]
 
     // مجموعات صفه (لطلب النقل + جدول مواعيده)
-    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.grade_id)
+    const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.gradeId)
     const gradeGroupIds = new Set(gradeGroupsAll.map((g) => g.id))
 
     return {
-      student: fromStudentRow(student),
+      student,
       gradeName: grade?.name || "",
       groupName: group?.name || "",
       groupStartTime: group?.start_time || "",
       groupEndTime: group?.end_time || "",
       groupDays: Array.isArray(group?.days) ? group.days : [],
-      manualGrades: manual.filter((m) => m.student_id === studentId).map(fromManualGradeRow),
-      examAttempts: attempts.filter((a) => a.student_id === studentId).map(fromAttemptRow),
-      dues: dues.filter((d) => d.student_id === studentId).map(fromDueRow),
-      payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
-      attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),
-      honorees: hon.filter((h) => h.student_id === studentId).map(fromHonoreeRow),
+      manualGrades: (raw.manualGrades || []).map(fromManualGradeRow),
+      // تعاد محاولات الاختبار من RPC get_online_exam_result بسر الجلسة في
+      // صفحة الطالب؛ لا نقرأ جدول exam_attempts الخام من بوابة anon.
+      examAttempts: [],
+      dues: (raw.dues || []).map(fromDueRow),
+      payments: (raw.payments || []).map(fromPaymentRow),
+      attendance: (raw.attendance || []).map(fromAttendanceRow),
+      honorees: hon.filter((h) => h.student_id === student.id).map(fromHonoreeRow),
       // لوحة شرف صفه: متفوقو مجموعات صفه فقط
       gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
-      history: hist.filter((h) => h.student_id === studentId).map(fromStudentHistoryRow),
-      transferRequests: transfers.filter((t) => t.student_id === studentId).map(fromGroupTransferRequestRow),
+      history: (raw.history || []).map(fromStudentHistoryRow),
+      transferRequests: (raw.transferRequests || []).map(fromGroupTransferRequestRow),
       // إعلانات صفه فقط (المستهدف فارغ = عام)
       announcements: anns
         .map(fromAnnouncementRow)
         .filter((a: any) => {
           const targets = a.targetGradeIds || []
-          return targets.length === 0 || targets.includes(student.grade_id)
+          return targets.length === 0 || targets.includes(student.gradeId)
         }),
       // اختبارات صفه/مجموعته فقط
       exams: examRows
         .map(fromExamRow)
-        .filter((e: any) => !!e.allowOnline && (!e.gradeId || e.gradeId === student.grade_id))
+        .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.gradeId))
         .filter((e: any) => {
           const targets = e.targetGroupIds || []
-          return targets.length === 0 || targets.includes(student.group_id)
+          return targets.length === 0 || targets.includes(student.groupId)
         }),
       gradeGroups: gradeGroupsAll.map((g) => ({
         id: g.id,

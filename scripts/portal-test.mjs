@@ -42,6 +42,7 @@ const stripImportsOf = (src, spec) =>
   src.replace(new RegExp(`import\\s*\\{[^}]*\\}\\s*from\\s*"\\./${spec}"`), "")
 
 const stubs = `import { readRows as __memRows, writeRows as __memWrite } from "./memory-store.mjs"
+import { createHash } from "node:crypto"
 const queuePush = () => Promise.resolve()
 ${["pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
   .map((f) => `const ${f} = () => Promise.resolve()`).join("\n")}
@@ -60,9 +61,68 @@ const submitGroupTransferRequest = async (request) => {
 const exportToPDF = async () => true
 const printElement = () => {}
 const fetchRegistrationRequestByEmail = async () => null
-const fetchStudentAccountByEmail = async (mail) =>
-  __cloud.studentAccounts.find((a) => a.email === String(mail || "").trim().toLowerCase()) || null
-const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null`
+const fetchStudentAccountByEmail = async () => null
+const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null
+// دالة student_login الآمنة (SECURITY DEFINER): تتحقق من كلمة المرور والمصير
+// داخل قاعدة البيانات. في الاختبار نُحاكيها بقراءة المخزن السحابي الصوري نفسه
+// الذي اشتُقّت منه البيانات، فتعكس المنطق الفعلي (حسابات + طلبات).
+const studentLogin = async (email, pw, _fnv) => {
+  const __sha256 = (s) => createHash("sha256").update(String(s)).digest("hex")
+  const __fnv = (input) => {
+    let h1 = 0x811c9dc5, h2 = 0x01000193
+    for (let i = 0; i < input.length; i++) {
+      const c = input.charCodeAt(i)
+      h1 = ((h1 ^ c) * 0x01000193) >>> 0
+      h2 = ((h2 + c) * 0x85ebca6b) >>> 0
+    }
+    return "fnv$" + h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")
+  }
+  const matchStored = (stored) =>
+    !!stored && (stored === __sha256(pw) || (stored.startsWith("fnv$") && stored === __fnv(pw)))
+  const mail = String(email || "").trim().toLowerCase()
+  const reqs = __memRows("registrationRequests").filter(r => String(r.email || "").trim().toLowerCase() === mail)
+  const accounts = __memRows("studentAccounts").filter(a => String(a.email || "").trim().toLowerCase() === mail)
+  const req = reqs.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))).pop()
+  const acc = accounts.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))).pop()
+  if (!req && !acc) return { ok: false, code: "no_account", error: "لا يوجد حساب بهذا البريد — سجِّل أولاً من صفحة التسجيل" }
+  let ok = false
+  if (req && matchStored(req.passwordHash)) ok = true
+  if (acc && acc.active !== false && matchStored(acc.passwordHash)) ok = true
+  if (!ok) return { ok: false, code: "wrong_password", error: "كلمة المرور غير صحيحة" }
+  if (req && req.status === "pending") return { ok: false, code: "pending", status: "pending", error: "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً" }
+  if (req && req.status === "rejected") return { ok: false, code: "rejected", status: "rejected", error: "تم رفض طلب التسجيل" }
+  if (acc && acc.active === false) return { ok: false, code: "blocked", status: "blocked", error: "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم" }
+  const studentId = acc && acc.studentId ? acc.studentId : (req ? req.linkedStudentId : null)
+  if (!studentId) return { ok: false, code: "not_linked", error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+  return { ok: true, code: "ok", studentId, name: "", token: "test-token" }
+}
+const studentLogout = async () => {}
+// --- التفعيل المباشر: محاكاة دالة student_register (SECURITY DEFINER) ---
+const studentRegisterAuto = async (input) => {
+  const sid = "stu-" + Math.random().toString(36).slice(2, 10)
+  const now = new Date().toISOString()
+  const student = { id: sid, name: input.name, phone: input.phone, email: input.email, gradeId: input.gradeId, groupId: input.groupId, status: "active", inquiryBlocked: false, createdAt: now, updatedAt: now }
+  globalThis.__remoteStudents = globalThis.__remoteStudents || {}
+  globalThis.__remoteStudents[sid] = student
+  __memWrite("students", [...__memRows("students"), student])
+  const req = { id: "reg-" + sid, name: input.name, phone: input.phone, guardianPhone: input.guardianPhone, email: input.email, passwordHash: input.passwordHash, gradeId: input.gradeId, groupId: input.groupId, status: "approved", linkedStudentId: sid, createdAt: now, reviewedAt: now }
+  __cloud.registrationRequests.push(req)
+  __memWrite("registrationRequests", [...__memRows("registrationRequests"), req])
+  const acc = { id: input.email, email: input.email, studentId: sid, active: true, passwordHash: input.passwordHash, createdAt: now }
+  __cloud.studentAccounts = __cloud.studentAccounts || []
+  __cloud.studentAccounts.push(acc)
+  __memWrite("studentAccounts", [...__memRows("studentAccounts"), acc])
+  return { ok: true, code: "ok", studentId: sid, name: input.name }
+}
+// --- تغيير كلمة المرور: محاكاة دالة change_student_password ---
+const changeStudentPassword = async (_token, oldHash, oldFnv, newHash) => {
+  const accs = __memRows("studentAccounts")
+  const acc = accs.find(a => a.passwordHash === oldHash || (oldFnv && a.passwordHash === oldFnv))
+  if (!acc) return { ok: false, code: "wrong_old", error: "كلمة المرور القديمة غير صحيحة" }
+  __memWrite("studentAccounts", accs.map(a => a.id === acc.id ? { ...a, passwordHash: newHash } : a))
+  __memWrite("registrationRequests", __memRows("registrationRequests").map(r => r.linkedStudentId === acc.studentId && r.status === "approved" ? { ...r, passwordHash: newHash } : r))
+  return { ok: true, code: "ok" }
+}`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)
 const storageKeys = readFileSync("src/lib/storage-keys.ts", "utf8").replace(/export /g, "")
@@ -137,6 +197,13 @@ const isSupabaseConfigured = () => false`)
 }
 {
   files["portal-content.mjs"] = rewrite(readFileSync("src/lib/portal-content.ts", "utf8"))
+}
+{
+  // قدرات نتائج الاختبار — تُمحى عند الخروج؛ في الاختبار لا حاجة لسلوك حقيقي.
+  files["online-exam-result-session.mjs"] =
+    `export const clearRememberedOnlineExamResultSessions = () => {}\n` +
+    `export const getRememberedOnlineExamResultSessions = () => []\n` +
+    `export const rememberOnlineExamResultSession = () => {}\n`
 }
 
 {
@@ -902,6 +969,35 @@ eq("المسح النهائي: لا يبقى أي كاش قديم على الج�
 eq("sessionStorage نظيف كذلك", !Object.keys(window.sessionStorage).some((k) => DATA_KEYS.includes(k)))
 eq("لا نسخة جلسة الطالب على الجهاز (الكوكي فقط)", localStorage.getItem("studentPortalSession") === null)
 restoreMemory(snapLegacy)
+
+// ============================================================
+section("سيناريو 14: التفعيل المباشر + تغيير كلمة المرور من البوابة")
+SA.resetRateLimits()
+SA.setAutoApproveRegistration(true)
+const autoReg = await SA.registerStudentAccount({
+  name: "مباشر فتح", phone: "01200000991", guardianPhone: "01200000992",
+  email: "auto@test.com", password: "auto123", confirmPassword: "auto123",
+  gradeId: "g-1", groupId: "gr-1",
+})
+eq("التفعيل المباشر ينشئ الحساب فوراً (لا ينتظر الموافقة)", autoReg.ok === true, ("error" in autoReg ? autoReg.error : "") || "")
+const autoLogin = await SA.portalLogin("auto@test.com", "auto123")
+eq("الطالب يدخل مباشرة بعد التسجيل المباشر", autoLogin.ok === true && !!autoLogin.session.studentId, autoLogin.error || "")
+const autoStudentId = autoLogin.ok ? autoLogin.session.studentId : ""
+eq("الحساب مفعّل بربط الطالب الصحيح", autoStudentId !== "" && /^stu-/.test(autoStudentId))
+
+// تغيير كلمة المرور: القديم → الجديد
+const chg = await SA.changePortalPassword(autoLogin.session.token || "", "auto123", "newpass9")
+eq("تغيير كلمة المرور ينجح", chg.ok === true, ("error" in chg ? chg.error : "") || "")
+const pwOldLogin = await SA.portalLogin("auto@test.com", "auto123")
+eq("الكلمة القديمة تتوقف عن العمل بعد التغيير", pwOldLogin.ok === false)
+const pwNewLogin = await SA.portalLogin("auto@test.com", "newpass9")
+eq("الكلمة الجديدة تعمل", pwNewLogin.ok === true && pwNewLogin.session.studentId === autoStudentId, pwNewLogin.error || "")
+
+// كلمة قديمة خاطئة عند التغيير تُرفض
+const chgBad = await SA.changePortalPassword(autoLogin.session.token || "", "WRONG", "zzzzzz")
+eq("التغيير بكلمة قديمة خاطئة يُرفض", chgBad.ok === false)
+SA.setAutoApproveRegistration(false)
+logoutAndRepull()
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

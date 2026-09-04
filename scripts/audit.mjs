@@ -211,20 +211,20 @@ for (const [table, fn] of pairs) {
 
 section("5b) ترشيح السجلات اليتيمة (بديل القيم الوهمية للمفاتيح الأجنبية)")
 check(
-  "dues: تُستبعد السجلات التي فُقد طالبها",
-  /\.filter\(\(d\) => studentIds\.has\(d\.studentId\)\)/.test(sync)
+  "dues: تُستبعد السجلات التي فُقد طالبها (إلا إذا لم تُحمَّل قائمة الطلاب بعد)",
+  /\.filter\(\s*\(\s*d\s*\)\s*=>\s*(!studentsLoaded\s*\|\|\s*studentIds\.has\(d\.studentId\)|studentIds\.has\(d\.studentId\))\)/.test(sync)
 )
 check(
-  "payments: تُستبعد السجلات التي فُقد طالبها",
-  /\.filter\(\(p\) => studentIds\.has\(p\.studentId\)\)/.test(sync)
+  "payments: تُستبعد السجلات التي فُقد طالبها (إلا إذا لم تُحمَّل قائمة الطلاب بعد)",
+  /\.filter\(\s*\(\s*p\s*\)\s*=>\s*(!studentsLoaded\s*\|\|\s*studentIds\.has\(p\.studentId\)|studentIds\.has\(p\.studentId\))\)/.test(sync)
 )
 check(
-  "sessions: تُستبعد الحصص التي فُقدت مجموعتها",
-  /\.filter\(\(s\) => groupIds\.has\(s\.groupId\)\)/.test(sync)
+  "sessions: تُستبعد الحصص التي فُقدت مجموعتها (إلا إذا لم تُحمَّل قائمة الصفوف بعد)",
+  /gradesLoaded\s*\?\s*rows\.filter\(\s*\(\s*s\s*\)\s*=>\s*groupIds\.has\(s\.groupId\)\)\s*:\s*rows/.test(sync)
 )
 check(
-  "attendance: تُستبعد السجلات التي فُقدت حصتها أو طالبها",
-  /sessionIds\.has\(a\.sessionId\) && studentIds\.has\(a\.studentId\)/.test(sync)
+  "attendance: تُستبعد السجلات التي فُقدت حصتها أو طالبها (مع الحماية)",
+  /\(!sessionsLoaded\s*\|\|\s*sessionIds\.has\(a\.sessionId\)\s*\)\s*&&\s*\(!studentsLoaded\s*\|\|\s*studentIds\.has\(a\.studentId\)\)/.test(sync)
 )
 
 // ============================================================
@@ -238,7 +238,7 @@ check(
     sync.slice(sync.indexOf("async function pushAllOrdered"))
   )
 )
-check("تنظيف المراجع المعلّقة قبل الرفع", /if \(row\.grade_id && !gradeIds\.has\(row\.grade_id\)\)/.test(sync))
+check("تنظيف المراجع المعلّقة قبل الرفع (مع الحماية: لا تصفير عند غياب الصفوف)", /if \(gradesLoaded && row\.grade_id && !gradeIds\.has\(row\.grade_id\)\) row\.grade_id = null/.test(sync))
 
 // ============================================================
 section("7) الأمان والثغرات العامة")

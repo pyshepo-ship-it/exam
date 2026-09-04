@@ -29,8 +29,10 @@ import {
 } from "./data-storage"
 import {
   fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
-  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail } from "./supabase/sync"
+  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail,
+  studentLogin, studentLogout, studentRegisterAuto, changeStudentPassword } from "./supabase/sync"
 import { clearStore } from "./memory-store"
+import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
 // ------------------------------------------------------------
 // إعدادات المعلم (مفاتيح عامة تُزامن عبر Supabase)
@@ -38,6 +40,8 @@ import { clearStore } from "./memory-store"
 
 export const REGISTRATION_OPEN_KEY = "registrationOpen"
 export const STUDENT_REPORTS_ENABLED_KEY = "studentReportsEnabled"
+/** تفعيل مباشر: أي طالب يسجّل يُفعّل حسابه فوراً بدون موافقة المعلم */
+export const AUTO_APPROVE_REGISTRATION_KEY = "autoApproveRegistration"
 
 /** هل التسجيل مفتوح للطلاب؟ (افتراضياً مفتوح — والمعلم يغلقه متى شاء) */
 export function isRegistrationOpen(): boolean {
@@ -46,6 +50,15 @@ export function isRegistrationOpen(): boolean {
 
 export function setRegistrationOpen(open: boolean): void {
   saveSetting(REGISTRATION_OPEN_KEY, open ? "1" : "")
+}
+
+/** هل التفعيل المباشر مفعّل؟ (افتراضياً مغلق — الطالب ينتظر موافقة المعلم) */
+export function isAutoApproveRegistration(): boolean {
+  return getSetting(AUTO_APPROVE_REGISTRATION_KEY, "") !== ""
+}
+
+export function setAutoApproveRegistration(enabled: boolean): void {
+  saveSetting(AUTO_APPROVE_REGISTRATION_KEY, enabled ? "1" : "")
 }
 
 /** هل تقارير الطلاب مفعّلة في البوابة؟ (افتراضياً مفعّلة) */
@@ -306,6 +319,33 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     createdAt: new Date().toISOString(),
   }
 
+  // التفعيل المباشر: أنشئ الحساب فوراً عبر الدالة الآمنة بدلاً من طلب ينتظر الموافقة
+  if (isAutoApproveRegistration()) {
+    const auto = await studentRegisterAuto({
+      name,
+      phone,
+      guardianPhone,
+      email,
+      passwordHash,
+      gradeId: input.gradeId,
+      groupId: input.groupId,
+    })
+    if (auto.ok) {
+      consumeRate("reg-device-min", 5, 60 * 1000)
+      consumeRate("reg-device-hour", 20, 60 * 60 * 1000)
+      consumeRate("reg-global", 100, 60 * 60 * 1000)
+      return { ok: true, message: "تم إنشاء حسابك بنجاح 🎉 — تسجيل الدخول متاح مباشرة بنفس البريد وكلمة المرور" }
+    }
+    if (auto.code === "closed") {
+      return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
+    }
+    if (auto.code !== "not_enabled") {
+      // فشل شبكة/خادم (وليس تغيّر إعداد) — نُبلغ الطالب ولا نحسبها ضمن الحد
+      return { ok: false, error: `تعذر إنشاء حسابك: ${auto.error || "تعذر الاتصال بقاعدة البيانات"}` }
+    }
+    // auto.code === "not_enabled" → الإعداد تغيّر من جهاز آخر: نرسل طلباً عادياً للموافقة
+  }
+
   const res = await submitRegistrationRequest(request)
   if (!res.ok) {
     // فشل الإرسال لا يُحسب ضمن الحد — الطالب يعيد المحاولة فوراً
@@ -344,6 +384,11 @@ export interface PortalSession {
   iat: number
   /** لحظة انتهاء الجلسة (ms) — بعدها يُطلب تسجيل الدخول مجدداً */
   exp: number
+  /**
+   * سرّ جلوس أصدره student_login (SECURITY DEFINER) بعد التحقق من كلمة المرور.
+   * يستخدمه get_student_portal_data لجلب بيانات الطالب دون قراءة خام من anon.
+   */
+  token?: string
 }
 
 /** قراءة كوكي بالاسم (قيم بسيطة base64) */
@@ -387,6 +432,9 @@ export function getPortalSession(): PortalSession | null {
 
 export function portalLogout(): void {
   if (typeof window === "undefined") return
+  // إلغاء جلسة الطالب في قاعدة البيانات (أفضل جهد — لا يكسر الخروج إن فشل).
+  const token = readSessionCookie()?.token
+  if (token) { void studentLogout(token) }
   writeSessionCookie(null)
   // مسح أي نسخة قديمة من الجلسة وذاكرة البيانات (لا يبقى شيء على الجهاز)
   try {
@@ -394,6 +442,45 @@ export function portalLogout(): void {
     window.sessionStorage.removeItem(PORTAL_SESSION_KEY)
   } catch { /* تجاهل */ }
   clearStore()
+  // أسرار نتائج الاختبارات قدرات خاصة بهذا المتصفح؛ تمسح عند تسجيل الخروج.
+  clearRememberedOnlineExamResultSessions()
+}
+
+export type ChangePasswordResult =
+  | { ok: true; message: string }
+  | { ok: false; error: string }
+
+/**
+ * الطالب يغيّر كلمة مروره من داخل بوابته (قسم الطلبات):
+ * يتحقق من كلمة المرور القديمة بصرياً ثم يرسل البصمتين إلى الدالة الآمنة
+ * change_student_password (SECURITY DEFINER) التي تتأكد من صحة القديمة
+ * وتُحدّث حسابه في السحابة — لا تُحفظ كلمة المرور نصاً في أي مكان.
+ */
+export async function changePortalPassword(
+  token: string,
+  oldPassword: string,
+  newPassword: string
+): Promise<ChangePasswordResult> {
+  const oldPw = String(oldPassword || "")
+  const newPw = String(newPassword || "")
+  if (!oldPw) return { ok: false, error: "اكتب كلمة المرور القديمة" }
+  if (newPw.length < 6) return { ok: false, error: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل" }
+  if (newPw === oldPw) return { ok: false, error: "كلمة المرور الجديدة لا بد أن تختلف عن القديمة" }
+  let oldHash: string, oldFnv: string, newHash: string
+  try {
+    oldHash = await sha256Hex(oldPw)
+    oldFnv = legacyFnvHex(oldPw)
+    newHash = await sha256Hex(newPw)
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message || "تعذر تشفير كلمة المرور على هذا الجهاز" }
+  }
+  const res = await changeStudentPassword(token, oldHash, oldFnv, newHash)
+  if (!res.ok) {
+    if (res.code === "wrong_old") return { ok: false, error: "كلمة المرور القديمة غير صحيحة" }
+    if (res.code === "invalid") return { ok: false, error: "انتهت صلاحية جلسة الدخول — سجّل الدخول من جديد" }
+    return { ok: false, error: res.error || "تعذر تغيير كلمة المرور — أعد المحاولة" }
+  }
+  return { ok: true, message: "تم تغيير كلمة المرور بنجاح — استخدمها في تسجيل الدخول القادم" }
 }
 
 export type LoginResult =
@@ -404,6 +491,84 @@ export type LoginResult =
 export async function portalLogin(email: string, password: string): Promise<LoginResult> {
   const mail = (email || "").trim().toLowerCase()
   if (!mail || !password) return { ok: false, error: "يرجى إدخال البريد وكلمة المرور" }
+
+  // ============================================================
+  // المسار الأساسي: دالة student_login (SECURITY DEFINER) تتحقق من كلمة
+  // المرور وحالة الحساب داخل قاعدة البيانات وتُصدر توكين الجلسة. لا نعتمد على
+  // أي قراءة خام من anon لحسابات/طلبات الطلاب — أصلحنا REVOKE لذلك.
+  // (قد يُصل إلى هنا في بيئات قديمة أو المعاينة دون الدالة فيسقط للخطة أدناه).
+  // ============================================================
+  const mint = await studentLogin(mail, password, legacyFnvHex(password)).catch((e) => ({
+    ok: false, code: "unavailable" as const,
+    error: (e as Error)?.message || "تعذر الاتصال بقاعدة البيانات",
+  }))
+
+  if (mint.code !== "unavailable") {
+    // الأفضل رصد الطالب المعني (يُستخدم فقط إذا لم يُرجع الخادم studentId).
+    const resolveLocalStudentId = (): string | undefined => {
+      const byAccount = getStudentAccounts().find(a => norm(a.email) === norm(mail))?.studentId
+      const byReq = getRegistrationRequests()
+        .filter(r => norm(r.email) === norm(mail))
+        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+        .pop()?.linkedStudentId
+      return byAccount || byReq
+    }
+
+    // نجاح — نبني الجلسة بإعادة جلب بيانات الطالب فقط (لا قائمة لبقية الطلاب).
+    if (mint.ok) {
+      const studentId = mint.studentId || resolveLocalStudentId()
+      if (!studentId) {
+        return { ok: false, error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+      }
+      let student = getStudents().find(s => s.id === studentId)
+      if (!student) {
+        const remote = await fetchStudentById(studentId).catch(() => null)
+        if (remote) student = remote
+      }
+      if (!student && mint.name) student = { id: studentId, name: mint.name } as any
+      if (!student) {
+        return {
+          ok: false,
+          error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — أعد المحاولة، وإن استمر راجع المعلم",
+        }
+      }
+      // نحفظ بيانات الطالب في ذاكرة الجلسة للعرض الفوري فقط — الأصل في السحابة.
+      try { if (!getStudents().some(s => s.id === student.id)) saveStudents([...getStudents(), student]) } catch { /* تجاهل */ }
+      if (student.status === "inactive") {
+        return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
+      }
+      const now = Date.now()
+      const session: PortalSession = {
+        email: mail,
+        studentId,
+        name: student.name,
+        iat: now,
+        exp: now + PORTAL_SESSION_TTL_MS,
+        token: mint.token,
+      }
+      if (typeof window !== "undefined") writeSessionCookie(session)
+      return { ok: true, session }
+    }
+
+    // نتائج سياسة موثوقة من قاعدة البيانات.
+    if (mint.code === "pending") return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
+    if (mint.code === "rejected") return { ok: false, error: mint.error || "تم رفض طلب التسجيل", status: "rejected" }
+    if (mint.code === "blocked") return { ok: false, error: mint.error || "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
+    if (mint.code === "no_account") return { ok: false, error: mint.error || "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+    if (mint.code === "not_linked") return { ok: false, error: mint.error || "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+    if (mint.code === "wrong_password") {
+      const failBucket = `login-fail:${norm(mail)}`
+      if (!consumeRate(failBucket, 5, 15 * 60 * 1000)) {
+        return { ok: false, error: `محاولات كثيرة بخطأ — انتظر ${minutesLeftInWindow(failBucket, 15 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+      }
+      return { ok: false, error: mint.error || "كلمة المرور غير صحيحة" }
+    }
+    return { ok: false, error: mint.error || "تعذر تسجيل الدخول" }
+  }
+
+  // ============================================================
+  // خطة احتياطية (لا دالة في البيئة): المنطق المحلي + قراءة anon كما كان.
+  // ============================================================
 
   // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد وكلمة المرور من المدرس).
   // لا نسخة محلية دائمة: إن لم يكن في ذاكرة الجلسة يُجلب من Supabase مباشرة،
@@ -498,8 +663,27 @@ export async function portalLogin(email: string, password: string): Promise<Logi
       error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
     }
   }
-  if (student.status === "inactive") {
+  // جلسة آمنة: إنشاء توكين جلوس عبر student_login (التحقق من كلمة المرور في قاعدة
+  // البيانات + إصدار السر). يوفّر أيضاً الاسم من الخادم إن تعذر جلبه محلياً.
+  let sessionToken = ""
+  try {
+    const mint = await studentLogin(mail, password, legacyFnvHex(password))
+    if (mint.ok) {
+      sessionToken = mint.token || ""
+      if (!student && mint.name && !mint.status) {
+        student = { id: studentId, name: mint.name } as any
+      }
+    }
+  } catch { /* بدون Supabase — نكمل بجلسة غير موقعة في وضع العرض فقط */ }
+
+  if (student && student.status === "inactive") {
     return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
+  }
+  if (!student) {
+    return {
+      ok: false,
+      error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
+    }
   }
 
   const now = Date.now()
@@ -509,6 +693,7 @@ export async function portalLogin(email: string, password: string): Promise<Logi
     name: student.name,
     iat: now,
     exp: now + PORTAL_SESSION_TTL_MS,
+    token: sessionToken || undefined,
   }
   // الجلسة كوكي فقط — لا تُكتب أي بيانات للطالب على جهازه
   if (typeof window !== "undefined") {

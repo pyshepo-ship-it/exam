@@ -16,7 +16,7 @@ import {
 
 export { saveInquiries }
 export const getInquiries = getInquiriesFromStorage
-import { submitInquiryThread, pushInquiries, fetchStudentInquiries, fetchStudentById } from "./supabase/sync"
+import { submitInquiryThread, pushInquiries, fetchStudentInquiries, fetchStudentById, getStudentPortalRecord } from "./supabase/sync"
 import { saveToStore } from "./data-storage"
 import { STORAGE_KEYS } from "./storage-keys"
 
@@ -77,16 +77,34 @@ export function canStudentSendInquiry(studentId: string): { allowed: boolean; re
 }
 
 /** الطالب يرسل استفساراً جديداً أو يرد — القرار كله من السحابة (المصدر الوحيد) */
-export async function sendStudentInquiry(studentId: string, text: string): Promise<InquiryResult> {
+export async function sendStudentInquiry(studentId: string, text: string, token?: string): Promise<InquiryResult> {
   const body = (text || "").trim()
   if (body.length < 5) return { ok: false, error: "اكتب استفسارك بوضوح (5 أحرف على الأقل)" }
   if (body.length > 1000) return { ok: false, error: "الاستفسار طويل جداً — اختصر في 1000 حرف" }
 
-  // بيانات الطالب وحالة قناته: من Supabase أولاً ثم من ذاكرة الجلسة
+  // بيانات الطالب وحالة قناته: من الدالة الآمنة أولاً ثم ذاكرة الجلسة.
+  // (فئة الطلاب لا تُقرأ خاماً من anon؛ لذا مرّر سرّ الجلسة لجلب بيانات الطالب)
   let student = getStudents().find(s => s.id === studentId)
   try {
-    const cloudStudent = await fetchStudentById(studentId)
-    if (cloudStudent) student = cloudStudent
+    if (token) {
+      const record = await getStudentPortalRecord(token)
+      if (record?.student && record.student.id === studentId) {
+        const mapped = {
+          id: record.student.id,
+          name: record.student.name,
+          phone: record.student.phone || undefined,
+          email: record.student.email || undefined,
+          gradeId: record.student.grade_id,
+          groupId: record.student.group_id,
+          status: record.student.status,
+          inquiryBlocked: record.student.inquiry_blocked === true,
+        }
+        student = mapped as any
+      }
+    } else {
+      const cloudStudent = await fetchStudentById(studentId)
+      if (cloudStudent) student = cloudStudent
+    }
   } catch { /* تعذر السحاب — تُعرض ذاكرة الجلسة */ }
   if (!student) return { ok: false, error: "تعذر التحقق من بياناتك — أعد المحاولة" }
   if (student.inquiryBlocked === true) {
@@ -96,7 +114,7 @@ export async function sendStudentInquiry(studentId: string, text: string): Promi
   // خيوط الاستفسار: من Supabase — وذاكرة الجلسة للعرض الفوري فقط
   let threads: InquiryThread[] = getInquiries()
   try {
-    const cloud = (await fetchStudentInquiries(studentId)) as InquiryThread[]
+    const cloud = (await fetchStudentInquiries(token || "")) as InquiryThread[]
     if (Array.isArray(cloud)) {
       threads = cloud
       saveToStore(STORAGE_KEYS.INQUIRIES, cloud) // ذاكرة جلسة للقراءة الفورية — بلا دفع عكسي

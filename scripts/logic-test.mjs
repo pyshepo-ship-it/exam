@@ -496,6 +496,56 @@ t("حساب وإضافة المدة addDuration (ساعة، ساعة ونصف، 
   eq(addDurationFn("16:00", 120), "18:00") // + ساعتان = 6:00 م
 })
 
+
+console.log("\n\x1b[1mسيناريو 13: مسارا الاختبار (أوف لاين / أونلاين) ومراجعة الجاهزية\x1b[0m")
+t("الاختبارات القديمة تظل متوافقة، ويُحترم النوع الصريح للاختبار", () => {
+  eq(mod.examDeliveryMode({ allowOnline: true }), "online")
+  eq(mod.examDeliveryMode({ allowOnline: false }), "offline")
+  eq(mod.examDeliveryMode({ deliveryMode: "online", allowOnline: false }), "online")
+  eq(mod.examDeliveryMode({ deliveryMode: "offline", allowOnline: true }), "offline")
+  eq(mod.isOnlineExam({ deliveryMode: "online" }), true)
+  eq(mod.isOnlineExam({ deliveryMode: "offline" }), false)
+})
+t("مراجعة اختبار أونلاين تمنع النشر قبل استكمال السؤال والمفتاح", () => {
+  const incomplete = mod.getOnlineExamReadiness({
+    questions: [{
+      id: "q1", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "اختر",
+      subQuestions: [{
+        id: "sq1", orderNumber: 1, questionText: "", marks: 2,
+        choices: [
+          { id: "a", choiceKey: "أ", choiceText: "", isCorrect: false },
+          { id: "b", choiceKey: "ب", choiceText: "", isCorrect: false },
+        ],
+      }],
+    }],
+  })
+  eq(incomplete.ready, false)
+  eq(incomplete.issues.length >= 3, true)
+})
+t("اختبار أونلاين مكتمل يميّز التصحيح الآلي من المراجعة اليدوية", () => {
+  const ready = mod.getOnlineExamReadiness({
+    questions: [
+      {
+        id: "q1", questionType: 1, questionNumber: 1, orderNumber: 1, headerText: "اختر",
+        subQuestions: [{
+          id: "sq1", orderNumber: 1, questionText: "أي مما يلي كائن حي؟", marks: 2,
+          choices: [
+            { id: "a", choiceKey: "أ", choiceText: "الحجر", isCorrect: false },
+            { id: "b", choiceKey: "ب", choiceText: "النبات", isCorrect: true },
+          ],
+        }],
+      },
+      {
+        id: "q2", questionType: 4, questionNumber: 2, orderNumber: 2, headerText: "علل",
+        subQuestions: [{ id: "sq2", orderNumber: 1, questionText: "علل أهمية الماء", marks: 3 }],
+      },
+    ],
+  })
+  eq(ready.ready, true)
+  eq(ready.autoMarks, 2)
+  eq(ready.manualMarks, 3)
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {

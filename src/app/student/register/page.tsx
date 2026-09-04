@@ -39,6 +39,7 @@ export default function StudentRegisterPage() {
   })
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
+  const [regMessage, setRegMessage] = useState("طلبك الآن في انتظار موافقة المعلم.\nبمجرد الموافقة يمكنك تسجيل الدخول بنفس البريد وكلمة المرور")
   const [registrationOpen, setRegistrationOpen] = useState(true)
 
   useEffect(() => {
@@ -91,6 +92,7 @@ export default function StudentRegisterPage() {
     setBusy(false)
     if (res.ok) {
       setDone(true)
+      if (res.message) setRegMessage(res.message)
     } else {
       alert(res.error)
     }
@@ -136,12 +138,9 @@ export default function StudentRegisterPage() {
               <div className="text-center py-8">
                 <CheckCircle className="w-14 h-14 mx-auto mb-3 text-green-500" />
                 <p className="font-bold text-lg text-gray-900 dark:text-white">تم إرسال طلبك بنجاح 🎉</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 leading-relaxed">
-                  طلبك الآن في انتظار موافقة المعلم.
-                  <br />
-                  بمجرد الموافقة يمكنك تسجيل الدخول بنفس البريد وكلمة المرور
-                  <br />
-                  ومشاهدة تقريرك الكامل (الدرجات والمدفوعات والحضور).
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2 leading-relaxed whitespace-pre-line">{regMessage}</p>
+                <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
+                  بعدها يمكنك تسجيل الدخول بنفس البريد وكلمة المرور ومتابعة تقريرك (الدرجات والمدفوعات والحضور).
                 </p>
                 <Link href="/student/login" className="inline-block mt-5">
                   <Button className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white">

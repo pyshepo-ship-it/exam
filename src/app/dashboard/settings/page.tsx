@@ -27,10 +27,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
-import { GraduationCap, DoorOpen } from "lucide-react"
+import { GraduationCap, DoorOpen, UserCheck } from "lucide-react"
 import {
   isRegistrationOpen,
   setRegistrationOpen,
+  isAutoApproveRegistration,
+  setAutoApproveRegistration,
   areStudentReportsEnabled,
   setStudentReportsEnabled,
 } from "@/lib/student-accounts"
@@ -133,6 +135,7 @@ export default function SettingsPage() {
   const [checking, setChecking] = useState(false)
   const [conn, setConn] = useState<ConnectionCheck | null>(null)
   const [registrationOpen, setRegistrationOpenState] = useState(true)
+  const [autoApprove, setAutoApproveState] = useState(false)
   const [reportsEnabled, setReportsEnabledState] = useState(true)
   // تابات الإعدادات: عام / بوابة الطلاب / البيانات والمزامنة / السنة الدراسية
   const [settingsTab, setSettingsTab] = useState<"general" | "portal" | "data" | "year">("general")
@@ -262,6 +265,7 @@ export default function SettingsPage() {
     setSupabaseConnected(isSupabaseConfigured())
     if (isSupabaseConfigured()) runConnectionCheck(true)
     setRegistrationOpenState(isRegistrationOpen())
+    setAutoApproveState(isAutoApproveRegistration())
     setReportsEnabledState(areStudentReportsEnabled())
     setWhatsappInput(getSetting("whatsappNumber"))
     setSignatureLineInput(getTeacherSignatureLine())
@@ -800,6 +804,19 @@ export default function SettingsPage() {
                 <Switch
                   checked={registrationOpen}
                   onCheckedChange={v => { setRegistrationOpenState(v); setRegistrationOpen(v); toast.success(v ? "تم فتح باب التسجيل" : "تم إغلاق باب التسجيل") }}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <UserCheck className="w-5 h-5 text-sky-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">التفعيل المباشر (بدون موافقة)</p>
+                    <p className="text-sm text-gray-500">عند التفعيل، أي طالب يسجّل يُفعَّل حسابه فوراً ويستطيع دخول بوابته مباشرة بدون انتظار موافقتك. عند الإيقاف يرجع لانتظار موافقتك في «الطلبات».</p>
+                  </div>
+                </div>
+                <Switch
+                  checked={autoApprove}
+                  onCheckedChange={v => { setAutoApproveState(v); setAutoApproveRegistration(v); toast.success(v ? "تم تفعيل التسجيل المباشر — الطلاب يدخلون فوراً" : "تم إيقاف التسجيل المباشر — الطلاب ينتظرون موافقتك") }}
                 />
               </div>
               <div className="flex items-center justify-between gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-xl">

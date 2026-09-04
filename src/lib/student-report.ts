@@ -39,7 +39,7 @@ import {
 import { getTeacherName, getTeacherSignatureLine } from "./branding"
 import { formatTime12 } from "./utils"
 import { paginateBlocks } from "./schedule-print"
-import { effectiveAttemptScore } from "./portal-content"
+import { attemptNeedsResultRelease, effectiveAttemptScore } from "./portal-content"
 
 export type StudentReportType = "comprehensive" | "grades" | "payments" | "attendance" | "history"
 
@@ -244,6 +244,19 @@ function gradesBlocks(report: StudentReport): Block[] {
     `)
   }
   for (const a of report.examAttempts) {
+    const pendingRelease = attemptNeedsResultRelease(a)
+    if (pendingRelease) {
+      // لا تُطبع درجة جزئية أو تعليقات المقال في تقرير الطالب قبل قرار الإطلاق.
+      rows.push(`
+        <tr>
+          <td style="${TD}">${esc(dateLabel(a.submittedAt))}</td>
+          <td style="${TD}text-align:right;font-weight:700;">اختبار إلكتروني</td>
+          <td style="${TD}">اختبار إلكتروني</td>
+          <td colspan="2" style="${TD}font-weight:800;color:#a16207;">قيد مراجعة المعلم — تُعلن النتيجة بعد الإطلاق</td>
+        </tr>
+      `)
+      continue
+    }
     const finalScore = effectiveAttemptScore(a)
     const pct = a.totalMarks > 0 ? Math.round((finalScore / a.totalMarks) * 100) : 0
     weightedScore += finalScore
@@ -452,7 +465,12 @@ function comprehensiveBlocks(report: StudentReport): Block[] {
   const avgPct = (() => {
     let s = 0, m = 0
     for (const g of report.manualGrades) { s += g.score; m += g.maxScore }
-    for (const a of report.examAttempts) { s += a.score; m += a.totalMarks }
+    // لا تدخل محاولات المقال غير المعلنة في النسبة المطبوعة للطالب.
+    for (const a of report.examAttempts) {
+      if (attemptNeedsResultRelease(a)) continue
+      s += effectiveAttemptScore(a)
+      m += a.totalMarks
+    }
     return m > 0 ? Math.round((s / m) * 100) : null
   })()
 

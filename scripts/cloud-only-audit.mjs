@@ -12,8 +12,10 @@
  *
  * المسموح أن يبقى على الجهاز (وليس بيانات إطلاقاً):
  *   1) كوكي جلسة دخول الطالب (SameSite=Lax) — لا يحتوي كلمة مرور.
- *   2) مظهر الموقع (ليلي/نهاري) عبر next-themes.
- *   3) عدّاد حماية الإغراق (يمنع تكرار طلبات التسجيل من نفس الجهاز) —
+ *   2) كوكي قدرات نتائج الاختبار العشوائية (SameSite=Lax) — معرف جلسة وسر
+ *      عشوائي فقط، بلا إجابات أو أسماء أو درجات؛ يستخدمه RPC مقيد للجلسة نفسها.
+ *   3) مظهر الموقع (ليلي/نهاري) عبر next-themes.
+ *   4) عدّاد حماية الإغراق (يمنع تكرار طلبات التسجيل من نفس الجهاز) —
  *      عدّاد رقمي فقط، بلا أسماء ولا أرقام هواتف.
  *
  * هذا الفحص يفشل الالتزام إذا ظهر أي تخزين محلي للبيانات من جديد.
@@ -135,17 +137,19 @@ const LS_WIPE_ALLOW = new Set([
 }
 
 // ────────────────────────────────────────────────────────────
-// 6) الكوكيز: جلسة الطالب فقط (بلا كلمة مرور)
+// 6) الكوكيز: جلسة الطالب + قدرة نتيجة اختبار عشوائية فقط (بلا بيانات)
 // ────────────────────────────────────────────────────────────
 const COOKIE_ALLOW = [
   { file: "lib/student-accounts.ts", has: "document.cookie = `${PORTAL_SESSION_COOKIE}=${encodeURIComponent(b64)}" },
   { file: "lib/student-accounts.ts", has: "document.cookie = `${PORTAL_SESSION_COOKIE}=; path=/; max-age=0" },
+  { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=${encodeURIComponent(encode(" },
+  { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=; path=/; max-age=0" },
 ]
 {
   const h = hits(/document\.cookie\s*=\s*[^=]/)
   const bad = h.filter(x => !COOKIE_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("الكوكيز = كوكي جلسة الطالب فقط (إغلاق/مسح)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
-    bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || "كوكي SameSite=Lax لا يحتوي كلمة المرور ولا أي بيانات طالب")
+  check("الكوكيز = جلسة طالب + قدرة نتيجة عشوائية فقط (إغلاق/مسح)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
+    bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || "لا تحتوي الكوكيز على كلمة مرور أو إجابات أو أسماء أو درجات")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -304,15 +308,18 @@ const DATA_FILES_FORBIDDEN = [
 }
 
 // ────────────────────────────────────────────────────────────
-// 19) الاختبارات والنتائج تُرسل للسحابة مباشرة
+// 19) الاختبارات والنتائج تُحسم في سحابة RPC الآمنة
 // ────────────────────────────────────────────────────────────
 {
   const sync = RAW.get("lib/supabase/sync.ts") || ""
-  const ok = /from\("exam_attempts"\)\.insert/.test(sync) &&
-    /export function pushExamAttempts/.test(sync) &&
-    /export async function submitPublicAttempt/.test(sync)
-  check("محاولات الاختبارات تُرفع إلى جدول exam_attempts في Supabase", ok,
-    "مسار الأعضاء (pushExamAttempts) ومسار الزوار (submitPublicAttempt)")
+  const takeExam = RAW.get("app/exam/[id]/page.tsx") || ""
+  const ok = /export async function startOnlineExamTimerSession/.test(sync) &&
+    /export async function submitOnlineExamTimerSession/.test(sync) &&
+    /export async function getOnlineExamTimerResult/.test(sync) &&
+    /activeTimerSession \? \{ sync: false \}/.test(takeExam) &&
+    !/export async function submitPublicAttempt/.test(sync)
+  check("محاولات الاختبارات العامة تمر عبر جلسة RPC خادمية", ok,
+    "لا إدراج anon مباشر؛ التسليم والنتيجة مقيدان بسر جلسة الاختبار")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -322,6 +329,19 @@ const DATA_FILES_FORBIDDEN = [
   const h = hits(/require\("fs"\)|from "fs"|writeFileSync|createWriteStream/)
   check("لا حفظ على القرص من كود المتصفح", h.length === 0,
     h.map(x => `${x.file}:${x.line}`).join("، "))
+}
+
+// ────────────────────────────────────────────────────────────
+// 21) التنظيف في pushStudents/… لا يُفرّغ المراجع عندما لا تكون
+//     الصفوف/المجموعات محمّلة بعد (صفحة تُحفظ قبل وصول grades من السحابة)
+// ────────────────────────────────────────────────────────────
+{
+  const sync = RAW.get("lib/supabase/sync.ts") || ""
+  const hasGuard = /const gradesLoaded = grades\.length > 0/.test(sync) &&
+    /if \(gradesLoaded && row\.grade_id && !gradeIds\.has\(row\.grade_id\)\) row\.grade_id = null/.test(sync) &&
+    /if \(gradesLoaded && row\.group_id && !groupIds\.has\(row\.group_id\)\) row\.group_id = null/.test(sync)
+  check("رفع الطلاب لا يُصفّر صف/مجموعة عند غياب قائمة الصفوف (حماية من فقد البيانات)",
+    hasGuard, "لا نُفرّغ مرجعاً إلا إذا كانت الصفوف محمّلة وغياب المرجع مؤكداً")
 }
 
 // ────────────────────────────────────────────────────────────

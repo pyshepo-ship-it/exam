@@ -730,14 +730,18 @@ test("التعرف على الشريحة الدراسية وتعيين الزخ�
   assert(prepOrnaments.includes("atom") && prepOrnaments.includes("flask"), "الإعدادي يحوي ذرة ودورق")
 })
 
-test("القوالب الخمسة والأنواع الثمانية للأسئلة معرفة بالكامل ولها أسماء وشارات", () => {
-  assertEq(templatesMod.EXAM_TEMPLATES.length, 5)
+test("القوالب التسعة والأنواع الثمانية للأسئلة معرفة بالكامل ولها أسماء وشارات", () => {
+  assertEq(templatesMod.EXAM_TEMPLATES.length, 9)
   const ids = templatesMod.EXAM_TEMPLATES.map(t => t.id)
   assert(ids.includes("classic"))
   assert(ids.includes("lab"))
   assert(ids.includes("life"))
   assert(ids.includes("cosmos"))
   assert(ids.includes("explorer"))
+  assert(ids.includes("royal"))
+  assert(ids.includes("parchment"))
+  assert(ids.includes("wedding"))
+  assert(ids.includes("modern"))
 
   assertEq(templatesMod.QUESTION_TYPES.length, 8, "يوجد 8 أنواع أسئلة معرفة")
   const typeIds = templatesMod.QUESTION_TYPES.map(t => t.id)
@@ -802,39 +806,85 @@ test("فحص الصفحة العامة: وجود زر دخول المعلم ال
 // ============================================================
 section("10) اختبارات سلامة مخطط قاعدة البيانات وسياسات الأمان RLS")
 
-test("فحص مخطط قاعدة البيانات: وجود جميع الجداول الـ 15", () => {
+test("فحص مخطط قاعدة البيانات: وجود جميع الجداول الـ 16", () => {
   const schema = readFileSync("supabase/schema.sql", "utf8")
   const requiredTables = [
     "grades", "groups", "students", "dues", "payments",
     "exams", "sessions", "attendance", "announcements",
     "honorees", "shared_files", "important_links",
-    "year_archives", "app_settings", "exam_attempts"
+    "year_archives", "app_settings", "exam_attempts", "public.online_exam_sessions"
   ]
   for (const table of requiredTables) {
     assert(schema.includes(`CREATE TABLE IF NOT EXISTS ${table}`), `جدول ${table} مفقود في schema.sql`)
   }
 })
 
-test("فحص تفعيل سياسات RLS على جميع الجداول الـ 15", () => {
+test("فحص تفعيل سياسات RLS على جميع الجداول الـ 16", () => {
   const schema = readFileSync("supabase/schema.sql", "utf8")
   const requiredTables = [
     "grades", "groups", "students", "dues", "payments",
     "exams", "sessions", "attendance", "announcements",
     "honorees", "shared_files", "important_links",
-    "year_archives", "app_settings", "exam_attempts"
+    "year_archives", "app_settings", "exam_attempts", "public.online_exam_sessions"
   ]
   for (const table of requiredTables) {
     assert(schema.includes(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`), `RLS غير مفعل للجدول ${table}`)
   }
 })
 
-test("فحص صلاحيات الوصول للزوار (anon): قراءة المحتوى العام فقط مع إمكانية تسليم الاختبار", () => {
+test("فحص صلاحيات الوصول للزوار: RPC آمن للتسليم ولا قراءة خام للمفاتيح", () => {
   const schema = readFileSync("supabase/schema.sql", "utf8")
   assert(schema.includes("CREATE POLICY \"public read announcements\""), "قراءة الإعلانات عامة")
   assert(schema.includes("CREATE POLICY \"public read honorees\""), "قراءة لوحة الشرف عامة")
   assert(schema.includes("CREATE POLICY \"public read shared_files\""), "قراءة الملفات عامة")
   assert(schema.includes("CREATE POLICY \"public read important_links\""), "قراءة الروابط عامة")
-  assert(schema.includes("CREATE POLICY \"anon insert exam_attempts\""), "تسليم الاختبار متاح للزائر")
+  assert(schema.includes("CREATE OR REPLACE FUNCTION public.start_online_exam_session"), "بدء الاختبار يمر عبر RPC")
+  assert(schema.includes("CREATE OR REPLACE FUNCTION public.submit_online_exam_session"), "تسليم الاختبار يمر عبر RPC")
+  assert(schema.includes("REVOKE SELECT, INSERT, UPDATE, DELETE ON TABLE public.exam_attempts FROM anon;"), "لا قراءة أو إدراج مباشر للمحاولات من الزائر")
+  assert(schema.includes("REVOKE SELECT ON TABLE public.exams FROM anon;"), "لا قراءة خام لمفاتيح الاختبار من الزائر")
+  assert(schema.includes("CREATE OR REPLACE FUNCTION public.get_public_online_exams"), "ورقة الطالب المنقاة تمر عبر RPC")
+  assert(schema.includes("CREATE OR REPLACE FUNCTION public.get_online_exam_result"), "استعادة النتيجة تمر عبر سر الجلسة لا قراءة المحاولات الخام")
+  const publicExamRpc = schema.slice(
+    schema.indexOf("CREATE OR REPLACE FUNCTION public.get_public_online_exams"),
+    schema.indexOf("CREATE OR REPLACE FUNCTION public.get_online_exam_answer_feedback")
+  )
+  assert(publicExamRpc.includes("choice.value - 'isCorrect'"), "RPC العام يحذف مفتاح الاختيار الصحيح")
+  assert(!publicExamRpc.includes("reviewOpen"), "إطلاق النتيجة لا يسرب مفاتيحها في RPC العام")
+})
+
+test("جلسة الاختبار: الوقت والتصحيح والإطلاق تُحسم من الخادم", () => {
+  const migration = readFileSync("supabase/migrations/015_authoritative_exam_timer.sql", "utf8")
+  const page = readFileSync("src/app/exam/[id]/page.tsx", "utf8")
+  const sync = readFileSync("src/lib/supabase/sync.ts", "utf8")
+  assert(migration.includes("expires_at TIMESTAMPTZ NOT NULL"), "جلسة الخادم تحمل موعد انتهاء ثابتاً")
+  assert(migration.includes("clock_timestamp()"), "ساعة الخادم هي مصدر الوقت")
+  assert(migration.includes("IF v_now >= v_session.expires_at THEN"), "حفظ التقدم يرفض الإجابات المتأخرة")
+  assert(migration.includes("v_answers := v_session.answers"), "التسليم المتأخر يستخدم آخر لقطة قبل الوقت")
+  assert(migration.includes("pg_advisory_xact_lock"), "حد المحاولات محمي من التسابق")
+  assert(migration.includes("SECURITY DEFINER"), "RPC تعمل بصلاحية خادم مضبوطة")
+  assert(sync.includes("startOnlineExamTimerSession") && sync.includes("saveOnlineExamTimerProgress") && sync.includes("submitOnlineExamTimerSession"), "عميل RPC للمؤقت موجود")
+  assert(sync.includes("getOnlineExamTimerResult"), "استعادة النتيجة تستخدم RPC مقيداً بالجلسة")
+  assert(migration.includes("v_answer_value - 'review'") && migration.includes("CASE WHEN v_released THEN v_meta->'manualScore'"), "المراجعة ودرجة المقال لا تخرجان قبل الإطلاق")
+  assert(page.includes("startOnlineExamTimerSession") && page.includes("submitOnlineExamTimerSession"), "صفحة الطالب تستخدم دورة حياة الخادم")
+  assert(page.includes("serverStart.configured && !serverStart.session"), "البيئة المهيأة تفشل بأمان إذا غاب الترحيل")
+  assert(page.includes("activeTimerSession ? { sync: false }"), "لا تعيد الواجهة إدراج محاولة خادم مباشرة")
+})
+
+test("استعادة النتيجة وقدرة الجلسة: سر مقيد بلا قراءة خام ولا إجابات/درجات في الكوكي", () => {
+  const sync = readFileSync("src/lib/supabase/sync.ts", "utf8")
+  const rstart = sync.indexOf("export async function getOnlineExamTimerResult")
+  const rend = sync.indexOf("export async function submitOnlineExamTimerSession")
+  const resultFn = sync.slice(rstart, rend > rstart ? rend : sync.length)
+  assert(!/from\("exam_attempts"\)/.test(resultFn), "استعادة النتيجة تستخدم RPC مقيداً بالجلسة ولا قراءة خام للمحاولات")
+
+  const cookieSrc = readFileSync("src/lib/online-exam-result-session.ts", "utf8")
+  const code = cookieSrc
+    .split("\n").map(l => { const t = l.trim(); if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return ""; return l }).join("\n")
+  assert(/id: session\.id/.test(code) && /secret: session\.secret/.test(code), "الكوكي يحفظ فقط معرف الجلسة وسرها العشوائي")
+  assert(/savedAt: Date\.now\(\)/.test(code), "الكوكي يحفظ طابع الحفظ ولا يحمل بيانات إجابات أو درجات")
+  assert(!/answers|score|manualScore|correction|comment|manual_override/.test(code), "لا يخزّن كوكي القدرة أي إجابات أو درجات أو تعليقات")
+  assert(!/localStorage|sessionStorage/.test(code), "قدرة النتيجة كوكي فقط — لا تخزين محلي")
+  assert(code.includes("clearRememberedOnlineExamResultSessions()"), "تُمسح قدرات النتيجة عند خروج الطالب")
 })
 
 test("وضع فتح الاختبار (أعضاء/مفتوح للجميع) يُزامن ذهاباً وإياباً مع السحابة", () => {
@@ -843,7 +893,7 @@ test("وضع فتح الاختبار (أعضاء/مفتوح للجميع) يُز
   assert(/accessMode:\s*wrapped && q\.accessMode === "public"/.test(sync), "accessMode يُقرأ من السحابة بقيمة افتراضية آمنة (members)")
   assert(/phone:\s*a\.phone \|\| null/.test(sync), "رقم هاتف الزائر يُرفع مع المحاولة")
   assert(/phone:\s*nil\(row\.phone\)/.test(sync), "رقم هاتف الزائر يُقرأ مع المحاولة")
-  assert(sync.includes("fetchGuestAttemptCount"), "عدّاد محاولات الزائر عبر الأجهزة موجود")
+  assert(!sync.includes('from("exam_attempts").select("id", { count: "exact", head: true })'), "لا يعتمد حد الزائر على قراءة جدول المحاولات الخام")
   assert(sync.includes("isMissingColumnError"), "تراجع آمن إن لم يكن عمود phone مُرحَّلاً بعد")
 })
 

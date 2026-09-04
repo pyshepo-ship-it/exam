@@ -136,7 +136,33 @@ export interface Payment {
   createdAt: string
 }
 
-export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
+export type ExamTemplateId =
+  | "classic"
+  | "lab"
+  | "life"
+  | "cosmos"
+  | "explorer"
+  | "royal"
+  | "parchment"
+  | "wedding"
+  | "modern"
+
+/** نوع الاختبار عند إنشائه: ورقة أوف لاين، أو اختبار يؤديه الطلاب على الموقع. */
+export type ExamDeliveryMode = "offline" | "online"
+
+/** أنماط الاختبار الإلكتروني المعتمدة. */
+export type OnlineExamMode = "objective" | "essay" | "mixed"
+
+/** حالة المراجعة وإطلاق النتيجة لمحاولة الطالب. */
+export type ExamAttemptGradingStatus =
+  | "submitted"
+  | "pending_review"
+  | "partially_reviewed"
+  | "reviewed"
+  | "released"
+
+/** حكم المعلم على إجابة واحدة أثناء التصحيح اليدوي. */
+export type AnswerReviewVerdict = "correct" | "half" | "incorrect" | "custom"
 
 /**
  * من يستطيع فتح الاختبار الإلكتروني:
@@ -162,9 +188,23 @@ export interface Exam {
   templateId?: ExamTemplateId
   /** إظهار زخارف علمية حول الأسئلة حسب الصف */
   showDecorations?: boolean
+  /** حجم الزخارف (بكسل) — اختياري، يغطي قالب الورقة عند ضبطه */
+  ornamentSize?: number
+  /** كثافة الزخارف حول الأسئلة والصفحة */
+  ornamentDensity?: "low" | "medium" | "high"
   teacherName?: string
   schoolName?: string
-  /** نشر الاختبار للطلاب على الموقع ليؤدوه خلال المدة المحددة */
+  /**
+   * مسار الاختبار الذي اختاره المعلم عند الإنشاء.
+   * السجلات القديمة بلا هذا الحقل تظل متوافقة: allowOnline=true يعني اختبار أونلاين.
+   */
+  deliveryMode?: ExamDeliveryMode
+  /**
+   * نمط الاختبار الإلكتروني: تلقائي (اختياري/صح وخطأ)، مقالي، أو مختلط.
+   * لا يؤثر في الاختبار الورقي.
+   */
+  onlineExamMode?: OnlineExamMode
+  /** نشر الاختبار الأونلاين للطلاب على الموقع ليؤدوه خلال المدة المحددة */
   allowOnline?: boolean
   /** من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بدون تسجيل */
   accessMode?: ExamAccessMode
@@ -197,6 +237,8 @@ export interface Question {
   orderNumber: number
   headerText: string
   reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية" // للنوع 4
+  /** وسم توجيهي اختياري للسؤال المقالي الإلكتروني، مثل: علل / فسر / قارن. */
+  essayLabel?: string
   subQuestions: SubQuestion[]
 }
 
@@ -213,6 +255,206 @@ export interface SubQuestion {
   correctAnswer?: string
   /** العبارة صحيحة؟ (النوع 3 — صح وخطأ) */
   isTrue?: boolean
+}
+
+/**
+ * يعيد نوع الاختبار مع الحفاظ على توافق الاختبارات القديمة.
+ * قبل إضافة خيار النوع كانت allowOnline هي الإشارة الوحيدة: true = أونلاين،
+ * لذلك لا تتحول الاختبارات المنشورة سابقاً إلى أوف لاين عند التحديث.
+ */
+export function examDeliveryMode(exam: Pick<Exam, "deliveryMode" | "allowOnline">): ExamDeliveryMode {
+  if (exam.deliveryMode === "online") return "online"
+  if (exam.deliveryMode === "offline") return "offline"
+  return exam.allowOnline ? "online" : "offline"
+}
+
+/** هل الاختبار من نوع أونلاين بصرف النظر عن كونه منشوراً أو مسودة؟ */
+export function isOnlineExam(exam: Pick<Exam, "deliveryMode" | "allowOnline">): boolean {
+  return examDeliveryMode(exam) === "online"
+}
+
+/**
+ * النمط الإلكتروني المعتمد. الاختبارات القديمة تُصنّف بأمان من أسئلتها حتى
+ * تستمر في العمل من دون تغيير مفاجئ في طريقة تصحيحها.
+ */
+export function getOnlineExamMode(
+  exam: Pick<Exam, "onlineExamMode" | "questions">
+): OnlineExamMode {
+  if (exam.onlineExamMode === "objective" || exam.onlineExamMode === "essay" || exam.onlineExamMode === "mixed") {
+    return exam.onlineExamMode
+  }
+  const questions = exam.questions || []
+  const hasObjective = questions.some(q => q.questionType === 1 || q.questionType === 3)
+  const hasEssay = questions.some(q => q.questionType !== 1 && q.questionType !== 3)
+  if (hasObjective && hasEssay) return "mixed"
+  if (hasEssay) return "essay"
+  return "objective"
+}
+
+/** الأسئلة المعتمدة عند إنشاء اختبار إلكتروني جديد. */
+export function allowedOnlineQuestionTypes(mode: OnlineExamMode): Array<Question["questionType"]> {
+  if (mode === "objective") return [1, 3]
+  if (mode === "essay") return [8]
+  return [1, 3, 8]
+}
+
+export function isObjectiveQuestionType(questionType: Question["questionType"]): boolean {
+  return questionType === 1 || questionType === 3
+}
+
+/** السؤال المقالي في الأنماط الجديدة هو السؤال الحر (8). */
+export function isEssayQuestionForMode(
+  question: Pick<Question, "questionType">,
+  mode?: OnlineExamMode
+): boolean {
+  if (question.questionType === 4) return true
+  if (question.questionType === 8) return true
+  return mode === "essay" && !isObjectiveQuestionType(question.questionType)
+}
+
+export interface OnlineExamReadiness {
+  /** صالح للنشر والأداء إلكترونياً، ولا توجد حقول أو مفاتيح تصحيح ناقصة */
+  ready: boolean
+  /** عناصر تمنع نشر الاختبار حتى تُستكمل */
+  issues: string[]
+  /** معلومات مفيدة لا تمنع النشر، مثل الدرجات التي تحتاج تصحيحاً يدوياً */
+  notes: string[]
+  /** درجات الأسئلة التي سيصححها النظام تلقائياً */
+  autoMarks: number
+  /** درجات الإجابات المقالية التي تحتاج مراجعة المعلم */
+  manualMarks: number
+  /** عدد الأسئلة الفرعية في الاختبار */
+  questionCount: number
+}
+
+const onlineText = (value?: string): string => (value || "").trim()
+const onlineMarks = (sq: SubQuestion): number => (sq.marks && sq.marks > 0 ? sq.marks : 1)
+
+/**
+ * مراجعة جاهزية اختبار أونلاين قبل النشر.
+ * الأسئلة المقالية (علل، أو السؤال الحر بلا نموذج إجابة) مسموحة، لكنها تُحسب
+ * كدرجات مراجعة يدوية كي لا يُنشر اختبار ناقص أو يحصل الطالب على درجة مضللة.
+ */
+export function getOnlineExamReadiness(
+  exam: Pick<Exam, "questions" | "onlineExamMode">
+): OnlineExamReadiness {
+  const issues: string[] = []
+  const notes: string[] = []
+  const questions = exam.questions || []
+  // لا نفرض قيود الأنماط الجديدة على السجلات القديمة التي لم تختر نمطاً صريحاً بعد.
+  const selectedMode = exam.onlineExamMode
+  const allowedTypes = selectedMode ? allowedOnlineQuestionTypes(selectedMode) : null
+  let autoMarks = 0
+  let manualMarks = 0
+  let questionCount = 0
+
+  if (questions.length === 0) {
+    issues.push("أضف سؤالاً واحداً على الأقل قبل نشر الاختبار إلكترونياً")
+  }
+
+  questions.forEach((question, qIndex) => {
+    const subs = question.subQuestions || []
+    if (subs.length === 0) {
+      issues.push(`السؤال ${qIndex + 1}: أضف سؤالاً فرعياً واحداً على الأقل`)
+      return
+    }
+    if (allowedTypes && !allowedTypes.includes(question.questionType)) {
+      issues.push(`السؤال ${qIndex + 1}: هذا النوع غير مسموح في نمط الاختبار الإلكتروني المختار`)
+    }
+
+    subs.forEach((sq, sqIndex) => {
+      questionCount += 1
+      const label = `السؤال ${qIndex + 1}، الفرعي ${sqIndex + 1}`
+      const marks = onlineMarks(sq)
+      const hasQuestionText = !!onlineText(sq.questionText)
+      // المقال لا يُصحَّح تلقائياً حتى لو كتب المعلم نموذج إجابة؛ النموذج مرجع للمراجعة فقط.
+      if (isEssayQuestionForMode(question, selectedMode)) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        manualMarks += marks
+        return
+      }
+
+      if (question.questionType === 1) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        const choices = sq.choices || []
+        if (choices.length < 2 || choices.some(choice => !onlineText(choice.choiceText))) {
+          issues.push(`${label}: اكتب نص كل خيارات الإجابة`)
+        }
+        const correct = choices.filter(choice => choice.isCorrect)
+        if (correct.length !== 1 || !onlineText(correct[0]?.choiceText)) {
+          issues.push(`${label}: حدّد إجابة صحيحة واحدة للتصحيح الآلي`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 2) {
+        const hasSentence = (sq.parts || []).some(part => !!onlineText(part.partText)) || hasQuestionText
+        if (!hasSentence) issues.push(`${label}: اكتب العبارة المراد إكمالها`)
+        if (!onlineText(sq.correctAnswer)) {
+          issues.push(`${label}: اكتب الإجابة الصحيحة للفراغ`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 3) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص العبارة`)
+        if (typeof sq.isTrue !== "boolean") {
+          issues.push(`${label}: اختر صح أو خطأ للتصحيح الآلي`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 5) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص العبارة`)
+        const correction = sq.corrections?.[0]
+        if (!correction || !correction.wordPosition || correction.wordPosition < 1) {
+          issues.push(`${label}: حدّد الكلمة أو الكلمات المطلوب تصويبها`)
+        }
+        if (!onlineText(correction?.correctAnswer)) {
+          issues.push(`${label}: اكتب التصويب الصحيح`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      if (question.questionType === 4) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        manualMarks += marks
+        return
+      }
+
+      if (question.questionType === 6 || question.questionType === 7) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        if (!onlineText(sq.correctAnswer)) {
+          issues.push(`${label}: اكتب مفتاح التصحيح`)
+        } else {
+          autoMarks += marks
+        }
+        return
+      }
+
+      // السؤال الحر: يمكن تركه للمراجعة اليدوية، أو إدخال نموذج مختصر ليصححه النظام.
+      if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+      if (onlineText(sq.correctAnswer)) autoMarks += marks
+      else manualMarks += marks
+    })
+  })
+
+  if (manualMarks > 0) {
+    notes.push(`${manualMarks} درجة تحتاج مراجعة يدوية بعد التسليم`)
+  }
+  if (autoMarks > 0) {
+    notes.push(`${autoMarks} درجة ستُصحَّح تلقائياً`)
+  }
+
+  return { ready: issues.length === 0, issues, notes, autoMarks, manualMarks, questionCount }
 }
 
 export interface Choice {
@@ -261,10 +503,23 @@ export interface Attendance {
   createdAt: string
 }
 
+export interface ExamAttemptAnswerReview {
+  /** قرار سريع للمعلم: كامل / نصف / صفر / درجة مخصصة */
+  verdict?: AnswerReviewVerdict
+  /** الدرجة المعتمدة لهذه الإجابة؛ وجودها يتغلب على التصحيح الآلي عند الحاجة */
+  awardedMarks?: number
+  /** تعليق يظهر للطالب فقط بعد إطلاق النتيجة */
+  comment?: string
+  /** تصحيح أو إجابة نموذجية اختيارية للطالب */
+  correction?: string
+  reviewedAt?: string
+}
+
 export interface ExamAttemptAnswer {
   choiceId?: string
   text?: string
   isTrue?: boolean
+  review?: ExamAttemptAnswerReview
 }
 
 export interface ExamAttempt {
@@ -277,11 +532,25 @@ export interface ExamAttempt {
   groupId: string
   gradeId: string
   answers: Record<string, ExamAttemptAnswer>
+  /** مفاتيح موضوعية أصدرها الخادم لهذه الجلسة فقط وفق إعداد إظهار الإجابات. */
+  answerFeedback?: Record<string, { choiceId?: string; text?: string; isTrue?: boolean }>
+  /** الدرجة الآلية الأصلية (تُحفظ للتوافق ولمراجعة أي تعديل لاحق) */
   score: number
+  /** مجموع درجات الاختبار كلها، بما فيها المقال */
   totalMarks: number
+  autoScore?: number
+  autoTotal?: number
+  manualScore?: number
+  manualTotal?: number
+  gradingStatus?: ExamAttemptGradingStatus
+  /** لا تُعرض التعليقات/الدرجات اليدوية للطالب قبل هذا الوقت */
+  resultReleasedAt?: string
+  reviewedAt?: string
   startedAt: string
   submittedAt: string
   durationSeconds: number
+  /** انتهى الوقت وفق ساعة الخادم/المؤقت قبل تسليم المحاولة. */
+  timedOut?: boolean
   /** تعديل يدوي من المعلم لتقدير الدرجة إذا شعر أن التصحيح الآلي غير عادل */
   manualOverride?: {
     score: number
