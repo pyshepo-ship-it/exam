@@ -67,6 +67,9 @@ const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id]
 // داخل قاعدة البيانات. في الاختبار نُحاكيها بقراءة المخزن السحابي الصوري نفسه
 // الذي اشتُقّت منه البيانات، فتعكس المنطق الفعلي (حسابات + طلبات).
 const studentLogin = async (email, pw, _fnv) => {
+  if (globalThis.__studentLoginUnavailable) {
+    return { ok: false, code: "unavailable", error: "خدمة بوابة الطالب تحتاج تحديثاً في قاعدة البيانات — يرجى إبلاغ المعلم" }
+  }
   const __sha256 = (s) => createHash("sha256").update(String(s)).digest("hex")
   const __fnv = (input) => {
     let h1 = 0x811c9dc5, h2 = 0x01000193
@@ -614,6 +617,22 @@ eq("الخروج يفرّغ ذاكرة الجلسة — لا يبقى أي بي�
 eq("الخروج لا يترك أي بيانات في التخزين المحلي",
   !Object.keys(localStorage).some((k) => ["students","grades","studentAccounts","exams","dues","payments"].includes(k)))
 restoreMemory(__snapBeforeLogout) // الصفحة التالية تعيد الجلب من Supabase
+
+// غياب RPC الآمن لا يجوز أن ينشئ جلسة قديمة بلا token ثم يفشل بعد التحويل.
+globalThis.__studentLoginUnavailable = true
+const unavailableLogin = await SA.portalLogin("mohamed@test.com", "secret1")
+globalThis.__studentLoginUnavailable = false
+eq("غياب خدمة الدخول الآمنة يوقف الدخول برسالة واضحة", unavailableLogin.ok === false && /تحديث.*قاعدة البيانات/.test(unavailableLogin.error || ""))
+eq("غياب RPC لا يكتب كوكي جلسة ناقصة", !document.cookie.includes("studentPortalSession="))
+
+// كوكي من إصدار قديم (صالح زمنياً لكن بلا token) يُرفض قبل فتح صفحة الطالب.
+const tokenlessPayload = { ...sessLogin.session }
+delete tokenlessPayload.token
+document.cookie = `studentPortalSession=${encodeURIComponent(
+  btoa(unescape(encodeURIComponent(JSON.stringify(tokenlessPayload))))
+)}; path=/; max-age=2592000`
+eq("جلسة إصدار قديم بلا token تُلغى قبل تحميل البوابة", SA.getPortalSession() === null)
+restoreMemory(__snapBeforeLogout)
 
 // ============================================================
 section("سيناريو 10: الاستفسارات — رسالة واحدة ورد وغلق")
