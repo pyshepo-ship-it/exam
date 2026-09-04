@@ -91,7 +91,7 @@ import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
 import { marksForReviewVerdict, summarizeAttemptReview } from "@/lib/exam-grade"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { Switch } from "@/components/ui/switch"
-import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
+import { ExamPaper, TemplatePicker, TemplateSwitcher } from "@/components/exam/exam-paper"
 import { ScienceIcon } from "@/components/exam/science-ornaments"
 
 /** لا نعرض اختباراً مجدولاً للطلاب ما لم تكن له فترة صحيحة ومكتملة. */
@@ -155,6 +155,10 @@ export default function ExamsPage() {
   const examsRef = useRef<Exam[]>([])
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const [previewTemplate, setPreviewTemplate] = useState<ExamTemplateId>("classic")
+  const [previewDecorations, setPreviewDecorations] = useState(true)
+  const [previewCompact, setPreviewCompact] = useState(false)
+  const [previewMaxPages, setPreviewMaxPages] = useState<number | undefined>(undefined)
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -975,6 +979,10 @@ export default function ExamsPage() {
 
   const previewExamHandler = (exam: Exam) => {
     setPreviewExam(exam)
+    setPreviewTemplate(exam.templateId || "classic")
+    setPreviewDecorations(exam.showDecorations !== false)
+    setPreviewCompact(false)
+    setPreviewMaxPages(undefined)
     setPreviewDialogOpen(true)
   }
 
@@ -2407,13 +2415,48 @@ export default function ExamsPage() {
             <DialogTitle>معاينة الورقة — A4</DialogTitle>
           </DialogHeader>
           {previewExam && (
-            <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
-              <ExamPaper
-                exam={previewExam}
-                gradeName={getGradeName(previewExam.gradeId)}
-                groupName={previewExam.groupId ? getGroupName(previewExam.groupId) : undefined}
-              />
-            </div>
+            <>
+              <div className="no-print w-full max-w-full mx-auto mb-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-bold text-gray-700 dark:text-gray-300">تبديل القالب — شاهد الشكل قبل الطباعة أو التصدير:</p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="accent-indigo-600"
+                        checked={previewDecorations}
+                        onChange={e => setPreviewDecorations(e.target.checked)}
+                      />
+                      الزخارف
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 dark:text-gray-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="accent-indigo-600"
+                        checked={previewCompact}
+                        onChange={e => {
+                          setPreviewCompact(e.target.checked)
+                          setPreviewMaxPages(e.target.checked ? 2 : undefined)
+                        }}
+                      />
+                      صفحتان فقط (ضغط)
+                    </label>
+                  </div>
+                </div>
+                <TemplateSwitcher value={previewTemplate} onChange={setPreviewTemplate} />
+              </div>
+              <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
+                <ExamPaper
+                  exam={previewExam}
+                  gradeName={getGradeName(previewExam.gradeId)}
+                  groupName={previewExam.groupId ? getGroupName(previewExam.groupId) : undefined}
+                  templateId={previewTemplate}
+                  showDecorations={previewDecorations}
+                  compact={previewCompact}
+                  maxPages={previewMaxPages}
+                />
+              </div>
+            </>
           )}
           <DialogFooter className="no-print gap-2">
             <Button variant="outline" onClick={() => setPreviewDialogOpen(false)}>إغلاق</Button>

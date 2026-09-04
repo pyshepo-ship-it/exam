@@ -228,6 +228,12 @@ export interface ExamTemplateDef {
   bestFor: string
   swatch: string[]
   previewClass: string
+  /** خط عربي مميز للورقة — يُطبَّق على كامل الصفحة */
+  fontFamily: string
+  /** لون النصوص/الحدود الزخرفية الرئيسية */
+  accent: string
+  /** هل يُزيَّن رأس السؤال بلون متدرّج وشارة ملونة؟ */
+  decorative: boolean
 }
 
 export const EXAM_TEMPLATES: ExamTemplateDef[] = [
@@ -238,6 +244,9 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "كل الصفوف — Closest to official Egyptian papers",
     swatch: ["#1e3a5f", "#c5a059", "#ffffff"],
     previewClass: "from-slate-800 to-navy-900",
+    fontFamily: "'Amiri', 'Cairo', serif",
+    accent: "#1e3a5f",
+    decorative: false,
   },
   {
     id: "lab",
@@ -246,6 +255,9 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الإعدادي والأول الثانوي",
     swatch: ["#0f766e", "#14b8a6", "#ecfeff"],
     previewClass: "from-teal-700 to-cyan-600",
+    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    accent: "#0f766e",
+    decorative: true,
   },
   {
     id: "life",
@@ -254,6 +266,9 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الرابع حتى الإعدادي (أحياء)",
     swatch: ["#166534", "#22c55e", "#f0fdf4"],
     previewClass: "from-green-800 to-emerald-500",
+    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    accent: "#166534",
+    decorative: true,
   },
   {
     id: "cosmos",
@@ -262,6 +277,9 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "السادس والإعدادي والثانوي",
     swatch: ["#1e1b4b", "#c5a059", "#312e81"],
     previewClass: "from-indigo-950 to-violet-700",
+    fontFamily: "'Reem Kufi', 'Cairo', sans-serif",
+    accent: "#1e1b4b",
+    decorative: true,
   },
   {
     id: "explorer",
@@ -270,11 +288,63 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الرابع والخامس والسادس الابتدائي",
     swatch: ["#4f46e5", "#f59e0b", "#10b981"],
     previewClass: "from-indigo-500 via-amber-400 to-emerald-500",
+    fontFamily: "'Marhey', 'Tajawal', 'Cairo', sans-serif",
+    accent: "#4f46e5",
+    decorative: true,
+  },
+  {
+    id: "royal",
+    name: "الديواني الفاخر",
+    tagline: "كحلي وذهبي بخط عريض وحدود مزدوجة ملكية",
+    bestFor: "الثانوية والمرحلة الإعدادية",
+    swatch: ["#132a4a", "#d4af37", "#f8f4e8"],
+    previewClass: "from-[#132a4a] via-[#233a5e] to-[#d4af37]",
+    fontFamily: "'Amiri', 'Cairo', serif",
+    accent: "#132a4a",
+    decorative: true,
+  },
+  {
+    id: "parchment",
+    name: "الرقّي العريق",
+    tagline: "ورقة مخطوطات بلون الرقّ وإطار ذهبي ناعم",
+    bestFor: "كل الصفوف — لمظهر رسمي تراثي",
+    swatch: ["#7c5a2e", "#c9a24b", "#fbf3df"],
+    previewClass: "from-[#7c5a2e] via-[#b98a3c] to-[#f2c879]",
+    fontFamily: "'Scheherazade New', 'Amiri', serif",
+    accent: "#6b4f23",
+    decorative: false,
+  },
+  {
+    id: "wedding",
+    name: "الأصالة الهادئة",
+    tagline: "زمردي وذهبي ببراويز أنيقة للصفحة والسؤال",
+    bestFor: "الابتدائية العليا والإعدادي",
+    swatch: ["#0b5d43", "#d4af37", "#f0faf5"],
+    previewClass: "from-[#0b5d43] via-[#14805f] to-[#d4af37]",
+    fontFamily: "'El Messiri', 'Cairo', sans-serif",
+    accent: "#0b5d43",
+    decorative: true,
+  },
+  {
+    id: "modern",
+    name: "النقاء الأنيق",
+    tagline: "أبيض ناصع بحدود سوداء رفيعة وخط هندسي",
+    bestFor: "المرحلة الثانوية والجامعية",
+    swatch: ["#1f2937", "#6b7280", "#ffffff"],
+    previewClass: "from-gray-700 via-gray-400 to-white",
+    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    accent: "#1f2937",
+    decorative: false,
   },
 ]
 
 export function getTemplate(id?: ExamTemplateId): ExamTemplateDef {
   return EXAM_TEMPLATES.find(t => t.id === id) || EXAM_TEMPLATES[0]
+}
+
+/** خط الورقة الخاص بالقالب — يُطبَّق على كامل الصفحة عبر style fontFamily */
+export function getTemplateFont(id?: ExamTemplateId): string {
+  return getTemplate(id).fontFamily
 }
 
 /** جملة «أكمل» للمعاينة والورقة */
@@ -325,7 +395,26 @@ export interface ExamPartition {
   page2Questions: { question: Question; globalIndex: number }[]
 }
 
-export function partitionExamQuestions(questions: Question[]): ExamPartition {
+export interface PartitionOptions {
+  /** أقصى عدد صفحات مسموح (2 = صفحتان فقط). 1 = صفحة واحدة إن أمكن. */
+  maxPages?: number
+  /** وضع الضغط: يقلّل المسافات وأسطر النقاط ليتسع المزيد في كل صفحة دون تشويه */
+  compact?: boolean
+}
+
+/**
+ * تقسيم أسئلة الامتحان على الصفحات.
+ * - الافتراضي (بدون خيارات) يحافظ على السلوك القديم تماماً.
+ * - عند `compact` يُخفَّض الوزن التقريبي لكل سؤال (مسافات وأسطر أقل) ليحتمل
+ *   توزيعاً أضيق، بما يساعد على احتواء الامتحان في صفحتين دون تشويه.
+ * - عند `maxPages: 2` نُجبر التوَزيع على صفحتين (أو صفحة واحدة إن كان صغيراً).
+ */
+export function partitionExamQuestions(
+  questions: Question[],
+  options?: PartitionOptions
+): ExamPartition {
+  const maxPages = options?.maxPages
+  const compact = options?.compact
   const n = questions.length
   if (n === 0) {
     return {
@@ -339,63 +428,111 @@ export function partitionExamQuestions(questions: Question[]): ExamPartition {
 
   // تقدير وزن/ارتفاع السؤال بوحدات تقريبية دقيقة
   const getQWeight = (q: Question): number => {
-    const base = 48
+    const base = compact ? 42 : 48
     const subCount = q.subQuestions.length || 1
-    let subWeight = 34
-    if (q.questionType === 1) subWeight = 42 // MCQ مع خيارات ومسافات واسعة
+    let subWeight = compact ? 30 : 34
+    if (q.questionType === 1) subWeight = compact ? 38 : 42 // MCQ مع خيارات ومسافات واسعة
     if (q.questionType === 4 || q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
-      subWeight = 28 + (q.subQuestions[0]?.answerLines ?? 1) * 16 // أسئلة أسطر النقاط
+      const lines = compact
+        ? Math.min(Math.max(q.subQuestions[0]?.answerLines ?? 1, 1), 2) // ضغط أسطر النقاط
+        : (q.subQuestions[0]?.answerLines ?? 1)
+      subWeight = (compact ? 24 : 28) + lines * (compact ? 13 : 16)
     }
-    if (q.questionType === 5) subWeight = 36 // تصحيح
+    if (q.questionType === 5) subWeight = compact ? 32 : 36 // تصحيح
     return base + subCount * subWeight
+  }
+
+  const buildPages = (pageQuestions: { question: Question; globalIndex: number }[][]): ExamPartition => {
+    const totalPages = pageQuestions.length
+    const pages: ExamPagePartition[] = pageQuestions.map((pq, idx) => ({
+      pageNumber: idx + 1,
+      totalPages,
+      isFirstPage: idx === 0,
+      isLastPage: idx === totalPages - 1,
+      questions: pq,
+    }))
+    const p1 = pages[0]?.questions || []
+    const p2 = pages[1]?.questions || []
+    return {
+      pages,
+      totalPages,
+      isSinglePage: totalPages === 1,
+      page1Questions: p1,
+      page2Questions: p2,
+    }
   }
 
   const weights = questions.map(getQWeight)
   const totalQuestionsWeight = weights.reduce((a, b) => a + b, 0)
 
   // سعة الصفحة الأولى (مع احتساب الترويسة الرئيسية وحقول الطالب)
-  const PAGE1_MAX_CAPACITY = 600
+  const PAGE1_MAX_CAPACITY = compact ? 560 : 600
   // سعة الصفحات التالية (مع الترويسة المصغرة فقط)
-  const SUBSEQUENT_PAGE_MAX_CAPACITY = 680
+  const SUBSEQUENT_PAGE_MAX_CAPACITY = compact ? 640 : 680
   // أقصى وزن للامتحان المكون من صفحة واحدة فقط
-  const SINGLE_PAGE_MAX_WEIGHT = 380
+  const SINGLE_PAGE_MAX_WEIGHT = compact ? 430 : 380
 
-  if (n <= 2 && totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
-    const singleQuestions = questions.map((q, i) => ({ question: q, globalIndex: i }))
-    const singlePage: ExamPagePartition = {
-      pageNumber: 1,
-      totalPages: 1,
-      isFirstPage: true,
-      isLastPage: true,
-      questions: singleQuestions,
-    }
-    return {
-      pages: [singlePage],
-      totalPages: 1,
-      isSinglePage: true,
-      page1Questions: singleQuestions,
-      page2Questions: [],
-    }
+  const sortedIndexed = questions.map((q, i) => ({ question: q, globalIndex: i, weight: weights[i] }))
+
+  const singlePagePartition = (): ExamPartition => {
+    const all = questions.map((q, i) => ({ question: q, globalIndex: i }))
+    return buildPages([all])
   }
 
-  // إذا كان الامتحان 3 أسئلة وتجاوز حد الصفحة الواحدة، نقسمه على صفحتين (2 في الأولى و1 في الثانية)
+  const twoPageBalancedPartition = (): ExamPartition => {
+    // إن كان الامتحان يتسع فعلاً لصفحة واحدة نُبقيه صفحة واحدة (أفضل من صفحة فاضية)
+    if (totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
+      return singlePagePartition()
+    }
+    const half = Math.ceil(totalQuestionsWeight / 2)
+    let first: { question: Question; globalIndex: number }[] = []
+    let second: { question: Question; globalIndex: number }[] = []
+    let acc = 0
+    let switched = false
+    for (const item of sortedIndexed) {
+      if (!switched) {
+        // لا نضع في الصفحة الأولى سؤالاً أثقل من نصف الميزان إن أمكن؛ ننتقل للثانية
+        if (first.length > 0 && acc + item.weight > half) {
+          switched = true
+        } else {
+          first.push({ question: item.question, globalIndex: item.globalIndex })
+          acc += item.weight
+          continue
+        }
+      }
+      second.push({ question: item.question, globalIndex: item.globalIndex })
+    }
+    if (first.length === 0) {
+      first = second
+      second = []
+    }
+    if (second.length === 0) return singlePagePartition()
+    return buildPages([first, second])
+  }
+
+  // 0) طلب صفحة واحدة صراحةً
+  if (maxPages === 1) {
+    return singlePagePartition()
+  }
+
+  // 1) وضع «صفحتان فقط» — نتًوزّع على صفحتين باالتوازن في كل الأحوال
+  if (maxPages === 2) {
+    return twoPageBalancedPartition()
+  }
+
+  // 2) محاولة صفحة واحدة إذا كان صغيراً
+  if (totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
+    return singlePagePartition()
+  }
+
+  // 3) إذا كان الامتحان 3 أسئلة وتجاوز حد الصفحة الواحدة: 2 في الأولى و1 في الثانية
   if (n === 3 && totalQuestionsWeight > SINGLE_PAGE_MAX_WEIGHT) {
     const p1 = questions.slice(0, 2).map((q, i) => ({ question: q, globalIndex: i }))
     const p2 = questions.slice(2).map((q, i) => ({ question: q, globalIndex: 2 + i }))
-    const pages: ExamPagePartition[] = [
-      { pageNumber: 1, totalPages: 2, isFirstPage: true, isLastPage: false, questions: p1 },
-      { pageNumber: 2, totalPages: 2, isFirstPage: false, isLastPage: true, questions: p2 },
-    ]
-    return {
-      pages,
-      totalPages: 2,
-      isSinglePage: false,
-      page1Questions: p1,
-      page2Questions: p2,
-    }
+    return buildPages([p1, p2])
   }
 
-  // توزيع ذكي ديناميكي على عدد الصفحات المناسب (صفحتين، 3 صفحات أو أكثر)
+  // 4) توزيع ذكي ديناميكي على عدد الصفحات المناسب (السلوك الافتراضي)
   const rawPages: { question: Question; globalIndex: number }[][] = []
   let currentPage: { question: Question; globalIndex: number }[] = []
   let currentCapacity = 0
@@ -422,23 +559,5 @@ export function partitionExamQuestions(questions: Question[]): ExamPartition {
     rawPages.push(currentPage)
   }
 
-  const totalPages = rawPages.length
-  const pages: ExamPagePartition[] = rawPages.map((pageQuestions, idx) => ({
-    pageNumber: idx + 1,
-    totalPages,
-    isFirstPage: idx === 0,
-    isLastPage: idx === totalPages - 1,
-    questions: pageQuestions,
-  }))
-
-  const p1 = pages[0]?.questions || []
-  const p2 = pages[1]?.questions || []
-
-  return {
-    pages,
-    totalPages,
-    isSinglePage: totalPages === 1,
-    page1Questions: p1,
-    page2Questions: p2,
-  }
+  return buildPages(rawPages)
 }

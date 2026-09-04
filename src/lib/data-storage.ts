@@ -136,7 +136,16 @@ export interface Payment {
   createdAt: string
 }
 
-export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
+export type ExamTemplateId =
+  | "classic"
+  | "lab"
+  | "life"
+  | "cosmos"
+  | "explorer"
+  | "royal"
+  | "parchment"
+  | "wedding"
+  | "modern"
 
 /** نوع الاختبار عند إنشائه: ورقة أوف لاين، أو اختبار يؤديه الطلاب على الموقع. */
 export type ExamDeliveryMode = "offline" | "online"

@@ -730,14 +730,18 @@ test("التعرف على الشريحة الدراسية وتعيين الزخ�
   assert(prepOrnaments.includes("atom") && prepOrnaments.includes("flask"), "الإعدادي يحوي ذرة ودورق")
 })
 
-test("القوالب الخمسة والأنواع الثمانية للأسئلة معرفة بالكامل ولها أسماء وشارات", () => {
-  assertEq(templatesMod.EXAM_TEMPLATES.length, 5)
+test("القوالب التسعة والأنواع الثمانية للأسئلة معرفة بالكامل ولها أسماء وشارات", () => {
+  assertEq(templatesMod.EXAM_TEMPLATES.length, 9)
   const ids = templatesMod.EXAM_TEMPLATES.map(t => t.id)
   assert(ids.includes("classic"))
   assert(ids.includes("lab"))
   assert(ids.includes("life"))
   assert(ids.includes("cosmos"))
   assert(ids.includes("explorer"))
+  assert(ids.includes("royal"))
+  assert(ids.includes("parchment"))
+  assert(ids.includes("wedding"))
+  assert(ids.includes("modern"))
 
   assertEq(templatesMod.QUESTION_TYPES.length, 8, "يوجد 8 أنواع أسئلة معرفة")
   const typeIds = templatesMod.QUESTION_TYPES.map(t => t.id)
