@@ -85,6 +85,8 @@ import {
   getTemplate,
   renderCompleteParts,
   getUnderlinedWords,
+  getOrnamentPreset,
+  type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
 import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
@@ -159,6 +161,8 @@ export default function ExamsPage() {
   const [previewDecorations, setPreviewDecorations] = useState(true)
   const [previewCompact, setPreviewCompact] = useState(false)
   const [previewMaxPages, setPreviewMaxPages] = useState<number | undefined>(undefined)
+  const [previewOrnamentSize, setPreviewOrnamentSize] = useState(32)
+  const [previewOrnamentDensity, setPreviewOrnamentDensity] = useState<OrnamentDensity>("medium")
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -171,6 +175,8 @@ export default function ExamsPage() {
     questions: [] as Question[],
     templateId: "classic" as ExamTemplateId,
     showDecorations: true,
+    ornamentSize: 32,
+    ornamentDensity: "medium" as OrnamentDensity,
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode: "offline" as ExamDeliveryMode,
@@ -703,6 +709,8 @@ export default function ExamsPage() {
     questions: [] as Question[],
     templateId: "classic" as ExamTemplateId,
     showDecorations: true,
+    ornamentSize: 32,
+    ornamentDensity: "medium" as OrnamentDensity,
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode,
@@ -750,6 +758,8 @@ export default function ExamsPage() {
       questions: form.questions,
       templateId: form.templateId,
       showDecorations: form.showDecorations,
+      ornamentSize: form.ornamentSize,
+      ornamentDensity: form.ornamentDensity,
       teacherName: form.teacherName || undefined,
       schoolName: form.schoolName || undefined,
       deliveryMode: form.deliveryMode,
@@ -844,6 +854,8 @@ export default function ExamsPage() {
       questions: exam.questions,
       templateId: exam.templateId || "classic" as ExamTemplateId,
       showDecorations: exam.showDecorations !== false,
+      ornamentSize: exam.ornamentSize ?? 32,
+      ornamentDensity: (exam.ornamentDensity || "medium") as OrnamentDensity,
       teacherName: exam.teacherName || TEACHER_NAME,
       schoolName: exam.schoolName || "",
       deliveryMode: examDeliveryMode(exam),
@@ -981,6 +993,8 @@ export default function ExamsPage() {
     setPreviewExam(exam)
     setPreviewTemplate(exam.templateId || "classic")
     setPreviewDecorations(exam.showDecorations !== false)
+    setPreviewOrnamentSize(exam.ornamentSize ?? getOrnamentPreset(exam.templateId || "classic").size)
+    setPreviewOrnamentDensity(exam.ornamentDensity ?? getOrnamentPreset(exam.templateId || "classic").density)
     setPreviewCompact(false)
     setPreviewMaxPages(undefined)
     setPreviewDialogOpen(true)
@@ -1528,7 +1542,7 @@ export default function ExamsPage() {
               <section className="space-y-3">
               <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
-                قالب الورقة (5 قوالب احترافية)
+                قالب الورقة (9 قوالب احترافية)
               </h3>
               <TemplatePicker
                 value={examForm.templateId}
@@ -1550,6 +1564,42 @@ export default function ExamsPage() {
                   </p>
                 </div>
               </label>
+              <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-bold text-gray-600 dark:text-gray-300 ml-1">حجم الزخارف:</span>
+                  {[24, 32, 44].map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setExamForm(prev => ({ ...prev, ornamentSize: s }))}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                        examForm.ornamentSize === s
+                          ? "border-indigo-500 bg-indigo-600 text-white"
+                          : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      {s === 24 ? "صغير" : s === 32 ? "متوسط" : "كبير"}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-bold text-gray-600 dark:text-gray-300 ml-1">الكثافة:</span>
+                  {(["low", "medium", "high"] as OrnamentDensity[]).map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setExamForm(prev => ({ ...prev, ornamentDensity: d }))}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                        examForm.ornamentDensity === d
+                          ? "border-indigo-500 bg-indigo-600 text-white"
+                          : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      {d === "low" ? "خفيف" : d === "medium" ? "متوسط" : "كثيف"}
+                    </button>
+                  ))}
+                </div>
+              </div>
               </section>
             )}
 
@@ -2444,6 +2494,42 @@ export default function ExamsPage() {
                   </div>
                 </div>
                 <TemplateSwitcher value={previewTemplate} onChange={setPreviewTemplate} />
+                <div className="flex flex-wrap items-center gap-3 pt-1">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 ml-1">حجم الزخارف:</span>
+                    {[24, 32, 44].map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setPreviewOrnamentSize(s)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                          previewOrnamentSize === s
+                            ? "border-indigo-500 bg-indigo-600 text-white"
+                            : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                        }`}
+                      >
+                        {s === 24 ? "صغير" : s === 32 ? "متوسط" : "كبير"}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 ml-1">الكثافة:</span>
+                    {(["low", "medium", "high"] as OrnamentDensity[]).map(d => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setPreviewOrnamentDensity(d)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                          previewOrnamentDensity === d
+                            ? "border-indigo-500 bg-indigo-600 text-white"
+                            : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                        }`}
+                      >
+                        {d === "low" ? "خفيف" : d === "medium" ? "متوسط" : "كثيف"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
                 <ExamPaper
@@ -2454,6 +2540,8 @@ export default function ExamsPage() {
                   showDecorations={previewDecorations}
                   compact={previewCompact}
                   maxPages={previewMaxPages}
+                  ornamentSize={previewOrnamentSize}
+                  ornamentDensity={previewOrnamentDensity}
                 />
               </div>
             </>

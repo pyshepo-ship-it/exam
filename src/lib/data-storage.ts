@@ -188,6 +188,10 @@ export interface Exam {
   templateId?: ExamTemplateId
   /** إظهار زخارف علمية حول الأسئلة حسب الصف */
   showDecorations?: boolean
+  /** حجم الزخارف (بكسل) — اختياري، يغطي قالب الورقة عند ضبطه */
+  ornamentSize?: number
+  /** كثافة الزخارف حول الأسئلة والصفحة */
+  ornamentDensity?: "low" | "medium" | "high"
   teacherName?: string
   schoolName?: string
   /**

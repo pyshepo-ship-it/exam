@@ -189,14 +189,33 @@ export type OrnamentKind =
   | "thermometer"
   | "brain"
   | "bug"
+  | "rocket"
+  | "globe"
+  | "moon"
+  | "star"
+  | "book"
+  | "pencil"
+  | "graduation"
+  | "lightbulb"
+  | "calc"
+  | "ruler"
+  | "compass"
+  | "sprout"
+  | "wind"
+  | "cloud"
+  | "rainbow"
+  | "heart"
+  | "flame"
+  | "fish"
+  | "bird"
 
 const BAND_ORNAMENTS: Record<GradeBand, OrnamentKind[]> = {
-  g4: ["sun", "leaf", "flower", "droplet", "bug", "planet"],
-  g5: ["microscope", "leaf", "magnet", "thermometer", "sun", "droplet"],
-  g6: ["microscope", "flask", "magnet", "zap", "thermometer", "leaf"],
-  prep: ["flask", "atom", "microscope", "testTube", "zap", "magnet"],
-  sec1: ["atom", "dna", "flask", "microscope", "testTube", "brain"],
-  other: ["microscope", "flask", "atom", "leaf", "sun", "magnet"],
+  g4: ["sun", "leaf", "cloud", "rainbow", "droplet", "bird", "flower", "planet"],
+  g5: ["microscope", "leaf", "magnet", "thermometer", "sun", "sprout", "droplet", "wind"],
+  g6: ["microscope", "flask", "magnet", "zap", "thermometer", "leaf", "flame", "bird"],
+  prep: ["flask", "atom", "microscope", "testTube", "zap", "magnet", "calc", "compass"],
+  sec1: ["atom", "dna", "flask", "microscope", "testTube", "brain", "rocket", "moon"],
+  other: ["microscope", "flask", "atom", "leaf", "sun", "magnet", "book", "pencil"],
 }
 
 export function getOrnamentsForGrade(gradeName: string): OrnamentKind[] {
@@ -219,6 +238,51 @@ export const ORNAMENT_COLORS: Record<OrnamentKind, string> = {
   thermometer: "#f97316",
   brain: "#8b5cf6",
   bug: "#65a30d",
+  rocket: "#f43f5e",
+  globe: "#22c55e",
+  moon: "#6366f1",
+  star: "#eab308",
+  book: "#0ea5e9",
+  pencil: "#f59e0b",
+  graduation: "#8b5cf6",
+  lightbulb: "#f59e0b",
+  calc: "#0891b2",
+  ruler: "#84cc16",
+  compass: "#0d9488",
+  sprout: "#22c55e",
+  wind: "#38bdf8",
+  cloud: "#94a3b8",
+  rainbow: "#ec4899",
+  heart: "#ef4444",
+  flame: "#f97316",
+  fish: "#0ea5e9",
+  bird: "#10b981",
+}
+
+/** كثافة الزخارف حول الأسئلة/الصفحة */
+export type OrnamentDensity = "low" | "medium" | "high"
+
+/** إعدادات العرض الافتراضية للزخارف حسب القالب */
+export interface OrnamentPreset {
+  /** الحجم المبدئي للرمز (px) */
+  size: number
+  /** كثافة الرموز */
+  density: OrnamentDensity
+}
+
+export function getOrnamentPreset(templateId?: ExamTemplateId): OrnamentPreset {
+  switch (templateId) {
+    case "cosmos": return { size: 42, density: "high" }
+    case "explorer": return { size: 42, density: "high" }
+    case "lab": return { size: 36, density: "high" }
+    case "life": return { size: 36, density: "high" }
+    case "royal": return { size: 30, density: "medium" }
+    case "wedding": return { size: 30, density: "medium" }
+    case "parchment": return { size: 26, density: "low" }
+    case "modern": return { size: 24, density: "low" }
+    case "classic":
+    default: return { size: 24, density: "low" }
+  }
 }
 
 export interface ExamTemplateDef {
@@ -244,7 +308,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "كل الصفوف — Closest to official Egyptian papers",
     swatch: ["#1e3a5f", "#c5a059", "#ffffff"],
     previewClass: "from-slate-800 to-navy-900",
-    fontFamily: "'Amiri', 'Cairo', serif",
+    fontFamily: "'Noto Naskh Arabic', 'Amiri', serif",
     accent: "#1e3a5f",
     decorative: false,
   },
@@ -266,7 +330,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الرابع حتى الإعدادي (أحياء)",
     swatch: ["#166534", "#22c55e", "#f0fdf4"],
     previewClass: "from-green-800 to-emerald-500",
-    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    fontFamily: "'Almarai', 'Tajawal', sans-serif",
     accent: "#166534",
     decorative: true,
   },
@@ -310,7 +374,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "كل الصفوف — لمظهر رسمي تراثي",
     swatch: ["#7c5a2e", "#c9a24b", "#fbf3df"],
     previewClass: "from-[#7c5a2e] via-[#b98a3c] to-[#f2c879]",
-    fontFamily: "'Scheherazade New', 'Amiri', serif",
+    fontFamily: "'Markazi Text', 'Amiri', serif",
     accent: "#6b4f23",
     decorative: false,
   },
@@ -332,7 +396,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "المرحلة الثانوية والجامعية",
     swatch: ["#1f2937", "#6b7280", "#ffffff"],
     previewClass: "from-gray-700 via-gray-400 to-white",
-    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    fontFamily: "'Noto Kufi Arabic', 'Tajawal', sans-serif",
     accent: "#1f2937",
     decorative: false,
   },

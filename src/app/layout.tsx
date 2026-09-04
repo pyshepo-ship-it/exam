@@ -21,7 +21,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Scheherazade+New:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=El+Messiri:wght@400;600;700&family=Marhey:wght@400;600;700&family=Tajawal:wght@400;500;700;800&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Scheherazade+New:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=El+Messiri:wght@400;600;700&family=Marhey:wght@400;600;700&family=Almarai:wght@300;400;700;800&family=Markazi+Text:wght@400;500;600;700&family=Noto+Kufi+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700;800&display=swap"
           rel="stylesheet"
         />
       </head>

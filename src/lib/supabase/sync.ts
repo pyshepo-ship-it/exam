@@ -227,6 +227,8 @@ export const toExamRow = (e: any) => ({
     items: e.questions || [],
     templateId: e.templateId || "classic",
     showDecorations: e.showDecorations !== false,
+    ornamentSize: e.ornamentSize,
+    ornamentDensity: e.ornamentDensity,
     teacherName: e.teacherName || "",
     schoolName: e.schoolName || "",
     // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
@@ -268,6 +270,8 @@ export const fromExamRow = (row: any) => {
     questions: wrapped ? q.items : (Array.isArray(q) ? q : []),
     templateId: wrapped ? (q.templateId || "classic") : "classic",
     showDecorations: wrapped ? q.showDecorations !== false : true,
+    ornamentSize: wrapped ? q.ornamentSize : undefined,
+    ornamentDensity: wrapped ? q.ornamentDensity : undefined,
     teacherName: wrapped ? (q.teacherName || undefined) : undefined,
     schoolName: wrapped ? (q.schoolName || undefined) : undefined,
     // توافق رجعي: المنشور القديم يُستنتج كأونلاين، أما غير المنشور فنتركه

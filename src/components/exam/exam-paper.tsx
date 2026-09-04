@@ -16,6 +16,8 @@ import {
   partitionExamQuestions,
   getTemplate,
   getTemplateFont,
+  getOrnamentPreset,
+  type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
 import {
@@ -40,6 +42,10 @@ interface ExamPaperProps {
   compact?: boolean
   /** أقصى عدد صفحات (2 = صفحتان فقط، 1 = صفحة واحدة قدر الإمكان) */
   maxPages?: number
+  /** حجم الزخارف بالبكسل — يغطي إعداد القالب عند عدم التحديد */
+  ornamentSize?: number
+  /** كثافة الزخارف: low / medium / high */
+  ornamentDensity?: OrnamentDensity
 }
 
 /** لوحة ألوان كل قالب — تُستخدم للحدود والخلفيات برمجياً */
@@ -284,6 +290,8 @@ function QuestionBlock({
   gradeName,
   showDecorations,
   compact,
+  ornamentSize,
+  ornamentDensity,
 }: {
   question: Question
   index: number
@@ -291,6 +299,8 @@ function QuestionBlock({
   gradeName: string
   showDecorations: boolean
   compact?: boolean
+  ornamentSize?: number
+  ornamentDensity?: OrnamentDensity
 }) {
   const header = getQuestionHeader(question)
   const marks = getQuestionMarks(question)
@@ -354,7 +364,9 @@ function QuestionBlock({
             : undefined,
       }}
     >
-      {showDecorations && <QuestionOrnaments gradeName={gradeName} index={index} />}
+      {showDecorations && (
+        <QuestionOrnaments gradeName={gradeName} index={index} size={ornamentSize} density={ornamentDensity} />
+      )}
       {headerEl}
       <div className={`relative z-10 px-4 ${compact ? "py-2 space-y-2" : "py-3 space-y-3"}`}>
         {question.subQuestions.map((sq, si) => (
@@ -592,6 +604,8 @@ export function ExamPaper({
   schoolName,
   compact,
   maxPages,
+  ornamentSize,
+  ornamentDensity,
 }: ExamPaperProps) {
   const template: ExamTemplateId = templateId || exam.templateId || "classic"
   const decorations = showDecorations ?? exam.showDecorations !== false
@@ -609,6 +623,9 @@ export function ExamPaper({
   const totalMarks = exam.totalMarks || getExamTotalMarks(exam.questions)
   const pal = palette(template)
   const fontFamily = getTemplateFont(template)
+  const preset = getOrnamentPreset(template)
+  const effOrnamentSize = ornamentSize ?? exam.ornamentSize ?? preset.size
+  const effOrnamentDensity = ornamentDensity ?? exam.ornamentDensity ?? preset.density
 
   const shellBase: React.CSSProperties =
     template === "classic"
@@ -647,7 +664,9 @@ export function ExamPaper({
           lang="ar"
           style={{ ...shellBase, fontFamily, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
         >
-          {decorations && <PaperCornerOrnaments gradeName={gradeName} />}
+          {decorations && (
+            <PaperCornerOrnaments gradeName={gradeName} size={effOrnamentSize + 8} density={effOrnamentDensity} />
+          )}
 
           <div className="relative z-10 flex flex-col justify-between flex-1 w-full">
             {page.isFirstPage ? (
@@ -679,6 +698,8 @@ export function ExamPaper({
                   gradeName={gradeName}
                   showDecorations={decorations}
                   compact={compact}
+                  ornamentSize={effOrnamentSize}
+                  ornamentDensity={effOrnamentDensity}
                 />
               ))}
             </div>
