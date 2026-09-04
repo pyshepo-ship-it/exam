@@ -706,71 +706,90 @@ export function pushGrades(grades: GradeShape[]) {
 
 export function pushStudents(rows: any[]) {
   // تنظيف المراجع المعلّقة: إن كان الصف/المجموعة محذوفاً من البيانات الحالية
-  // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409)
+  // نُفرّغ الحقل بدل إرسال مرجع غير موجود (يسبب خطأ 409).
+  // مهم: القائمة الفارغة تعني «لم تُحمَّل بعد» وليست «محذوفة» — لذلك لا نُفرّغ
+  // أي مرجع إلا إذا كانت قائمة الصفوف محمّلة فعلاً، حتى لا تُفقد بيانات صحيحة
+  // (صف/مجموعة الطالب) عند محاولة رفع قبل وصول الصفوف من السحابة.
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows.map((s) => {
     const row = toStudentRow(s);
-    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
-    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    if (gradesLoaded && row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
     return row;
   });
   return pushRows("students", cleaned);
 }
 export function pushDues(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  // لا نُصفّر / لا نُسقط بناءً على قائمة غير محمّلة (فقد تُفقد بيانات صحيحة)
+  const studentsLoaded = students.length > 0;
+  const gradesLoaded = grades.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows
-    .filter((d) => studentIds.has(d.studentId)) // student_id NOT NULL
+    .filter((d) => !studentsLoaded || studentIds.has(d.studentId)) // student_id NOT NULL
     .map((d) => {
       const row = toDueRow(d);
-      if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+      if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
       return row;
     });
   return pushRows("dues", cleaned);
 }
 export function pushPayments(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  const dueIds = new Set(memoryRows<any>(STORAGE_KEYS.DUES).map((d) => d.id));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const dues = memoryRows<any>(STORAGE_KEYS.DUES);
+  const studentsLoaded = students.length > 0;
+  const duesLoaded = dues.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  const dueIds = new Set(dues.map((d) => d.id));
 
   const cleaned = rows
-    .filter((p) => studentIds.has(p.studentId)) // student_id NOT NULL
+    .filter((p) => !studentsLoaded || studentIds.has(p.studentId)) // student_id NOT NULL
     .map((p) => {
       const row = toPaymentRow(p);
-      if (row.due_id && !dueIds.has(row.due_id)) row.due_id = null;
+      if (duesLoaded && row.due_id && !dueIds.has(row.due_id)) row.due_id = null;
       return row;
     });
   return pushRows("payments", cleaned);
 }
 export function pushExams(rows: any[]) {
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const gradeIds = new Set(grades.map((g) => g.id));
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
 
   const cleaned = rows.map((e) => {
     const row = toExamRow(e);
-    if (row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
-    if (row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
+    if (gradesLoaded && row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
     return row;
   });
   return pushRows("exams", cleaned);
 }
 export function pushSessions(rows: any[]) {
   const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
   const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
-  // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها
-  const cleaned = rows.filter((s) => groupIds.has(s.groupId)).map(toSessionRow);
+  // group_id NOT NULL — نتجاهل الحصص التي فُقدت مجموعتها.
+  // إن لم تكن الصفوف محمّلة بعد لا نُسقط أي حصة (قد تكون مراجعها صحيحة).
+  const cleaned = (gradesLoaded ? rows.filter((s) => groupIds.has(s.groupId)) : rows).map(toSessionRow);
   return pushRows("sessions", cleaned);
 }
 export function pushAttendance(rows: any[]) {
-  const sessionIds = new Set(memoryRows<any>(STORAGE_KEYS.SESSIONS).map((s) => s.id));
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
+  const sessions = memoryRows<any>(STORAGE_KEYS.SESSIONS);
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const sessionsLoaded = sessions.length > 0;
+  const studentsLoaded = students.length > 0;
+  const sessionIds = new Set(sessions.map((s) => s.id));
+  const studentIds = new Set(students.map((s) => s.id));
   const cleaned = rows
-    .filter((a) => sessionIds.has(a.sessionId) && studentIds.has(a.studentId))
+    .filter((a) => (!sessionsLoaded || sessionIds.has(a.sessionId)) && (!studentsLoaded || studentIds.has(a.studentId)))
     .map(toAttendanceRow);
   return pushRows("attendance", cleaned);
 }
@@ -791,8 +810,10 @@ export function pushYearArchives(rows: YearArchiveShape[]) {
 }
 
 export function pushManualGrades(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  return pushRows("manual_grades", rows.filter((m) => studentIds.has(m.studentId)).map(toManualGradeRow));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const studentsLoaded = students.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  return pushRows("manual_grades", rows.filter((m) => !studentsLoaded || studentIds.has(m.studentId)).map(toManualGradeRow));
 }
 export function pushRegistrationRequests(rows: any[]) {
   return pushRows("registration_requests", rows.map(toRegistrationRequestRow));
@@ -801,8 +822,10 @@ export function pushGroupTransferRequests(rows: any[]) {
   return pushRows("group_transfer_requests", rows.map(toGroupTransferRequestRow));
 }
 export function pushStudentHistory(rows: any[]) {
-  const studentIds = new Set(memoryRows<any>(STORAGE_KEYS.STUDENTS).map((s) => s.id));
-  return pushRows("student_history", rows.filter((h) => studentIds.has(h.studentId)).map(toStudentHistoryRow));
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const studentsLoaded = students.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  return pushRows("student_history", rows.filter((h) => !studentsLoaded || studentIds.has(h.studentId)).map(toStudentHistoryRow));
 }
 export function pushStudentAccounts(rows: any[]) {
   return pushRows("student_accounts", rows.map(toStudentAccountRow));

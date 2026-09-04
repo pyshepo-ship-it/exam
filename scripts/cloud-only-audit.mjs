@@ -332,6 +332,19 @@ const DATA_FILES_FORBIDDEN = [
 }
 
 // ────────────────────────────────────────────────────────────
+// 21) التنظيف في pushStudents/… لا يُفرّغ المراجع عندما لا تكون
+//     الصفوف/المجموعات محمّلة بعد (صفحة تُحفظ قبل وصول grades من السحابة)
+// ────────────────────────────────────────────────────────────
+{
+  const sync = RAW.get("lib/supabase/sync.ts") || ""
+  const hasGuard = /const gradesLoaded = grades\.length > 0/.test(sync) &&
+    /if \(gradesLoaded && row\.grade_id && !gradeIds\.has\(row\.grade_id\)\) row\.grade_id = null/.test(sync) &&
+    /if \(gradesLoaded && row\.group_id && !groupIds\.has\(row\.group_id\)\) row\.group_id = null/.test(sync)
+  check("رفع الطلاب لا يُصفّر صف/مجموعة عند غياب قائمة الصفوف (حماية من فقد البيانات)",
+    hasGuard, "لا نُفرّغ مرجعاً إلا إذا كانت الصفوف محمّلة وغياب المرجع مؤكداً")
+}
+
+// ────────────────────────────────────────────────────────────
 // التقرير
 // ────────────────────────────────────────────────────────────
 console.log("\n🔒 فحص السحابية الخالصة — صفر تخزين محلي للبيانات")
