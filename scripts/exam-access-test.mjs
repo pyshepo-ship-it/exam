@@ -572,7 +572,7 @@ seed({ grades: [grade1], exams: [baseExam({ id: "ex-dash", allowOnline: false })
 }
 
 // ------------------------------------------------------------
-section("11) إنشاء اختبار: الاختيار الصريح بين أوف لاين وأونلاين")
+section("11) إنشاء اختبار: الاختيار الصريح بين ورقي وإلكتروني ثم أنماط الإلكتروني")
 
 const openNewExam = async (expectedMode) => {
   seed({ grades: [grade1], exams: [] })
@@ -586,14 +586,25 @@ const openNewExam = async (expectedMode) => {
   await flush()
   const chooserText = text(window.document.body)
   eq("تظهر نافذة اختيار نوع الاختبار", chooserText.includes("اختر نوع الاختبار"))
-  eq("خيار اختبار أوف لاين ظاهر", chooserText.includes("اختبار أوف لاين"))
-  eq("خيار اختبار أونلاين ظاهر", chooserText.includes("اختبار أونلاين"))
+  eq("خيار اختبار ورقي ظاهر", chooserText.includes("اختبار ورقي"))
+  eq("خيار اختبار إلكتروني ظاهر", chooserText.includes("اختبار إلكتروني"))
   const choice = [...window.document.querySelectorAll("button")].find(b =>
     (b.textContent || "").includes(expectedMode === "online" ? "أداء إلكتروني ونتائج مباشرة" : "ورقة مطبوعة"))
-  eq(`يمكن اختيار اختبار ${expectedMode === "online" ? "أونلاين" : "أوف لاين"}`, !!choice)
+  eq(`يمكن اختيار اختبار ${expectedMode === "online" ? "إلكتروني" : "ورقي"}`, !!choice)
   if (choice) {
     await click(choice)
     await flush()
+  }
+  if (expectedMode === "online") {
+    const modeText = text(window.document.body)
+    eq("تظهر أنماط الإلكتروني الثلاثة", modeText.includes("اختياري وصح وخطأ") && modeText.includes("اختبار مقالي") && modeText.includes("اختبار مختلط"))
+    const objectiveMode = [...window.document.querySelectorAll("button")].find(b =>
+      (b.textContent || "").includes("اختياري وصح وخطأ"))
+    eq("يمكن اختيار نمط اختياري وصح وخطأ", !!objectiveMode)
+    if (objectiveMode) {
+      await click(objectiveMode)
+      await flush()
+    }
   }
   return mounted
 }
@@ -601,15 +612,15 @@ const openNewExam = async (expectedMode) => {
 {
   const { unmount } = await openNewExam("offline")
   const editorText = text(window.document.body)
-  eq("محرر الأوف لاين يوضح الطباعة وPDF", editorText.includes("اختبار أوف لاين") && editorText.includes("اطبعها أو حمّلها PDF"))
-  eq("محرر الأوف لاين لا يعرض إعدادات النشر", !editorText.includes("نشر الاختبار للطلاب على الموقع"))
+  eq("محرر الورقي يوضح الطباعة وPDF", editorText.includes("ورقي") && editorText.includes("اطبعها أو حمّلها PDF"))
+  eq("محرر الورقي لا يعرض إعدادات النشر", !editorText.includes("نشر الاختبار للطلاب على الموقع"))
   await unmount()
 }
 {
   const { unmount } = await openNewExam("online")
   const editorText = text(window.document.body)
-  eq("محرر الأونلاين يعرض إعدادات النشر", editorText.includes("اختبار أونلاين") && editorText.includes("نشر الاختبار للطلاب على الموقع"))
-  eq("محرر الأونلاين يوضح أنه مسودة قبل النشر", editorText.includes("مسودة خاصة بك"))
+  eq("محرر الإلكتروني يعرض إعدادات النشر", editorText.includes("اختبار إلكتروني") && editorText.includes("نشر الاختبار للطلاب على الموقع"))
+  eq("محرر الإلكتروني يوضح أنه مسودة قبل النشر", editorText.includes("مسودة خاصة بك"))
   await unmount()
 }
 

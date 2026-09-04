@@ -108,9 +108,11 @@ WITH reads(tid, lbl) AS (
     ('registration_requests', 'يقرأ طلبه لتسجيل الدخول'),
     ('students',              'يقرأ بياناته وتقاريره'),
     ('student_accounts',      'يقرأ حالة حسابه'),
-    ('inquiries',             'يقرأ استفساره ورد المعلم'),
-    ('exam_attempt_counts',   'يقرأ عدّاد محاولاته')
+    ('inquiries',             'يقرأ استفساره ورد المعلم')
 )
+-- حد المحاولات ونتائج الاختبارات لا يقرآن من جدول/عرض عام بعد 015:
+-- start_online_exam_session يفرض الحد، وget_online_exam_result يحتاج سر الجلسة.
+
 SELECT
   r.lbl AS "المسار",
   r.tid AS "الجدول/العرض",

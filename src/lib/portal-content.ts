@@ -4,7 +4,7 @@
 //  • الاختبارات الإلكترونية: لصفه ومجموعاته المستهدفة وضمن الإتاحة الزمنية
 // ============================================================
 
-import { Announcement, Exam, ExamAccessMode, Grade, Group, isOnlineExam } from "./data-storage"
+import { Announcement, Exam, ExamAccessMode, ExamAttempt, Grade, Group, isOnlineExam } from "./data-storage"
 import { isValidPhone, isValidStudentName, normalizeDigits } from "./student-accounts"
 import { readSetting, writeSetting } from "./memory-store"
 
@@ -205,10 +205,35 @@ export function attemptsStatus(
 }
 
 /** الدرجة الفعلية للمحاولة (تُراعي التعديل اليدوي من المعلم) */
-export function effectiveAttemptScore(attempt: { score: number; manualOverride?: { score: number } }): number {
-  return attempt.manualOverride && typeof attempt.manualOverride.score === "number"
-    ? attempt.manualOverride.score
-    : attempt.score
+export function effectiveAttemptScore(attempt: {
+  score: number
+  autoScore?: number
+  manualScore?: number
+  manualOverride?: { score: number }
+}): number {
+  if (attempt.manualOverride && typeof attempt.manualOverride.score === "number") {
+    return attempt.manualOverride.score
+  }
+  // المحاولات القديمة تحمل score فقط؛ الجديدة تجمع الجزء التلقائي والجزء المقالي المراجع.
+  const automatic = typeof attempt.autoScore === "number" ? attempt.autoScore : attempt.score
+  const manual = typeof attempt.manualScore === "number" ? attempt.manualScore : 0
+  return Math.round((automatic + manual) * 100) / 100
+}
+
+/**
+ * لا تُعدّ نتيجة المقال/المختلط نهائية أو مرئية للطالب قبل إطلاقها صراحةً.
+ * السجلات القديمة (بلا manualTotal) تبقى مرئية حفاظاً على توافق النتائج المنشورة.
+ */
+export function attemptNeedsResultRelease(attempt: Pick<ExamAttempt, "manualTotal" | "gradingStatus" | "resultReleasedAt">): boolean {
+  if (attempt.resultReleasedAt) return false
+  if (typeof attempt.manualTotal === "number") return attempt.manualTotal > 0
+  // عند سجلات انتقالية لا تحمل total يدوي، نعامل حالات المراجعة الصريحة كغير معلنة.
+  return attempt.gradingStatus === "pending_review" || attempt.gradingStatus === "partially_reviewed" || attempt.gradingStatus === "reviewed"
+}
+
+/** هل يستطيع الطالب رؤية الدرجة النهائية والتعليقات الخاصة بهذه المحاولة؟ */
+export function isAttemptResultReleased(attempt: Pick<ExamAttempt, "manualTotal" | "gradingStatus" | "resultReleasedAt">): boolean {
+  return !attemptNeedsResultRelease(attempt)
 }
 
 /**

@@ -31,6 +31,7 @@ import {
   fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
   fetchRegistrationRequestByEmail, fetchStudentAccountByEmail } from "./supabase/sync"
 import { clearStore } from "./memory-store"
+import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
 // ------------------------------------------------------------
 // إعدادات المعلم (مفاتيح عامة تُزامن عبر Supabase)
@@ -394,6 +395,8 @@ export function portalLogout(): void {
     window.sessionStorage.removeItem(PORTAL_SESSION_KEY)
   } catch { /* تجاهل */ }
   clearStore()
+  // أسرار نتائج الاختبارات قدرات خاصة بهذا المتصفح؛ تمسح عند تسجيل الخروج.
+  clearRememberedOnlineExamResultSessions()
 }
 
 export type LoginResult =

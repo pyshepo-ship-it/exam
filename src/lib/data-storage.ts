@@ -141,6 +141,20 @@ export type ExamTemplateId = "classic" | "lab" | "life" | "cosmos" | "explorer"
 /** نوع الاختبار عند إنشائه: ورقة أوف لاين، أو اختبار يؤديه الطلاب على الموقع. */
 export type ExamDeliveryMode = "offline" | "online"
 
+/** أنماط الاختبار الإلكتروني المعتمدة. */
+export type OnlineExamMode = "objective" | "essay" | "mixed"
+
+/** حالة المراجعة وإطلاق النتيجة لمحاولة الطالب. */
+export type ExamAttemptGradingStatus =
+  | "submitted"
+  | "pending_review"
+  | "partially_reviewed"
+  | "reviewed"
+  | "released"
+
+/** حكم المعلم على إجابة واحدة أثناء التصحيح اليدوي. */
+export type AnswerReviewVerdict = "correct" | "half" | "incorrect" | "custom"
+
 /**
  * من يستطيع فتح الاختبار الإلكتروني:
  *  - members: الأعضاء المسجلون فقط — يظهر للطالب في بوابته حسب صفه،
@@ -172,6 +186,11 @@ export interface Exam {
    * السجلات القديمة بلا هذا الحقل تظل متوافقة: allowOnline=true يعني اختبار أونلاين.
    */
   deliveryMode?: ExamDeliveryMode
+  /**
+   * نمط الاختبار الإلكتروني: تلقائي (اختياري/صح وخطأ)، مقالي، أو مختلط.
+   * لا يؤثر في الاختبار الورقي.
+   */
+  onlineExamMode?: OnlineExamMode
   /** نشر الاختبار الأونلاين للطلاب على الموقع ليؤدوه خلال المدة المحددة */
   allowOnline?: boolean
   /** من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بدون تسجيل */
@@ -205,6 +224,8 @@ export interface Question {
   orderNumber: number
   headerText: string
   reasoningType?: "علل" | "بم تفسر" | "اذكر أهمية" // للنوع 4
+  /** وسم توجيهي اختياري للسؤال المقالي الإلكتروني، مثل: علل / فسر / قارن. */
+  essayLabel?: string
   subQuestions: SubQuestion[]
 }
 
@@ -239,6 +260,45 @@ export function isOnlineExam(exam: Pick<Exam, "deliveryMode" | "allowOnline">): 
   return examDeliveryMode(exam) === "online"
 }
 
+/**
+ * النمط الإلكتروني المعتمد. الاختبارات القديمة تُصنّف بأمان من أسئلتها حتى
+ * تستمر في العمل من دون تغيير مفاجئ في طريقة تصحيحها.
+ */
+export function getOnlineExamMode(
+  exam: Pick<Exam, "onlineExamMode" | "questions">
+): OnlineExamMode {
+  if (exam.onlineExamMode === "objective" || exam.onlineExamMode === "essay" || exam.onlineExamMode === "mixed") {
+    return exam.onlineExamMode
+  }
+  const questions = exam.questions || []
+  const hasObjective = questions.some(q => q.questionType === 1 || q.questionType === 3)
+  const hasEssay = questions.some(q => q.questionType !== 1 && q.questionType !== 3)
+  if (hasObjective && hasEssay) return "mixed"
+  if (hasEssay) return "essay"
+  return "objective"
+}
+
+/** الأسئلة المعتمدة عند إنشاء اختبار إلكتروني جديد. */
+export function allowedOnlineQuestionTypes(mode: OnlineExamMode): Array<Question["questionType"]> {
+  if (mode === "objective") return [1, 3]
+  if (mode === "essay") return [8]
+  return [1, 3, 8]
+}
+
+export function isObjectiveQuestionType(questionType: Question["questionType"]): boolean {
+  return questionType === 1 || questionType === 3
+}
+
+/** السؤال المقالي في الأنماط الجديدة هو السؤال الحر (8). */
+export function isEssayQuestionForMode(
+  question: Pick<Question, "questionType">,
+  mode?: OnlineExamMode
+): boolean {
+  if (question.questionType === 4) return true
+  if (question.questionType === 8) return true
+  return mode === "essay" && !isObjectiveQuestionType(question.questionType)
+}
+
 export interface OnlineExamReadiness {
   /** صالح للنشر والأداء إلكترونياً، ولا توجد حقول أو مفاتيح تصحيح ناقصة */
   ready: boolean
@@ -262,16 +322,21 @@ const onlineMarks = (sq: SubQuestion): number => (sq.marks && sq.marks > 0 ? sq.
  * الأسئلة المقالية (علل، أو السؤال الحر بلا نموذج إجابة) مسموحة، لكنها تُحسب
  * كدرجات مراجعة يدوية كي لا يُنشر اختبار ناقص أو يحصل الطالب على درجة مضللة.
  */
-export function getOnlineExamReadiness(exam: Pick<Exam, "questions">): OnlineExamReadiness {
+export function getOnlineExamReadiness(
+  exam: Pick<Exam, "questions" | "onlineExamMode">
+): OnlineExamReadiness {
   const issues: string[] = []
   const notes: string[] = []
   const questions = exam.questions || []
+  // لا نفرض قيود الأنماط الجديدة على السجلات القديمة التي لم تختر نمطاً صريحاً بعد.
+  const selectedMode = exam.onlineExamMode
+  const allowedTypes = selectedMode ? allowedOnlineQuestionTypes(selectedMode) : null
   let autoMarks = 0
   let manualMarks = 0
   let questionCount = 0
 
   if (questions.length === 0) {
-    issues.push("أضف سؤالاً واحداً على الأقل قبل نشر الاختبار أونلاين")
+    issues.push("أضف سؤالاً واحداً على الأقل قبل نشر الاختبار إلكترونياً")
   }
 
   questions.forEach((question, qIndex) => {
@@ -280,12 +345,21 @@ export function getOnlineExamReadiness(exam: Pick<Exam, "questions">): OnlineExa
       issues.push(`السؤال ${qIndex + 1}: أضف سؤالاً فرعياً واحداً على الأقل`)
       return
     }
+    if (allowedTypes && !allowedTypes.includes(question.questionType)) {
+      issues.push(`السؤال ${qIndex + 1}: هذا النوع غير مسموح في نمط الاختبار الإلكتروني المختار`)
+    }
 
     subs.forEach((sq, sqIndex) => {
       questionCount += 1
       const label = `السؤال ${qIndex + 1}، الفرعي ${sqIndex + 1}`
       const marks = onlineMarks(sq)
       const hasQuestionText = !!onlineText(sq.questionText)
+      // المقال لا يُصحَّح تلقائياً حتى لو كتب المعلم نموذج إجابة؛ النموذج مرجع للمراجعة فقط.
+      if (isEssayQuestionForMode(question, selectedMode)) {
+        if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
+        manualMarks += marks
+        return
+      }
 
       if (question.questionType === 1) {
         if (!hasQuestionText) issues.push(`${label}: اكتب نص السؤال`)
@@ -416,10 +490,23 @@ export interface Attendance {
   createdAt: string
 }
 
+export interface ExamAttemptAnswerReview {
+  /** قرار سريع للمعلم: كامل / نصف / صفر / درجة مخصصة */
+  verdict?: AnswerReviewVerdict
+  /** الدرجة المعتمدة لهذه الإجابة؛ وجودها يتغلب على التصحيح الآلي عند الحاجة */
+  awardedMarks?: number
+  /** تعليق يظهر للطالب فقط بعد إطلاق النتيجة */
+  comment?: string
+  /** تصحيح أو إجابة نموذجية اختيارية للطالب */
+  correction?: string
+  reviewedAt?: string
+}
+
 export interface ExamAttemptAnswer {
   choiceId?: string
   text?: string
   isTrue?: boolean
+  review?: ExamAttemptAnswerReview
 }
 
 export interface ExamAttempt {
@@ -432,11 +519,25 @@ export interface ExamAttempt {
   groupId: string
   gradeId: string
   answers: Record<string, ExamAttemptAnswer>
+  /** مفاتيح موضوعية أصدرها الخادم لهذه الجلسة فقط وفق إعداد إظهار الإجابات. */
+  answerFeedback?: Record<string, { choiceId?: string; text?: string; isTrue?: boolean }>
+  /** الدرجة الآلية الأصلية (تُحفظ للتوافق ولمراجعة أي تعديل لاحق) */
   score: number
+  /** مجموع درجات الاختبار كلها، بما فيها المقال */
   totalMarks: number
+  autoScore?: number
+  autoTotal?: number
+  manualScore?: number
+  manualTotal?: number
+  gradingStatus?: ExamAttemptGradingStatus
+  /** لا تُعرض التعليقات/الدرجات اليدوية للطالب قبل هذا الوقت */
+  resultReleasedAt?: string
+  reviewedAt?: string
   startedAt: string
   submittedAt: string
   durationSeconds: number
+  /** انتهى الوقت وفق ساعة الخادم/المؤقت قبل تسليم المحاولة. */
+  timedOut?: boolean
   /** تعديل يدوي من المعلم لتقدير الدرجة إذا شعر أن التصحيح الآلي غير عادل */
   manualOverride?: {
     score: number

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   FileText,
@@ -52,14 +52,21 @@ import {
 import {
   Grade,
   Exam,
+  ExamAttempt,
+  ExamAttemptAnswerReview,
   Question,
   SubQuestion,
   ExamAccessMode,
   ExamDeliveryMode,
   ExamTemplateId,
+  OnlineExamMode,
+  allowedOnlineQuestionTypes,
   examDeliveryMode,
+  getOnlineExamMode,
   getOnlineExamReadiness,
+  isEssayQuestionForMode,
   isOnlineExam,
+  isObjectiveQuestionType,
   getGrades,
   getExams,
   saveExams,
@@ -81,12 +88,19 @@ import {
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
 import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
+import { marksForReviewVerdict, summarizeAttemptReview } from "@/lib/exam-grade"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { Switch } from "@/components/ui/switch"
 import { ExamPaper, TemplatePicker } from "@/components/exam/exam-paper"
 import { ScienceIcon } from "@/components/exam/science-ornaments"
 
 /** لا نعرض اختباراً مجدولاً للطلاب ما لم تكن له فترة صحيحة ومكتملة. */
+const ONLINE_MODE_LABELS: Record<OnlineExamMode, string> = {
+  objective: "اختياري وصح وخطأ",
+  essay: "مقالي",
+  mixed: "مختلط",
+}
+
 function scheduledAvailabilityIssue(
   availabilityMode: "always" | "scheduled",
   availableFrom: string,
@@ -109,11 +123,16 @@ export default function ExamsPage() {
   const [exams, setExams] = useState<Exam[]>([])
   /** تظهر أولاً لاختيار مسار الاختبار، ثم يفتح محرر النوع المختار */
   const [examTypeDialogOpen, setExamTypeDialogOpen] = useState(false)
+  const [onlineModeDialogOpen, setOnlineModeDialogOpen] = useState(false)
+  /** المحرر صفحة كاملة داخل المسار نفسه، وليس نافذة منبثقة. */
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [previewDialogOpen, setPreviewDialogOpen] = useState(false)
   const [editingExam, setEditingExam] = useState<Exam | null>(null)
   const [previewExam, setPreviewExam] = useState<Exam | null>(null)
   const [resultsExam, setResultsExam] = useState<Exam | null>(null)
+  const [reviewAttempt, setReviewAttempt] = useState<ExamAttempt | null>(null)
+  const [reviewDraft, setReviewDraft] = useState<Record<string, ExamAttemptAnswerReview>>({})
+  const [resultsVersion, setResultsVersion] = useState(0)
   const [panelExam, setPanelExam] = useState<Exam | null>(null)
   const [panelForm, setPanelForm] = useState({
     allowOnline: false,
@@ -129,6 +148,12 @@ export default function ExamsPage() {
   const [overrideScore, setOverrideScore] = useState("")
   const [overrideReason, setOverrideReason] = useState("")
   const [expandedQuestions, setExpandedQuestions] = useState<string[]>([])
+  const [autoSaveState, setAutoSaveState] = useState<"idle" | "saving" | "saved">("idle")
+  const editorExamIdRef = useRef<string | null>(null)
+  const editorCreatedAtRef = useRef("")
+  const editorInitialFingerprintRef = useRef("")
+  const examsRef = useRef<Exam[]>([])
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [examForm, setExamForm] = useState({
     gradeId: "",
@@ -145,6 +170,7 @@ export default function ExamsPage() {
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode: "offline" as ExamDeliveryMode,
+    onlineExamMode: "objective" as OnlineExamMode,
     allowOnline: false,
     accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
@@ -155,6 +181,7 @@ export default function ExamsPage() {
     targetGroupIds: [] as string[],
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
+  const examFormRef = useRef(examForm)
 
   /** أصل الموقع لرابط الاختبار المفتوح للجميع (يُحسب في المتصفح فقط) */
   const [siteOrigin, setSiteOrigin] = useState("")
@@ -164,6 +191,14 @@ export default function ExamsPage() {
     setExams(getExams())
     setSiteOrigin(window.location.origin)
   }, [])
+
+  useEffect(() => {
+    examsRef.current = exams
+  }, [exams])
+
+  useEffect(() => {
+    examFormRef.current = examForm
+  }, [examForm])
 
   const examLink = (id: string) => `${siteOrigin}/exam/${id}`
 
@@ -196,10 +231,13 @@ export default function ExamsPage() {
     // الاختبارات القديمة لا تحمل deliveryMode؛ فتح لوحة النشر فيها يعني تحويلها
     // صراحةً إلى اختبار أونلاين عند الحفظ، من دون كسر الاختبارات السابقة.
     if (panelExam.deliveryMode === "offline") {
-      toast.error("لوحة النشر متاحة لاختبارات أونلاين فقط")
+      toast.error("لوحة النشر متاحة للاختبارات الإلكترونية فقط")
       return
     }
-    const readiness = getOnlineExamReadiness({ questions: panelExam.questions })
+    const readiness = getOnlineExamReadiness({
+      questions: panelExam.questions,
+      onlineExamMode: panelExam.onlineExamMode,
+    })
     if (panelForm.allowOnline && !readiness.ready) {
       toast.error(`أكمل الاختبار قبل نشره: ${readiness.issues[0]}`)
       return
@@ -274,10 +312,89 @@ export default function ExamsPage() {
         : a
     )
     saveExamAttempts(updated)
+    setResultsVersion(version => version + 1)
     toast.success(`تم تعديل درجة ${overrideTarget.name} إلى ${score} — تظهر في تقريره فوراً`)
     setOverrideTarget(null)
     setOverrideScore("")
     setOverrideReason("")
+  }
+
+  const openAttemptReview = (attempt: ExamAttempt) => {
+    const existingReviews: Record<string, ExamAttemptAnswerReview> = {}
+    Object.entries(attempt.answers || {}).forEach(([answerId, answer]) => {
+      if (answer.review) existingReviews[answerId] = { ...answer.review }
+    })
+    setReviewAttempt(attempt)
+    setReviewDraft(existingReviews)
+  }
+
+  const updateReviewDraft = (answerId: string, patch: Partial<ExamAttemptAnswerReview>) => {
+    setReviewDraft(previous => ({
+      ...previous,
+      [answerId]: { ...previous[answerId], ...patch },
+    }))
+  }
+
+  const saveAttemptReview = (release = false) => {
+    if (!reviewAttempt || !resultsExam) return
+    const nextAnswers: ExamAttempt["answers"] = { ...reviewAttempt.answers }
+    Object.entries(reviewDraft).forEach(([answerId, review]) => {
+      nextAnswers[answerId] = { ...nextAnswers[answerId], review }
+    })
+    const summary = summarizeAttemptReview(resultsExam, nextAnswers)
+    if (release && summary.pendingManualCount > 0) {
+      toast.error(`لا يمكن إطلاق النتيجة: بقيت ${summary.pendingManualCount} إجابة مقالية دون تصحيح`)
+      return
+    }
+    const now = new Date().toISOString()
+    const nextAttempt: ExamAttempt = {
+      ...reviewAttempt,
+      answers: nextAnswers,
+      score: summary.autoScore,
+      totalMarks: summary.totalMarks || reviewAttempt.totalMarks,
+      autoScore: summary.autoScore,
+      autoTotal: summary.autoTotal,
+      manualScore: summary.manualScore,
+      manualTotal: summary.manualTotal,
+      gradingStatus: release ? "released" : summary.status,
+      reviewedAt: summary.reviewedManualCount > 0 ? now : reviewAttempt.reviewedAt,
+      resultReleasedAt: release ? now : reviewAttempt.resultReleasedAt,
+    }
+    const updated = getExamAttempts().map(attempt => attempt.id === nextAttempt.id ? nextAttempt : attempt)
+    saveExamAttempts(updated)
+    setReviewAttempt(nextAttempt)
+    setResultsVersion(version => version + 1)
+    toast.success(release ? "تم حفظ المراجعة وإطلاق النتيجة للطالب" : "تم حفظ مراجعة الإجابات")
+  }
+
+  const releaseAllReviewed = () => {
+    if (!resultsExam) return
+    const now = new Date().toISOString()
+    let released = 0
+    const updated = getExamAttempts().map(attempt => {
+      if (attempt.examId !== resultsExam.id || attempt.resultReleasedAt) return attempt
+      const summary = summarizeAttemptReview(resultsExam, attempt.answers)
+      if (summary.pendingManualCount > 0) return attempt
+      released += 1
+      return {
+        ...attempt,
+        score: summary.autoScore,
+        totalMarks: summary.totalMarks || attempt.totalMarks,
+        autoScore: summary.autoScore,
+        autoTotal: summary.autoTotal,
+        manualScore: summary.manualScore,
+        manualTotal: summary.manualTotal,
+        gradingStatus: "released" as const,
+        resultReleasedAt: now,
+      }
+    })
+    if (!released) {
+      toast.error("لا توجد محاولات مكتملة المراجعة لإطلاقها")
+      return
+    }
+    saveExamAttempts(updated)
+    setResultsVersion(version => version + 1)
+    toast.success(`تم إطلاق نتائج ${released} طالب`)
   }
 
   const toggleQuestion = (questionId: string) => {
@@ -567,7 +684,10 @@ export default function ExamsPage() {
     }))
   }
 
-  const emptyForm = (deliveryMode: ExamDeliveryMode = "offline") => ({
+  const emptyForm = (
+    deliveryMode: ExamDeliveryMode = "offline",
+    onlineExamMode: OnlineExamMode = "objective"
+  ) => ({
     gradeId: "",
     groupId: "",
     title: "",
@@ -582,6 +702,7 @@ export default function ExamsPage() {
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode,
+    onlineExamMode,
     allowOnline: false,
     accessMode: "members" as ExamAccessMode,
     autoHonorBoard: false,
@@ -593,40 +714,157 @@ export default function ExamsPage() {
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
-  const openCreateDialog = (exam?: Exam, mode: ExamDeliveryMode = "offline") => {
-    if (exam) {
-      setEditingExam(exam)
-      setExamForm({
-        gradeId: exam.gradeId,
-        groupId: exam.groupId || "",
-        title: exam.title,
-        month: exam.month || new Date().getMonth() + 1,
-        unit: exam.unit || "",
-        academicYear: exam.academicYear,
-        duration: exam.duration || 60,
-        totalMarks: exam.totalMarks || 0,
-        questions: exam.questions,
-        templateId: exam.templateId || "classic",
-        showDecorations: exam.showDecorations !== false,
-        teacherName: exam.teacherName || TEACHER_NAME,
-        schoolName: exam.schoolName || "",
-        deliveryMode: examDeliveryMode(exam),
-        allowOnline: !!exam.allowOnline,
-        accessMode: exam.accessMode === "public" ? "public" : "members",
-        autoHonorBoard: !!exam.autoHonorBoard,
-        honorMinPercent: exam.honorMinPercent ?? 100,
-        availabilityMode: exam.availabilityMode || "always",
-        availableFrom: (exam.availableFrom || "").slice(0, 16),
-        availableUntil: (exam.availableUntil || "").slice(0, 16),
-        targetGroupIds: exam.targetGroupIds || [],
-        answerVisibility: exam.answerVisibility || "never",
-      })
-    } else {
-      setEditingExam(null)
-      setExamForm(emptyForm(mode))
+  /** يحول حالة المحرر إلى سجل قابل للحفظ، مع إبقاء المسودة غير مكتملة مخفية عن الطلاب. */
+  const buildExamFromForm = (
+    form: typeof examForm,
+    id: string,
+    createdAt: string,
+    protectIncompleteDraft = false
+  ): Exam => {
+    const online = form.deliveryMode === "online"
+    const readiness = getOnlineExamReadiness({
+      questions: form.questions,
+      onlineExamMode: form.onlineExamMode,
+    })
+    const scheduleIssue = scheduledAvailabilityIssue(
+      form.availabilityMode,
+      form.availableFrom,
+      form.availableUntil
+    )
+    const canPublish = online && form.allowOnline && readiness.ready && !scheduleIssue
+    return {
+      id,
+      gradeId: form.gradeId === "__all" ? "" : form.gradeId,
+      groupId: form.gradeId === "__all" ? undefined : (form.groupId || undefined),
+      // عنوان مؤقت للمسودة كي لا تفشل المزامنة إن عاد المعلم قبل كتابة العنوان.
+      title: form.title.trim() || "مسودة اختبار بدون عنوان",
+      month: form.month,
+      unit: form.unit || undefined,
+      academicYear: form.academicYear,
+      duration: form.duration,
+      totalMarks: getExamTotalMarks(form.questions),
+      questions: form.questions,
+      templateId: form.templateId,
+      showDecorations: form.showDecorations,
+      teacherName: form.teacherName || undefined,
+      schoolName: form.schoolName || undefined,
+      deliveryMode: form.deliveryMode,
+      onlineExamMode: online ? form.onlineExamMode : undefined,
+      allowOnline: protectIncompleteDraft ? canPublish : (online ? form.allowOnline : false),
+      accessMode: online ? form.accessMode : undefined,
+      autoHonorBoard: online ? form.autoHonorBoard : false,
+      honorMinPercent: online ? form.honorMinPercent : undefined,
+      availabilityMode: online ? form.availabilityMode : undefined,
+      availableFrom: online && form.availabilityMode === "scheduled" && form.availableFrom
+        ? new Date(form.availableFrom).toISOString() : undefined,
+      availableUntil: online && form.availabilityMode === "scheduled" && form.availableUntil
+        ? new Date(form.availableUntil).toISOString() : undefined,
+      targetGroupIds: online ? form.targetGroupIds : undefined,
+      answerVisibility: online ? form.answerVisibility : undefined,
+      createdAt,
+      updatedAt: new Date().toISOString(),
     }
+  }
+
+  const persistEditorDraft = (form: typeof examForm, reason: "auto" | "leave" = "auto") => {
+    const id = editorExamIdRef.current
+    if (!id) return
+    const hasContent = !!form.title.trim() || !!form.gradeId || form.questions.length > 0
+    if (!hasContent) return
+    const current = examsRef.current
+    const previous = current.find(exam => exam.id === id)
+    const createdAt = previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
+    const draft = buildExamFromForm(form, id, createdAt, true)
+    const next = previous
+      ? current.map(exam => exam.id === id ? draft : exam)
+      : [...current, draft]
+    examsRef.current = next
+    setExams(next)
+    saveExams(next)
+    if (reason === "auto") setAutoSaveState("saved")
+  }
+
+  // كل تعديل في المحرر يُحفظ كمسودة بعد مهلة قصيرة. لا ننتظر ضغط زر الحفظ.
+  useEffect(() => {
+    if (!createDialogOpen || !editorExamIdRef.current) return
+    const fingerprint = JSON.stringify(examForm)
+    if (fingerprint === editorInitialFingerprintRef.current) return
+    setAutoSaveState("saving")
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      persistEditorDraft(examForm)
+      editorInitialFingerprintRef.current = fingerprint
+      autoSaveTimerRef.current = null
+    }, 650)
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    }
+    // persistEditorDraft uses refs for the latest exam list; form is the intended snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examForm, createDialogOpen])
+
+  // إن ضغط المعلم زر الرجوع أو أغلق التبويب، نحفظ آخر لقطة فوراً قبل المغادرة.
+  useEffect(() => {
+    if (!createDialogOpen) return
+    const saveBeforeLeaving = () => {
+      const current = examFormRef.current
+      if (JSON.stringify(current) !== editorInitialFingerprintRef.current) {
+        persistEditorDraft(current, "leave")
+        editorInitialFingerprintRef.current = JSON.stringify(current)
+      }
+    }
+    window.addEventListener("beforeunload", saveBeforeLeaving)
+    window.addEventListener("popstate", saveBeforeLeaving)
+    return () => {
+      window.removeEventListener("beforeunload", saveBeforeLeaving)
+      window.removeEventListener("popstate", saveBeforeLeaving)
+    }
+    // هذا الاشتراك يظل ثابتاً طوال فتح صفحة المحرر، وتُقرأ أحدث القيم من ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createDialogOpen])
+
+  const openCreateDialog = (
+    exam?: Exam,
+    mode: ExamDeliveryMode = "offline",
+    onlineMode: OnlineExamMode = "objective"
+  ) => {
+    const form = exam ? {
+      gradeId: exam.gradeId,
+      groupId: exam.groupId || "",
+      title: exam.title === "مسودة اختبار بدون عنوان" ? "" : exam.title,
+      month: exam.month || new Date().getMonth() + 1,
+      unit: exam.unit || "",
+      academicYear: exam.academicYear,
+      duration: exam.duration || 60,
+      totalMarks: exam.totalMarks || 0,
+      questions: exam.questions,
+      templateId: exam.templateId || "classic" as ExamTemplateId,
+      showDecorations: exam.showDecorations !== false,
+      teacherName: exam.teacherName || TEACHER_NAME,
+      schoolName: exam.schoolName || "",
+      deliveryMode: examDeliveryMode(exam),
+      onlineExamMode: getOnlineExamMode(exam),
+      allowOnline: !!exam.allowOnline,
+      accessMode: exam.accessMode === "public" ? "public" as ExamAccessMode : "members" as ExamAccessMode,
+      autoHonorBoard: !!exam.autoHonorBoard,
+      honorMinPercent: exam.honorMinPercent ?? 100,
+      availabilityMode: (exam.availabilityMode || "always") as "always" | "scheduled",
+      availableFrom: (exam.availableFrom || "").slice(0, 16),
+      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      targetGroupIds: exam.targetGroupIds || [],
+      answerVisibility: (exam.answerVisibility || "never") as "never" | "afterEach" | "atEnd",
+    } : emptyForm(mode, onlineMode)
+
+    setEditingExam(exam || null)
+    editorExamIdRef.current = exam?.id || `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    editorCreatedAtRef.current = exam?.createdAt || new Date().toISOString()
+    editorInitialFingerprintRef.current = JSON.stringify(form)
+    setAutoSaveState("idle")
+    setExamForm(form)
     setExpandedQuestions([])
     setCreateDialogOpen(true)
+    // بداية الصفحة الكاملة دائماً من الأعلى، خصوصاً عند فتحها من هاتف.
+    window.setTimeout(() => window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior }), 0)
   }
 
   const openExamTypeDialog = () => {
@@ -635,7 +873,25 @@ export default function ExamsPage() {
 
   const chooseExamType = (mode: ExamDeliveryMode) => {
     setExamTypeDialogOpen(false)
-    openCreateDialog(undefined, mode)
+    if (mode === "online") {
+      setOnlineModeDialogOpen(true)
+      return
+    }
+    openCreateDialog(undefined, "offline")
+  }
+
+  const chooseOnlineExamMode = (mode: OnlineExamMode) => {
+    setOnlineModeDialogOpen(false)
+    openCreateDialog(undefined, "online", mode)
+  }
+
+  const changeOnlineExamMode = (mode: OnlineExamMode) => {
+    const allowed = allowedOnlineQuestionTypes(mode)
+    if (examForm.questions.some(question => !allowed.includes(question.questionType))) {
+      toast.error("احذف أو عدّل الأسئلة غير المتوافقة قبل تغيير نمط الاختبار")
+      return
+    }
+    setExamForm(prev => ({ ...prev, onlineExamMode: mode }))
   }
 
   const saveExam = () => {
@@ -645,7 +901,10 @@ export default function ExamsPage() {
     }
 
     const online = examForm.deliveryMode === "online"
-    const readiness = getOnlineExamReadiness({ questions: examForm.questions })
+    const readiness = getOnlineExamReadiness({
+      questions: examForm.questions,
+      onlineExamMode: examForm.onlineExamMode,
+    })
     // يمكن حفظ مسودة أونلاين في أي وقت، لكن لا نسمح بنشر اختبار ناقص للطلاب.
     if (online && examForm.allowOnline && !readiness.ready) {
       toast.error(`لا يمكن نشر الاختبار بعد: ${readiness.issues[0]}`)
@@ -661,51 +920,48 @@ export default function ExamsPage() {
       return
     }
 
-    const totalMarks = getExamTotalMarks(examForm.questions)
-    const examData: Exam = {
-      id: editingExam?.id || Date.now().toString(),
-      gradeId: examForm.gradeId === "__all" ? "" : examForm.gradeId,
-      groupId: examForm.gradeId === "__all" ? undefined : (examForm.groupId || undefined),
-      title: examForm.title,
-      month: examForm.month,
-      unit: examForm.unit || undefined,
-      academicYear: examForm.academicYear,
-      duration: examForm.duration,
-      totalMarks,
-      questions: examForm.questions,
-      templateId: examForm.templateId,
-      showDecorations: examForm.showDecorations,
-      teacherName: examForm.teacherName || undefined,
-      schoolName: examForm.schoolName || undefined,
-      deliveryMode: examForm.deliveryMode,
-      // «أونلاين» و«منشور» قراران منفصلان: يمكن إعداد اختبار كامل كمسودة ثم نشره لاحقاً.
-      allowOnline: online ? examForm.allowOnline : false,
-      accessMode: online ? examForm.accessMode : undefined,
-      autoHonorBoard: online ? examForm.autoHonorBoard : false,
-      honorMinPercent: online ? examForm.honorMinPercent : undefined,
-      availabilityMode: online ? examForm.availabilityMode : undefined,
-      availableFrom: online && examForm.availabilityMode === "scheduled" && examForm.availableFrom
-        ? new Date(examForm.availableFrom).toISOString() : undefined,
-      availableUntil: online && examForm.availabilityMode === "scheduled" && examForm.availableUntil
-        ? new Date(examForm.availableUntil).toISOString() : undefined,
-      targetGroupIds: online ? examForm.targetGroupIds : undefined,
-      answerVisibility: online ? examForm.answerVisibility : undefined,
-      createdAt: editingExam?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }
-    const updatedExams = editingExam
-      ? exams.map(e => (e.id === editingExam.id ? examData : e))
-      : [...exams, examData]
+    const id = editorExamIdRef.current || editingExam?.id || `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const previous = examsRef.current.find(exam => exam.id === id)
+    const examData = buildExamFromForm(
+      examForm,
+      id,
+      previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
+    )
+    const current = examsRef.current
+    const updatedExams = current.some(exam => exam.id === id)
+      ? current.map(exam => exam.id === id ? examData : exam)
+      : [...current, examData]
+    examsRef.current = updatedExams
     setExams(updatedExams)
     saveExams(updatedExams)
+    editorInitialFingerprintRef.current = JSON.stringify(examForm)
     setCreateDialogOpen(false)
+    setEditingExam(null)
+    setAutoSaveState("saved")
+    window.setTimeout(() => window.scrollTo(0, 0), 0)
     toast.success(
       editingExam
         ? "تم تحديث الاختبار بنجاح"
         : online
-        ? (examForm.allowOnline ? "تم إنشاء ونشر الاختبار الأونلاين بنجاح" : "تم حفظ مسودة الاختبار الأونلاين بنجاح")
-        : "تم إنشاء اختبار الأوف لاين بنجاح"
+        ? (examForm.allowOnline ? "تم إنشاء ونشر الاختبار الإلكتروني بنجاح" : "تم حفظ مسودة الاختبار الإلكتروني بنجاح")
+        : "تم إنشاء الاختبار الورقي بنجاح"
     )
+  }
+
+  const leaveEditor = () => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    const current = examFormRef.current
+    if (JSON.stringify(current) !== editorInitialFingerprintRef.current) {
+      persistEditorDraft(current, "leave")
+      editorInitialFingerprintRef.current = JSON.stringify(current)
+    }
+    setCreateDialogOpen(false)
+    setEditingExam(null)
+    setAutoSaveState("idle")
+    window.setTimeout(() => window.scrollTo(0, 0), 0)
   }
 
   const deleteExam = (examId: string) => {
@@ -753,7 +1009,13 @@ export default function ExamsPage() {
   const liveTotalMarks = getExamTotalMarks(examForm.questions)
   const selectedGradeName = getGradeName(examForm.gradeId)
   const isOnlineForm = examForm.deliveryMode === "online"
-  const onlineReadiness = getOnlineExamReadiness({ questions: examForm.questions })
+  const onlineReadiness = getOnlineExamReadiness({
+    questions: examForm.questions,
+    onlineExamMode: examForm.onlineExamMode,
+  })
+  const questionButtons = isOnlineForm
+    ? QUESTION_BUTTONS.filter(btn => allowedOnlineQuestionTypes(examForm.onlineExamMode).includes(btn.type))
+    : QUESTION_BUTTONS
 
   return (
     <div className="space-y-6">
@@ -765,7 +1027,7 @@ export default function ExamsPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">الاختبارات</h1>
           <p className="text-gray-500 dark:text-gray-400">
-            أنشئ اختبار أوف لاين للطباعة، أو اختبار أونلاين يؤديه الطلاب من بوابتهم وتصل نتيجته إليك مباشرة
+            أنشئ اختباراً ورقياً للطباعة، أو اختباراً إلكترونياً يؤديه الطلاب من بوابتهم وتصل محاولاتهم إليك مباشرة
           </p>
         </div>
         <Button
@@ -806,6 +1068,7 @@ export default function ExamsPage() {
         <AnimatePresence>
           {exams.map((exam, index) => {
             const online = isOnlineExam(exam)
+            const onlineMode = getOnlineExamMode(exam)
             const tpl = getTemplate(exam.templateId)
             return (
               <motion.div
@@ -817,9 +1080,9 @@ export default function ExamsPage() {
               >
                 <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
                   <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <CardTitle className="text-lg text-gray-900 dark:text-white">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="truncate text-lg text-gray-900 dark:text-white">
                           {exam.title}
                         </CardTitle>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
@@ -836,12 +1099,17 @@ export default function ExamsPage() {
                       {online ? (
                         <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                           <Globe className="w-3 h-3 ml-1" />
-                          اختبار أونلاين
+                          اختبار إلكتروني
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
                           <Printer className="w-3 h-3 ml-1" />
-                          اختبار أوف لاين
+                          اختبار ورقي
+                        </Badge>
+                      )}
+                      {online && (
+                        <Badge variant="outline" className="bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                          {ONLINE_MODE_LABELS[onlineMode]}
                         </Badge>
                       )}
                       {!online && (
@@ -904,8 +1172,8 @@ export default function ExamsPage() {
                         )
                       })()}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="min-w-[9rem] flex-1">
                         <Eye className="w-4 h-4" />
                         <span>معاينة</span>
                       </Button>
@@ -915,6 +1183,7 @@ export default function ExamsPage() {
                           size="sm"
                           title="نتائج الطلاب وتعديل الدرجات يدوياً"
                           onClick={() => setResultsExam(exam)}
+                          className="h-10 w-10 shrink-0"
                         >
                           <ClipboardList className="w-4 h-4" />
                         </Button>
@@ -927,6 +1196,7 @@ export default function ExamsPage() {
                             ? "نسخ رابط الاختبار — مفتوح للجميع (يُفتح بدون تسجيل)"
                             : "نسخ رابط الاختبار"}
                           onClick={() => copyExamLink(exam.id)}
+                          className="h-10 w-10 shrink-0"
                         >
                           <Link2 className="w-4 h-4" />
                         </Button>
@@ -937,19 +1207,19 @@ export default function ExamsPage() {
                           size="sm"
                           title="لوحة تحكم الظهور والمحاولات"
                           onClick={() => openPanel(exam)}
-                          className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                          className="h-10 w-10 shrink-0 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
                         >
                           <Settings2 className="w-4 h-4" />
                         </Button>
                       )}
-                      <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)}>
+                      <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)} className="h-10 w-10 shrink-0">
                         <Edit2 className="w-4 h-4" />
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={() => deleteExam(exam.id)}
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                        className="h-10 w-10 shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
                       >
                         <Trash2 className="w-4 h-4" />
                       </Button>
@@ -992,7 +1262,7 @@ export default function ExamsPage() {
               <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-600 to-slate-800 text-white shadow-lg transition-transform group-hover:scale-105">
                 <Printer className="h-6 w-6" />
               </span>
-              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار أوف لاين</span>
+              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار ورقي</span>
               <span className="mt-2 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">
                 الاختبار المعتاد: تكتب الأسئلة، تعاين الورقة، ثم تطبعها أو تحمّلها PDF لتوزيعها على الطلاب.
               </span>
@@ -1009,7 +1279,7 @@ export default function ExamsPage() {
               <span className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/25 transition-transform group-hover:scale-105">
                 <Globe className="h-6 w-6" />
               </span>
-              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار أونلاين</span>
+              <span className="block text-lg font-extrabold text-gray-900 dark:text-white">اختبار إلكتروني</span>
               <span className="mt-2 block text-sm leading-relaxed text-gray-500 dark:text-gray-400">
                 يجيب الطلاب من بوابة الموقع؛ تضبط الإتاحة وطريقة الدخول ومفتاح التصحيح، وتصل النتائج إليك فوراً.
               </span>
@@ -1020,29 +1290,102 @@ export default function ExamsPage() {
           </div>
 
           <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-            يمكنك حفظ اختبار الأونلاين كمسودة، ولن يظهر للطلاب حتى تفعّل النشر بعد استكمال الأسئلة ومفاتيح التصحيح.
+            يمكنك حفظ الاختبار الإلكتروني كمسودة، ولن يظهر للطلاب حتى تفعّل النشر بعد استكمال الأسئلة ومفاتيح التصحيح.
           </p>
         </DialogContent>
       </Dialog>
 
-      {/* Create / Edit */}
-      <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-        <DialogContent className="inset-0 left-0 top-0 h-[100dvh] w-[100dvw] max-w-none max-h-[100dvh] translate-x-0 translate-y-0 rounded-none p-3 pb-28 overflow-y-auto sm:inset-auto sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[92vh] sm:w-full sm:max-w-6xl sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6">
+      {/* اختيار نمط الاختبار الإلكتروني */}
+      <Dialog open={onlineModeDialogOpen} onOpenChange={setOnlineModeDialogOpen}>
+        <DialogContent className="max-w-3xl" dir="rtl">
           <DialogHeader>
-            <div className="flex items-center gap-2 pl-8">
-              <DialogTitle>{editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}</DialogTitle>
-              <Badge className={isOnlineForm ? "bg-indigo-600 text-white" : "bg-slate-700 text-white"}>
-                {isOnlineForm ? <Globe className="w-3 h-3 ml-1" /> : <Printer className="w-3 h-3 ml-1" />}
-                {isOnlineForm ? "اختبار أونلاين" : "اختبار أوف لاين"}
-              </Badge>
-            </div>
-            <DialogDescription>
-              {isOnlineForm
-                ? "اكتب الأسئلة ومفاتيح التصحيح، ثم انشره للطلاب عندما يصبح جاهزاً."
-                : "اكتب ورقة الاختبار المعتادة من الجوال بسهولة، ثم عاينها واطبعها أو حمّلها PDF."}
-            </DialogDescription>
+            <DialogTitle className="text-xl">اختر نمط الاختبار الإلكتروني</DialogTitle>
+            <DialogDescription>يمكنك تغييره لاحقاً ما دامت الأسئلة المتاحة متوافقة مع النمط الجديد.</DialogDescription>
           </DialogHeader>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 py-2">
+            {([
+              {
+                key: "objective" as OnlineExamMode,
+                title: "اختياري وصح وخطأ",
+                lead: "تصحيح تلقائي بالكامل",
+                text: "يسمح بالاختيار من متعدد وصح/خطأ فقط، وتظهر النتيجة حسب إعدادك.",
+                tone: "border-emerald-200 hover:border-emerald-500 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/20",
+              },
+              {
+                key: "essay" as OnlineExamMode,
+                title: "اختبار مقالي",
+                lead: "تصحيح يدوي تفصيلي",
+                text: "يكتب الطالب إجابته، وتمنح الدرجة والتعليق والتصحيح بعد المراجعة.",
+                tone: "border-amber-200 hover:border-amber-500 bg-amber-50/60 dark:border-amber-900 dark:bg-amber-950/20",
+              },
+              {
+                key: "mixed" as OnlineExamMode,
+                title: "اختبار مختلط",
+                lead: "تلقائي + مقالي",
+                text: "اختياري وصح/خطأ مع أسئلة مقالية؛ تظهر نتيجة الجزء التلقائي وينتظر المقال المراجعة.",
+                tone: "border-indigo-200 hover:border-indigo-500 bg-indigo-50/60 dark:border-indigo-900 dark:bg-indigo-950/20",
+              },
+            ]).map(option => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => chooseOnlineExamMode(option.key)}
+                className={`rounded-2xl border-2 p-4 text-right transition-all hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-500 ${option.tone}`}
+              >
+                <span className="block font-extrabold text-base text-gray-900 dark:text-white">{option.title}</span>
+                <span className="block mt-1 text-sm font-bold text-indigo-700 dark:text-indigo-300">{option.lead}</span>
+                <span className="block mt-2 text-xs leading-relaxed text-gray-600 dark:text-gray-300">{option.text}</span>
+              </button>
+            ))}
+          </div>
+          <p className="rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+            جميع الأنماط تدعم النشر أو الإخفاء، تحديد الوقت، الأعضاء أو الجميع، عدد المحاولات، والتحكم في ظهور الإجابات والنتائج.
+          </p>
+        </DialogContent>
+      </Dialog>
 
+      {/* محرر الاختبار: صفحة كاملة مستقلة بصرياً، لا نافذة منبثقة */}
+      {createDialogOpen && (
+        <section className="fixed inset-0 z-[70] min-h-[100dvh] overflow-y-auto bg-gray-50 dark:bg-gray-950 font-arabic" dir="rtl">
+          <div className="min-h-[100dvh]">
+            <header className="sticky top-0 z-20 border-b border-gray-200 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur">
+              <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-3 sm:px-6">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-base sm:text-xl font-extrabold text-gray-900 dark:text-white truncate">
+                      {editingExam ? "تعديل الاختبار" : "إنشاء اختبار جديد"}
+                    </h1>
+                    <Badge className={isOnlineForm ? "bg-indigo-600 text-white" : "bg-slate-700 text-white"}>
+                      {isOnlineForm ? <Globe className="w-3 h-3 ml-1" /> : <Printer className="w-3 h-3 ml-1" />}
+                      {isOnlineForm ? `إلكتروني — ${ONLINE_MODE_LABELS[examForm.onlineExamMode]}` : "ورقي"}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 hidden sm:block">
+                    {isOnlineForm
+                      ? "اكتب الأسئلة واضبط النشر والتصحيح، ثم أطلقه للطلاب عندما يصبح جاهزاً."
+                      : "اكتب ورقة الاختبار، ثم عاينها واطبعها أو حمّلها PDF."}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`hidden sm:inline text-xs font-bold ${
+                    autoSaveState === "saving" ? "text-amber-600" : autoSaveState === "saved" ? "text-emerald-600" : "text-gray-400"
+                  }`}>
+                    {autoSaveState === "saving" ? "جارٍ الحفظ…" : autoSaveState === "saved" ? "✓ محفوظ تلقائياً" : ""}
+                  </span>
+                  <Button variant="outline" size="sm" onClick={leaveEditor} className="min-h-10">
+                    <span className="hidden sm:inline">العودة للاختبارات</span>
+                    <span className="sm:hidden">رجوع</span>
+                  </Button>
+                </div>
+              </div>
+              {autoSaveState !== "idle" && (
+                <p className={`px-3 pb-2 text-[11px] font-bold sm:hidden ${autoSaveState === "saving" ? "text-amber-600" : "text-emerald-600"}`}>
+                  {autoSaveState === "saving" ? "جارٍ حفظ التعديلات…" : "✓ تم الحفظ تلقائياً"}
+                </p>
+              )}
+            </header>
+
+            <main className="mx-auto max-w-6xl px-3 py-5 pb-28 sm:px-6 sm:py-7">
           <div className="space-y-7 py-2 [&_input]:min-h-11 [&_button]:min-h-10">
             {/* 1. Cascading grade → group */}
             <section className="space-y-3">
@@ -1207,11 +1550,40 @@ export default function ExamsPage() {
               <section className="space-y-3">
                 <h3 className="text-sm font-bold text-gray-700 dark:text-gray-200 flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center">3</span>
-                  اختبار أونلاين
+                  اختبار إلكتروني
                 </h3>
                 <p className="text-xs text-gray-500 leading-relaxed">
                   اضبط طريقة الدخول والإتاحة ومفاتيح التصحيح. يمكنك حفظه كمسودة ثم نشره عندما تكتمل بياناته.
                 </p>
+
+                <div className="rounded-xl border border-indigo-200 dark:border-indigo-900 bg-white dark:bg-gray-900 p-3">
+                  <p className="text-sm font-bold text-gray-900 dark:text-white mb-2">نمط الاختبار الإلكتروني</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {([
+                      { key: "objective" as OnlineExamMode, title: "اختياري وصح وخطأ", desc: "تصحيح تلقائي بالكامل" },
+                      { key: "essay" as OnlineExamMode, title: "مقالي", desc: "تصحيح يدوي بعد التسليم" },
+                      { key: "mixed" as OnlineExamMode, title: "مختلط", desc: "تلقائي + مقالي" },
+                    ]).map(option => {
+                      const active = examForm.onlineExamMode === option.key
+                      return (
+                        <button
+                          key={option.key}
+                          type="button"
+                          onClick={() => changeOnlineExamMode(option.key)}
+                          className={`rounded-lg border-2 px-3 py-2 text-right transition-colors ${
+                            active
+                              ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30"
+                              : "border-gray-200 dark:border-gray-700 hover:border-indigo-300"
+                          }`}
+                        >
+                          <span className="block text-xs font-extrabold text-gray-900 dark:text-white">{option.title}</span>
+                          <span className="block text-[11px] text-gray-500 mt-0.5">{option.desc}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
                 <label className="flex items-start gap-3 p-3 rounded-xl border-2 border-indigo-200 dark:border-indigo-900 bg-indigo-50/50 dark:bg-indigo-950/20 cursor-pointer">
                 <input
                   type="checkbox"
@@ -1439,7 +1811,7 @@ export default function ExamsPage() {
                 إضافة سؤال رئيسي
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
-                {QUESTION_BUTTONS.map((btn, i) => {
+                {questionButtons.map((btn, i) => {
                   const meta = getQuestionTypeMeta(btn.type)
                   return (
                     <Button
@@ -1455,11 +1827,16 @@ export default function ExamsPage() {
                       >
                         {meta.paperMark}
                       </span>
-                      <span>{btn.label}</span>
+                      <span>{isOnlineForm && btn.type === 8 ? "سؤال مقالي" : btn.label}</span>
                     </Button>
                   )
                 })}
               </div>
+              {isOnlineForm && (
+                <p className="text-xs text-indigo-700 dark:text-indigo-300 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 px-3 py-2">
+                  نمط {ONLINE_MODE_LABELS[examForm.onlineExamMode]}: تظهر لك أنواع الأسئلة المعتمدة لهذا النمط فقط.
+                </p>
+              )}
             </section>
 
             {/* Questions editor */}
@@ -1576,6 +1953,26 @@ export default function ExamsPage() {
                               }}
                               className="h-9 text-sm"
                             />
+                            {isOnlineForm && question.questionType === 8 && (
+                              <div className="pt-1">
+                                <Label className="text-xs font-bold text-gray-700 dark:text-gray-300">وسم توجيهي اختياري للمقال</Label>
+                                <Input
+                                  value={question.essayLabel || ""}
+                                  placeholder="مثل: علل، فسر، قارن، أو اتركه عاماً"
+                                  onChange={(e) => {
+                                    const essayLabel = e.target.value
+                                    setExamForm(previous => ({
+                                      ...previous,
+                                      questions: previous.questions.map(item =>
+                                        item.id === question.id ? { ...item, essayLabel } : item
+                                      ),
+                                    }))
+                                  }}
+                                  className="mt-1 h-9 text-sm"
+                                />
+                                <p className="mt-1 text-[11px] text-gray-500">هذا مجرد وسم للسؤال المقالي الموحد، وليس نوع سؤال جديداً.</p>
+                              </div>
+                            )}
                           </div>
 
                           <div className="space-y-4">
@@ -1982,18 +2379,26 @@ export default function ExamsPage() {
               </p>
             )}
           </div>
-
-          <DialogFooter className="sticky bottom-0 bg-background/95 backdrop-blur border-t pt-3 sm:static sm:border-0 sm:bg-transparent sm:backdrop-blur-none">
-            <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>إلغاء</Button>
-            <Button
-              onClick={saveExam}
-              className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
-            >
-              {editingExam ? "حفظ التعديلات" : "حفظ الاختبار"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            </main>
+            <footer className="sticky bottom-0 z-20 border-t border-gray-200 dark:border-gray-800 bg-white/95 dark:bg-gray-900/95 backdrop-blur">
+              <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-3 sm:px-6">
+                <p className="hidden sm:block text-xs text-gray-500">
+                  تُحفظ الأسئلة والتعديلات تلقائياً أثناء الكتابة.
+                </p>
+                <div className="mr-auto flex items-center gap-2">
+                  <Button variant="outline" onClick={leaveEditor}>حفظ كمسودة والعودة</Button>
+                  <Button
+                    onClick={saveExam}
+                    className="bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700"
+                  >
+                    {editingExam ? "حفظ التعديلات والعودة" : "حفظ الاختبار والعودة"}
+                  </Button>
+                </div>
+              </div>
+            </footer>
+          </div>
+        </section>
+      )}
 
       {/* Preview */}
       <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
@@ -2050,24 +2455,40 @@ export default function ExamsPage() {
 
       {/* ===== نتائج الاختبار: قائمة المحاولات + التعديل اليدوي للدرجات ===== */}
       <Dialog open={!!resultsExam} onOpenChange={(o) => !o && setResultsExam(null)}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="w-[96vw] max-w-3xl max-h-[88vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <ClipboardList className="w-6 h-6 text-indigo-600" />
               نتائج: {resultsExam?.title}
             </DialogTitle>
             <DialogDescription>
-              اضغط «تعديل الدرجة» إذا شعرت أن التصحيح الآلي لم يكن عادلاً — الدرجة المعدلة تظهر للطالب وفي تقريره فوراً
+              افتح مراجعة المحاولة لتصحيح كل إجابة، ومنح كامل أو نصف الدرجة أو الصفر، وإضافة تعليق أو تصحيح للطالب.
             </DialogDescription>
           </DialogHeader>
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 px-3 py-2">
+            <p className="text-xs text-indigo-800 dark:text-indigo-200">تُعرض التعليقات ودرجات المقال للطالب فقط بعد إطلاق النتيجة.</p>
+            <Button size="sm" variant="outline" onClick={releaseAllReviewed} className="shrink-0 border-indigo-300 text-indigo-700">
+              إطلاق كل النتائج المكتملة
+            </Button>
+          </div>
 
           <div className="space-y-2">
             {resultsAttempts.length === 0 ? (
               <p className="text-center text-gray-500 py-8">لا توجد محاولات بعد — تظهر هنا فور أداء الطلاب للاختبار</p>
             ) : (
               resultsAttempts.slice().reverse().map(a => {
+                // resultsVersion يعيد رسم القائمة فور حفظ مراجعة أو تعليق.
+                void resultsVersion
+                const summary = resultsExam ? summarizeAttemptReview(resultsExam, a.answers) : null
                 const finalScore = effectiveAttemptScore(a)
                 const overridden = !!a.manualOverride
+                const pending = summary?.pendingManualCount || 0
+                const statusLabel = a.resultReleasedAt
+                  ? "النتيجة مُطلقة"
+                  : pending > 0
+                  ? `بانتظار تصحيح ${pending} إجابة`
+                  : "مراجعة مكتملة — بانتظار الإطلاق"
                 return (
                   <div key={a.id} className={`rounded-xl border p-3 ${overridden ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20" : "border-gray-200 dark:border-gray-800"}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2080,7 +2501,19 @@ export default function ExamsPage() {
                           {overridden && (
                             <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
                           )}
+                          <Badge className={`mr-2 ${
+                            a.resultReleasedAt
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                              : pending > 0
+                              ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                              : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          }`}>{statusLabel}</Badge>
                         </p>
+                        {summary && (
+                          <p className="text-[11px] text-gray-500 mt-1">
+                            تلقائي: {summary.autoScore} / {summary.autoTotal} • يدوي: {summary.manualScore} / {summary.manualTotal}
+                          </p>
+                        )}
                         <p className="text-xs text-gray-400">
                           {a.submittedAt ? new Date(a.submittedAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" }) : ""}
                           {a.durationSeconds ? ` — مدة ${Math.round(a.durationSeconds / 60)} دقيقة` : ""}
@@ -2095,10 +2528,18 @@ export default function ExamsPage() {
                           <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
                           {finalScore} / {a.totalMarks || 0}
                         </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openAttemptReview(a)}
+                          className="border-indigo-300 text-indigo-700 dark:text-indigo-300"
+                        >
+                          مراجعة الإجابات
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -2117,6 +2558,141 @@ export default function ExamsPage() {
               })
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== مراجعة إجابات محاولة واحدة: تصحيح، نصف درجة، وتعليق ===== */}
+      <Dialog open={!!reviewAttempt} onOpenChange={(open) => !open && setReviewAttempt(null)}>
+        <DialogContent className="w-[96vw] max-w-4xl max-h-[92vh] overflow-y-auto p-4 sm:p-6" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl">مراجعة إجابات: {reviewAttempt?.studentName}</DialogTitle>
+            <DialogDescription>
+              صحّح كل إجابة، أضف تعليقاً أو تصحيحاً، ثم احفظ المراجعة أو أطلق النتيجة للطالب.
+            </DialogDescription>
+          </DialogHeader>
+
+          {reviewAttempt && resultsExam && (() => {
+            const summary = summarizeAttemptReview(resultsExam, {
+              ...reviewAttempt.answers,
+              ...Object.fromEntries(Object.entries(reviewDraft).map(([id, review]) => [
+                id,
+                { ...reviewAttempt.answers[id], review },
+              ])),
+            })
+            const detailById = new Map(summary.details.map(detail => [detail.subQuestionId, detail]))
+            return (
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 p-3 text-center text-xs">
+                  <div><p className="text-gray-500">التلقائي</p><p className="font-extrabold">{summary.autoScore} / {summary.autoTotal}</p></div>
+                  <div><p className="text-gray-500">المقالي</p><p className="font-extrabold">{summary.manualScore} / {summary.manualTotal}</p></div>
+                  <div><p className="text-gray-500">النهائي الحالي</p><p className="font-extrabold text-indigo-700">{summary.score} / {summary.totalMarks}</p></div>
+                  <div><p className="text-gray-500">بانتظار التصحيح</p><p className={`font-extrabold ${summary.pendingManualCount ? "text-amber-600" : "text-emerald-600"}`}>{summary.pendingManualCount}</p></div>
+                </div>
+
+                {resultsExam.questions.flatMap((question, qIndex) => question.subQuestions.map((sq, sqIndex) => {
+                  const detail = detailById.get(sq.id)
+                  if (!detail) return null
+                  const answer = reviewAttempt.answers[sq.id] || {}
+                  const review = reviewDraft[sq.id] || answer.review || {}
+                  const answerText = question.questionType === 1
+                    ? sq.choices?.find(choice => choice.id === answer.choiceId)?.choiceText || "لم يُجب"
+                    : question.questionType === 3
+                    ? answer.isTrue === true ? "صح" : answer.isTrue === false ? "خطأ" : "لم يُجب"
+                    : answer.text?.trim() || "لم يُجب"
+                  const automatic = detail.auto
+                  const currentAward = typeof review.awardedMarks === "number" ? review.awardedMarks : detail.awarded
+                  return (
+                    <article key={sq.id} className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 sm:p-4 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-indigo-600">السؤال {qIndex + 1} — الفرعي {sqIndex + 1}</p>
+                          <p className="font-bold text-gray-900 dark:text-white mt-1">{sq.questionText}</p>
+                          <p className="mt-2 rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+                            <span className="font-bold">إجابة الطالب: </span>{answerText}
+                          </p>
+                        </div>
+                        <Badge className={automatic ? "w-fit bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300" : "w-fit bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}>
+                          {automatic ? "مصَحّح تلقائياً" : "يحتاج تصحيحاً يدوياً"} — {detail.marks} د
+                        </Badge>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3 space-y-3">
+                        <p className="text-xs font-extrabold text-gray-700 dark:text-gray-200">
+                          {automatic ? "يمكنك تعديل الدرجة الآلية لهذه الإجابة عند الحاجة" : "قرار التصحيح اليدوي"}
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {([
+                            { key: "correct" as const, label: "صحيحة", className: "border-emerald-300 text-emerald-700 hover:bg-emerald-50" },
+                            { key: "half" as const, label: "نصف حل", className: "border-amber-300 text-amber-700 hover:bg-amber-50" },
+                            { key: "incorrect" as const, label: "خاطئة", className: "border-rose-300 text-rose-700 hover:bg-rose-50" },
+                          ]).map(option => (
+                            <Button
+                              key={option.key}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => updateReviewDraft(sq.id, {
+                                verdict: option.key,
+                                awardedMarks: marksForReviewVerdict(option.key, detail.marks),
+                                reviewedAt: new Date().toISOString(),
+                              })}
+                              className={`${option.className} ${review.verdict === option.key ? "ring-2 ring-offset-1 ring-indigo-400" : ""}`}
+                            >
+                              {option.label}
+                            </Button>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-[auto_8rem] items-end gap-2">
+                          <div>
+                            <Label className="text-xs">تعليق للطالب (يظهر بعد إطلاق النتيجة)</Label>
+                            <textarea
+                              value={review.comment || ""}
+                              onChange={event => updateReviewDraft(sq.id, { comment: event.target.value })}
+                              placeholder="مثال: إجابتك جيدة، لكن اذكر السبب العلمي كاملاً."
+                              className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">الدرجة من {detail.marks}</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={detail.marks}
+                              step="0.5"
+                              value={currentAward}
+                              onChange={event => updateReviewDraft(sq.id, {
+                                verdict: "custom",
+                                awardedMarks: Math.max(0, Math.min(detail.marks, parseFloat(event.target.value) || 0)),
+                                reviewedAt: new Date().toISOString(),
+                              })}
+                              className="mt-1 text-center"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">تصحيح أو إجابة نموذجية للطالب (اختياري)</Label>
+                          <textarea
+                            value={review.correction || ""}
+                            onChange={event => updateReviewDraft(sq.id, { correction: event.target.value })}
+                            placeholder="اكتب التصحيح الذي تريد أن يراه الطالب بعد إطلاق النتيجة."
+                            className="mt-1 min-h-16 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          />
+                        </div>
+                      </div>
+                    </article>
+                  )
+                }))}
+              </div>
+            )
+          })()}
+
+          <DialogFooter className="sticky bottom-0 bg-background/95 pt-3">
+            <Button variant="outline" onClick={() => setReviewAttempt(null)}>إغلاق</Button>
+            <Button variant="outline" onClick={() => saveAttemptReview(false)}>حفظ المراجعة</Button>
+            <Button onClick={() => saveAttemptReview(true)} className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white">
+              حفظ وإطلاق النتيجة
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -2195,8 +2771,8 @@ export default function ExamsPage() {
                   </p>
                   <p className="text-xs text-gray-500">
                     {panelForm.reviewOpen
-                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم والأجوبة الصحيحة ودرجاتهم في أي وقت"
-                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار"}
+                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم ومفاتيح الأسئلة الموضوعية؛ أما درجات المقال والتعليقات فلا تظهر إلا بعد إطلاق نتيجة كل طالب"
+                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار من دون كشف ملاحظات المقال غير المُطلقة"}
                   </p>
                 </div>
                 <Switch checked={panelForm.reviewOpen} onCheckedChange={v => setPanelForm(prev => ({ ...prev, reviewOpen: v }))} />

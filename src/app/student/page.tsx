@@ -55,15 +55,19 @@ import {
   isExamForStudent,
   attemptsStatus,
   effectiveAttemptScore,
+  attemptNeedsResultRelease,
+  isAttemptResultReleased,
   markAnnouncementsSeen,
   lastAnnouncementsSeenAt,
 } from "@/lib/portal-content"
 import {
-  fetchAttemptCount,
   fetchStudentPortalData,
   fetchStudentInquiries,
+  getOnlineExamTimerResult,
+  type OnlineExamTimerResultAttempt,
 } from "@/lib/supabase/sync"
-import type { Announcement, Exam, InquiryThread, Honoree } from "@/lib/data-storage"
+import { getRememberedOnlineExamResultSessions } from "@/lib/online-exam-result-session"
+import { getOnlineExamMode, type Announcement, type Exam, type InquiryThread, type Honoree } from "@/lib/data-storage"
 import { ExamReviewDialog } from "@/components/exam-review-dialog"
 import {
   reportFromPortalData,
@@ -113,8 +117,6 @@ export default function StudentPortalPage() {
   const [portalAnnouncements, setPortalAnnouncements] = useState<Announcement[]>([])
   const [portalExams, setPortalExams] = useState<Exam[]>([])
   const [inquiries, setInquiries] = useState<InquiryThread[]>([])
-  // عدّادات المحاولات السحابية (عبر الأجهزة) لاختبارات ذات حد
-  const [remoteAttempts, setRemoteAttempts] = useState<Record<string, number>>({})
   // مراجعة اختبار (بعد أن يفتحها المعلم للجميع)
   const [reviewExam, setReviewExam] = useState<Exam | null>(null)
   const [inquiryText, setInquiryText] = useState("")
@@ -139,20 +141,29 @@ export default function StudentPortalPage() {
       return
     }
 
-    setReport(reportFromPortalData(portalData))
+    // جدول المحاولات مغلق أمام anon بعد ترحيل 015. نستعيد فقط المحاولات التي
+    // يملك هذا المتصفح أسرار جلساتها العشوائية؛ لا تُسحب أي نتائج خام عامة.
+    const resultSessions = getRememberedOnlineExamResultSessions()
+    const resultRows = await Promise.all(resultSessions.map(async saved => {
+      const result = await getOnlineExamTimerResult(saved)
+      return result.ok && result.state === "submitted" && result.attempt?.studentId === s.studentId
+        ? result.attempt
+        : null
+    }))
+    const secureAttempts = resultRows.filter((attempt): attempt is OnlineExamTimerResultAttempt => !!attempt)
+    const attemptsById = new Map((portalData.examAttempts || []).map(attempt => [attempt.id, attempt]))
+    secureAttempts.forEach(attempt => attemptsById.set(attempt.id, attempt))
+    const portalDataWithSecureAttempts = {
+      ...portalData,
+      examAttempts: [...attemptsById.values()],
+    }
+
+    setReport(reportFromPortalData(portalDataWithSecureAttempts))
     setGradeHonorees(portalData.gradeHonorees || [])
     setGradeGroups(portalData.gradeGroups || [])
     setMyTransferRequests(portalData.transferRequests || [])
     setPortalAnnouncements(portalData.announcements as Announcement[])
     setPortalExams((portalData.exams as Exam[]).filter(e => isExamForStudent(e, portalData.student.gradeId, portalData.student.groupId)))
-
-    // محاولاتي المسجلة سحابياً للاختبارات محدودة المحاولات
-    const counts: Record<string, number> = {}
-    for (const e of (portalData.exams as Exam[]).filter(x => x.maxAttempts && x.maxAttempts > 0)) {
-      const c = await fetchAttemptCount(e.id, portalData.student.id).catch(() => null)
-      if (typeof c === "number") counts[e.id] = c
-    }
-    setRemoteAttempts(counts)
 
     const inq = await fetchStudentInquiries(s.studentId)
     setInquiries(inq as any)
@@ -512,28 +523,43 @@ export default function StudentPortalPage() {
                   ) : (
                     portalExams.map(e => {
                       const av = examAvailability(e, now)
+                      const onlineMode = getOnlineExamMode(e)
+                      const modeLabel = onlineMode === "objective" ? "اختياري وصح وخطأ" : onlineMode === "essay" ? "مقالي" : "مختلط"
                       const myAttempts = (report?.examAttempts || []).filter(a => a.examId === e.id)
-                      const at = attemptsStatus(e, report?.examAttempts || [], session.studentId, undefined, undefined, remoteAttempts[e.id] || 0)
-                      const best = myAttempts.length
-                        ? Math.max(...myAttempts.map(a => effectiveAttemptScore(a)))
+                      // الحد النهائي يُحسم داخل جلسة الخادم؛ نعرض هنا المحاولات
+                      // التي استعادها الطالب بأسرار جلساته فقط.
+                      const at = attemptsStatus(e, report?.examAttempts || [], session.studentId)
+                      const pendingAttempts = myAttempts.filter(a => attemptNeedsResultRelease(a))
+                      // لا تدخل درجات المقال أو التعليقات في أفضل نتيجة قبل إطلاقها الصريح.
+                      const releasedAttempts = myAttempts.filter(a => isAttemptResultReleased(a))
+                      const bestAttempt = releasedAttempts.length
+                        ? releasedAttempts.reduce((best, current) => effectiveAttemptScore(current) >= effectiveAttemptScore(best) ? current : best)
                         : null
-                      const bestPct = best !== null && e.totalMarks ? Math.round((best / e.totalMarks) * 100) : null
+                      const best = bestAttempt ? effectiveAttemptScore(bestAttempt) : null
+                      const bestTotal = bestAttempt?.totalMarks || e.totalMarks || 0
+                      const bestPct = best !== null && bestTotal ? Math.round((best / bestTotal) * 100) : null
                       const scoreTone =
                         bestPct === null ? "" : bestPct >= 85 ? "bg-green-500" : bestPct >= 50 ? "bg-amber-500" : "bg-red-500"
+                      const latestPending = pendingAttempts.slice().sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))[0]
+                      const autoScore = latestPending ? (typeof latestPending.autoScore === "number" ? latestPending.autoScore : latestPending.score) : 0
+                      const autoTotal = latestPending?.autoTotal || 0
+                      const awaitingRelease = pendingAttempts.some(a => a.gradingStatus === "reviewed")
+                      const canOpenReview = !!e.reviewOpen || releasedAttempts.length > 0
                       return (
-                        <div key={e.id} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3 space-y-2.5">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div key={e.id} className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-3 sm:px-4 py-3 space-y-2.5">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                             <div className="min-w-0">
-                              <p className="font-bold text-sm text-gray-900 dark:text-white">{e.title}</p>
+                              <p className="font-bold text-sm text-gray-900 dark:text-white truncate">{e.title}</p>
                               <p className="text-xs text-gray-400">
-                                {e.duration ? `${e.duration} دقيقة` : ""} {e.totalMarks ? ` • ${e.totalMarks} درجة` : ""}
+                                <span className="text-indigo-600 dark:text-indigo-300 font-bold">{modeLabel}</span>
+                                {e.duration ? ` • ${e.duration} دقيقة` : ""} {e.totalMarks ? ` • ${e.totalMarks} درجة` : ""}
                                 {at.max > 0 && ` • المحاولات: ${at.used}/${at.max}`}
                               </p>
                               {myAttempts.some(a => a.manualOverride) && (
                                 <p className="text-[11px] text-purple-600 mt-0.5">توجد درجة معدلة يدوياً من المعلم</p>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                               {!av.open ? (
                                 <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
                                   <Lock className="w-4 h-4" />
@@ -552,36 +578,49 @@ export default function StudentPortalPage() {
                                   </Button>
                                 </Link>
                               )}
-                              {e.reviewOpen && (
+                              {canOpenReview && (
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   className="border-indigo-300 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
                                   onClick={() => setReviewExam(e)}
-                                  title="مراجعة الاختبار ودرجتك"
+                                  title={releasedAttempts.length > 0 ? "عرض النتيجة والتغذية الراجعة" : "مراجعة الأسئلة المتاحة"}
                                 >
                                   <Eye className="w-4 h-4" />
-                                  <span>مراجعة</span>
+                                  <span>{releasedAttempts.length > 0 ? "النتيجة" : "مراجعة"}</span>
                                 </Button>
                               )}
                             </div>
                           </div>
 
-                          {/* الدرجة — شريط بارز واضح */}
+                          {/* النتيجة النهائية لا تظهر للمقال/المختلط قبل الإطلاق. */}
                           {best !== null && (
                             <div className="flex items-center gap-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5">
                               <span className={`shrink-0 rounded-lg ${scoreTone} text-white px-3 py-1.5 text-lg font-black leading-none`} dir="ltr">
-                                {best}<span className="text-xs font-bold opacity-80"> / {e.totalMarks || "—"}</span>
+                                {best}<span className="text-xs font-bold opacity-80"> / {bestTotal || "—"}</span>
                               </span>
                               <div className="min-w-0">
                                 <p className="text-sm font-extrabold text-gray-900 dark:text-white">
-                                  درجتك في هذا الاختبار
+                                  درجتك المُعلنة في هذا الاختبار
                                   {bestPct !== null && ` — ${bestPct}%`}
                                 </p>
                                 <p className="text-[11px] text-gray-400">
-                                  {myAttempts.length > 1 ? `أفضل نتيجة من ${myAttempts.length} محاولات` : "نتيجتك النهائية"}
-                                  {e.reviewOpen && " • المراجعة مفتوحة — اضغط «مراجعة» لرؤية إجاباتك"}
+                                  {releasedAttempts.length > 1 ? `أفضل نتيجة مُعلنة من ${releasedAttempts.length} محاولات` : "نتيجتك المُعلنة"}
+                                  {e.reviewOpen && " • المراجعة متاحة"}
                                 </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {latestPending && (
+                            <div className="flex items-start gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 px-3 py-2.5 text-amber-800 dark:text-amber-200">
+                              <Hourglass className="mt-0.5 h-4 w-4 shrink-0" />
+                              <div className="min-w-0 text-sm">
+                                <p className="font-extrabold">{awaitingRelease ? "اكتملت المراجعة — النتيجة بانتظار إطلاق المعلم" : "إجابتك المقالية قيد مراجعة المعلم"}</p>
+                                {autoTotal > 0 && (
+                                  <p className="mt-0.5 text-xs">الجزء المصحح تلقائياً: {autoScore} / {autoTotal}. لن تظهر درجة المقال أو التعليقات قبل إطلاق النتيجة.</p>
+                                )}
+                                {autoTotal === 0 && <p className="mt-0.5 text-xs">لن تظهر الدرجة أو التعليقات أو التصحيح إلا بعد المراجعة والإطلاق.</p>}
                               </div>
                             </div>
                           )}
@@ -701,21 +740,33 @@ export default function StudentPortalPage() {
                           ) : (
                             <div className="space-y-2">
                               {[
-                                ...report.manualGrades.map(m => ({ title: m.title, source: "تقييم من المعلم", score: m.score, max: m.maxScore, date: `${m.year}-${m.month}` })),
-                                ...report.examAttempts.map(a => ({ title: "اختبار إلكتروني", source: "اختبار إلكتروني", score: a.score, max: a.totalMarks, date: (a.submittedAt || "").slice(0, 10) })),
-                              ].map((g, i) => {
+                                ...report.manualGrades.map(m => ({ title: m.title, source: "تقييم من المعلم", score: m.score, max: m.maxScore, date: `${m.year}-${m.month}`, pending: false })),
+                                ...report.examAttempts.map(a => ({
+                                  title: "اختبار إلكتروني",
+                                  source: attemptNeedsResultRelease(a) ? "نتيجة بانتظار مراجعة وإطلاق المعلم" : "اختبار إلكتروني",
+                                  score: attemptNeedsResultRelease(a) ? 0 : effectiveAttemptScore(a),
+                                  max: a.totalMarks,
+                                  date: (a.submittedAt || "").slice(0, 10),
+                                  pending: attemptNeedsResultRelease(a),
+                                })),                              ].map((g, i) => {
                                 const pct = g.max > 0 ? Math.round((g.score / g.max) * 100) : 0
                                 return (
                                   <div key={i} className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl px-4 py-3 border border-gray-100 dark:border-gray-800">
-                                    <div>
+                                    <div className="min-w-0">
                                       <p className="font-bold text-sm text-gray-900 dark:text-white">{g.title}</p>
-                                      <p className="text-xs text-gray-400">{g.date}</p>
+                                      <p className="text-xs text-gray-400">{g.pending ? g.source : g.date}</p>
                                     </div>
-                                    <div className="text-left">
-                                      <p className="font-extrabold text-gray-900 dark:text-white">{g.score} / {g.max}</p>
-                                      <Badge className={pct >= 85 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}>
-                                        {pct}%
-                                      </Badge>
+                                    <div className="text-left shrink-0">
+                                      {g.pending ? (
+                                        <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">قيد المراجعة</Badge>
+                                      ) : (
+                                        <>
+                                          <p className="font-extrabold text-gray-900 dark:text-white">{g.score} / {g.max}</p>
+                                          <Badge className={pct >= 85 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}>
+                                            {pct}%
+                                          </Badge>
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                 )

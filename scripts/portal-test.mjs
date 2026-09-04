@@ -138,6 +138,13 @@ const isSupabaseConfigured = () => false`)
 {
   files["portal-content.mjs"] = rewrite(readFileSync("src/lib/portal-content.ts", "utf8"))
 }
+{
+  // قدرات نتائج الاختبار — تُمحى عند الخروج؛ في الاختبار لا حاجة لسلوك حقيقي.
+  files["online-exam-result-session.mjs"] =
+    `export const clearRememberedOnlineExamResultSessions = () => {}\n` +
+    `export const getRememberedOnlineExamResultSessions = () => []\n` +
+    `export const rememberOnlineExamResultSession = () => {}\n`
+}
 
 {
   const { writeFileSync, mkdirSync: mkd } = await import("node:fs")

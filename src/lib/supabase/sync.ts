@@ -210,48 +210,47 @@ const persistedExamDeliveryMode = (exam: any): "online" | "offline" | undefined 
   return exam.allowOnline ? "online" : undefined
 }
 
-export const toExamRow = (e: any) => {
-  const deliveryMode = persistedExamDeliveryMode(e)
-  return {
-    id: e.id,
-    grade_id: e.gradeId || null,
-    group_id: e.groupId || null,
-    title: e.title || "اختبار",
-    month: e.month ?? null,
-    unit: e.unit || null,
-    // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
-    academic_year: e.academicYear || "",
-    duration: e.duration ?? null,
-    total_marks: e.totalMarks ?? null,
-    // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
-    questions: {
-      _v: 3,
-      items: e.questions || [],
-      templateId: e.templateId || "classic",
-      showDecorations: e.showDecorations !== false,
-      teacherName: e.teacherName || "",
-      schoolName: e.schoolName || "",
-      // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
-      deliveryMode,
-      allowOnline: deliveryMode === "online" && !!e.allowOnline,
-      // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
-      accessMode: e.accessMode === "public" ? "public" : "members",
-      autoHonorBoard: !!e.autoHonorBoard,
-      honorMinPercent: e.honorMinPercent ?? 100,
-      availabilityMode: e.availabilityMode || "always",
-      availableFrom: e.availableFrom || null,
-      availableUntil: e.availableUntil || null,
-      targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
-      answerVisibility: e.answerVisibility || "never",
-      maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
-      reviewOpen: !!e.reviewOpen,
-    },
-    // created_at / updated_at أعمدة NOT NULL أيضاً
-    created_at: e.createdAt || new Date().toISOString(),
-    updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
-  }
-};
-
+export const toExamRow = (e: any) => ({
+  id: e.id,
+  grade_id: e.gradeId || null,
+  group_id: e.groupId || null,
+  title: e.title || "اختبار",
+  month: e.month ?? null,
+  unit: e.unit || null,
+  // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
+  academic_year: e.academicYear || "",
+  duration: e.duration ?? null,
+  total_marks: e.totalMarks ?? null,
+  // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
+  questions: {
+    _v: 4,
+    items: e.questions || [],
+    templateId: e.templateId || "classic",
+    showDecorations: e.showDecorations !== false,
+    teacherName: e.teacherName || "",
+    schoolName: e.schoolName || "",
+    // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
+    deliveryMode: persistedExamDeliveryMode(e),
+    onlineExamMode: e.onlineExamMode === "objective" || e.onlineExamMode === "essay" || e.onlineExamMode === "mixed"
+      ? e.onlineExamMode
+      : undefined,
+    allowOnline: persistedExamDeliveryMode(e) === "online" && !!e.allowOnline,
+    // من يفتحه: الأعضاء المسجلون فقط (افتراضي) أو أي زائر بلا تسجيل
+    accessMode: e.accessMode === "public" ? "public" : "members",
+    autoHonorBoard: !!e.autoHonorBoard,
+    honorMinPercent: e.honorMinPercent ?? 100,
+    availabilityMode: e.availabilityMode || "always",
+    availableFrom: e.availableFrom || null,
+    availableUntil: e.availableUntil || null,
+    targetGroupIds: Array.isArray(e.targetGroupIds) ? e.targetGroupIds : [],
+    answerVisibility: e.answerVisibility || "never",
+    maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
+    reviewOpen: !!e.reviewOpen,
+  },
+  // created_at / updated_at أعمدة NOT NULL أيضاً
+  created_at: e.createdAt || new Date().toISOString(),
+  updated_at: e.updatedAt || e.createdAt || new Date().toISOString(),
+});
 export const fromExamRow = (row: any) => {
   const q = row.questions
   const wrapped = q && typeof q === "object" && !Array.isArray(q) && Array.isArray(q.items)
@@ -274,6 +273,9 @@ export const fromExamRow = (row: any) => {
     // توافق رجعي: المنشور القديم يُستنتج كأونلاين، أما غير المنشور فنتركه
     // بلا نوع صريح كي يستطيع المعلم اختيار مساره لاحقاً.
     deliveryMode,
+    onlineExamMode: wrapped && (q.onlineExamMode === "objective" || q.onlineExamMode === "essay" || q.onlineExamMode === "mixed")
+      ? q.onlineExamMode
+      : undefined,
     allowOnline: deliveryMode === "online" && !!q.allowOnline,
     accessMode: wrapped && q.accessMode === "public" ? ("public" as const) : ("members" as const),
     autoHonorBoard: wrapped ? !!q.autoHonorBoard : false,
@@ -891,42 +893,78 @@ export async function submitInquiryThread(thread: any): Promise<{ ok: boolean; e
   setStore(STORAGE_KEYS.INQUIRIES, [...storeRows<any>(STORAGE_KEYS.INQUIRIES), thread])
   return { ok: true }
 }
-const toAttemptRow = (a: any) => ({
-  id: a.id,
-  exam_id: a.examId,
-  student_id: a.studentId || null,
-  student_name: a.studentName || "",
-  // هاتف الزائر في الاختبارات المفتوحة للجميع (عمود اختياري — يُتجاهل إن لم تُرحَّل القاعدة بعد)
-  phone: a.phone || null,
-  group_id: a.groupId || "",
-  grade_id: a.gradeId || "",
-  answers: a.answers || {},
-  score: a.score ?? 0,
-  total_marks: a.totalMarks ?? 0,
-  started_at: a.startedAt || new Date().toISOString(),
-  submitted_at: a.submittedAt || new Date().toISOString(),
-  duration_seconds: a.durationSeconds ?? 0,
-  manual_override: a.manualOverride ? { score: a.manualOverride.score, reason: a.manualOverride.reason || null, at: a.manualOverride.at } : null,
-});
+const toAttemptRow = (a: any) => {
+  // نستخدم العمود JSONB الموجود manual_override لحفظ بيانات المراجعة الجديدة
+  // أيضاً؛ وبذلك تتوافق القاعدة المنشورة القديمة من دون انتظار عمود SQL جديد.
+  const reviewMeta = {
+    ...(a.manualOverride ? {
+      score: a.manualOverride.score,
+      reason: a.manualOverride.reason || null,
+      at: a.manualOverride.at,
+    } : {}),
+    ...(typeof a.autoScore === "number" ? { autoScore: a.autoScore } : {}),
+    ...(typeof a.autoTotal === "number" ? { autoTotal: a.autoTotal } : {}),
+    ...(typeof a.manualScore === "number" ? { manualScore: a.manualScore } : {}),
+    ...(typeof a.manualTotal === "number" ? { manualTotal: a.manualTotal } : {}),
+    ...(a.gradingStatus ? { gradingStatus: a.gradingStatus } : {}),
+    ...(a.resultReleasedAt ? { resultReleasedAt: a.resultReleasedAt } : {}),
+    ...(a.reviewedAt ? { reviewedAt: a.reviewedAt } : {}),
+    ...(a.timedOut === true ? { timedOut: true } : {}),
+  }
+  return {
+    id: a.id,
+    exam_id: a.examId,
+    student_id: a.studentId || null,
+    student_name: a.studentName || "",
+    // هاتف الزائر في الاختبارات المفتوحة للجميع (عمود اختياري — يُتجاهل إن لم تُرحَّل القاعدة بعد)
+    phone: a.phone || null,
+    group_id: a.groupId || "",
+    grade_id: a.gradeId || "",
+    answers: a.answers || {},
+    score: a.score ?? 0,
+    total_marks: a.totalMarks ?? 0,
+    started_at: a.startedAt || new Date().toISOString(),
+    submitted_at: a.submittedAt || new Date().toISOString(),
+    duration_seconds: a.durationSeconds ?? 0,
+    manual_override: Object.keys(reviewMeta).length > 0 ? reviewMeta : null,
+  }
+};
 
-const fromAttemptRow = (row: any) => ({
-  id: row.id,
-  examId: row.exam_id,
-  studentId: nil(row.student_id),
-  studentName: row.student_name,
-  phone: nil(row.phone),
-  groupId: row.group_id,
-  gradeId: row.grade_id,
-  answers: row.answers || {},
-  score: Number(row.score) || 0,
-  totalMarks: Number(row.total_marks) || 0,
-  startedAt: row.started_at,
-  submittedAt: row.submitted_at,
-  durationSeconds: Number(row.duration_seconds) || 0,
-  manualOverride: row.manual_override && typeof row.manual_override === "object"
-    ? { score: Number(row.manual_override.score) || 0, reason: row.manual_override.reason || undefined, at: row.manual_override.at || "" }
-    : undefined,
-});
+const fromAttemptRow = (row: any) => {
+  const reviewMeta = row.manual_override && typeof row.manual_override === "object"
+    ? row.manual_override
+    : null
+  return {
+    id: row.id,
+    examId: row.exam_id,
+    studentId: nil(row.student_id),
+    studentName: row.student_name,
+    phone: nil(row.phone),
+    groupId: row.group_id,
+    gradeId: row.grade_id,
+    answers: row.answers || {},
+    score: Number(row.score) || 0,
+    totalMarks: Number(row.total_marks) || 0,
+    autoScore: typeof reviewMeta?.autoScore === "number" ? reviewMeta.autoScore : undefined,
+    autoTotal: typeof reviewMeta?.autoTotal === "number" ? reviewMeta.autoTotal : undefined,
+    manualScore: typeof reviewMeta?.manualScore === "number" ? reviewMeta.manualScore : undefined,
+    manualTotal: typeof reviewMeta?.manualTotal === "number" ? reviewMeta.manualTotal : undefined,
+    gradingStatus: reviewMeta?.gradingStatus === "submitted" || reviewMeta?.gradingStatus === "pending_review" ||
+      reviewMeta?.gradingStatus === "partially_reviewed" || reviewMeta?.gradingStatus === "reviewed" ||
+      reviewMeta?.gradingStatus === "released"
+      ? reviewMeta.gradingStatus
+      : undefined,
+    resultReleasedAt: typeof reviewMeta?.resultReleasedAt === "string" ? reviewMeta.resultReleasedAt : undefined,
+    reviewedAt: typeof reviewMeta?.reviewedAt === "string" ? reviewMeta.reviewedAt : undefined,
+    timedOut: reviewMeta?.timedOut === true || undefined,
+    startedAt: row.started_at,
+    submittedAt: row.submitted_at,
+    durationSeconds: Number(row.duration_seconds) || 0,
+    manualOverride: reviewMeta && typeof reviewMeta.score === "number"
+      ? { score: Number(reviewMeta.score) || 0, reason: reviewMeta.reason || undefined, at: reviewMeta.at || "" }
+      : undefined,
+  }
+};
 
 export function pushExamAttempts(rows: any[]) {
   return (async () => {
@@ -1175,47 +1213,203 @@ export interface PublicData {
   /** حقول الجدول الآمنة فقط: بدون أسعار أو أعداد طلاب */
   groups: { id: string; gradeId: string; name: string; days: string[]; startTime: string; endTime: string }[];
   settings: Record<string, string>;
+  /** false = Supabase متصل لكن ترحيل API الآمن للاختبارات غير موجود/فشل. */
+  examsAvailable: boolean;
   exams: ReturnType<typeof fromExamRow>[];
 }
 
-/**
- * إرسال محاولة طالب من الصفحة العامة (بدون تسجيل دخول).
- * لو كانت القاعدة لم تُرحَّل بعد (عمود phone غير موجود — خطأ 42703)
- * نُعيد الإرسال بدون العمود حتى لا تضيع محاولة الطالب أبداً.
- */
-export async function submitPublicAttempt(attempt: any): Promise<void> {
+// ============================================================
+// جلسة الاختبار ذات ساعة الخادم (Migration 015)
+// ============================================================
+// لا تحمل هذه الدوال مفتاح التصحيح إلى الخادم من العميل. الخادم يحدد بداية
+// الجلسة ونهايتها، ولا يقبل حفظ إجابات جديدة بعد expiresAt.
+
+export interface OnlineExamSessionInput {
+  sessionId: string;
+  attemptId: string;
+  examId: string;
+  studentId?: string;
+  studentName: string;
+  phone?: string;
+  gradeId: string;
+  groupId: string;
+}
+
+export interface OnlineExamTimerSession {
+  id: string;
+  secret: string;
+  attemptId: string;
+  startedAt: string;
+  expiresAt: string;
+}
+
+export interface OnlineExamTimerStartResult {
+  /** false تعني بيئة معاينة بلا Supabase؛ لا نعاملها كخطأ ترحيل. */
+  configured: boolean;
+  session?: OnlineExamTimerSession;
+  error?: string;
+}
+
+/** يبدأ المؤقت من PostgreSQL. في موقع مهيأ لا نسمح بالبدء إن لم يُشغّل ترحيل 015. */
+export async function startOnlineExamTimerSession(input: OnlineExamSessionInput): Promise<OnlineExamTimerStartResult> {
   const sb = getSupabase();
-  if (!sb) return;
-  const row = toAttemptRow(attempt);
-  let { error } = await sb.from("exam_attempts").insert(row);
-  if (error && isMissingColumnError(error, "phone")) {
-    const withoutPhone: Record<string, unknown> = { ...row };
-    delete withoutPhone.phone;
-    ({ error } = await sb.from("exam_attempts").insert(withoutPhone));
+  if (!sb) {
+    return isSupabaseConfigured()
+      ? { configured: true, error: "تعذر الاتصال بخدمة جلسات الاختبار" }
+      : { configured: false };
   }
-  if (error && error.code !== "23505") {
-    console.warn("submitPublicAttempt:", error);
+  const { data, error } = await sb.rpc("start_online_exam_session", {
+    p_session_id: input.sessionId,
+    p_attempt_id: input.attemptId,
+    p_exam_id: input.examId,
+    p_student_id: input.studentId || null,
+    p_student_name: input.studentName,
+    p_phone: input.phone || null,
+    p_grade_id: input.gradeId,
+    p_group_id: input.groupId,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("startOnlineExamTimerSession:", error);
+    return { configured: true, error: error?.message || "تعذر بدء جلسة الاختبار الآمنة" };
+  }
+  const row = data as Record<string, unknown>;
+  if (typeof row.id !== "string" || typeof row.secret !== "string" ||
+      typeof row.attemptId !== "string" || typeof row.startedAt !== "string" ||
+      typeof row.expiresAt !== "string") {
+    return { configured: true, error: "استجابة جلسة الاختبار غير صالحة" };
+  }
+  return {
+    configured: true,
+    session: {
+      id: row.id,
+      secret: row.secret,
+      attemptId: row.attemptId,
+      startedAt: row.startedAt,
+      expiresAt: row.expiresAt,
+    },
+  };
+}
+
+/** يحفظ آخر إجابات الطالب في جلسة الخادم. */
+export async function saveOnlineExamTimerProgress(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  answers: Record<string, unknown>
+): Promise<{ ok: boolean; state?: "saved" | "expired" | "submitted"; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("save_online_exam_progress", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+    p_answers: answers,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("saveOnlineExamTimerProgress:", error);
+    return { ok: false, error: error?.message || "تعذر حفظ تقدم الاختبار" };
+  }
+  const state = (data as Record<string, unknown>).state;
+  if (state !== "saved" && state !== "expired" && state !== "submitted") {
+    return { ok: false, error: "استجابة حفظ التقدم غير صالحة" };
+  }
+  return { ok: state === "saved", state };
+}
+
+export interface OnlineExamAnswerFeedback {
+  choiceId?: string;
+  text?: string;
+  isTrue?: boolean;
+}
+
+/** مفاتيح مسموح بإظهارها لجلسة الطالب فقط بحسب إعداد afterEach / atEnd. */
+export async function getOnlineExamAnswerFeedback(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">
+): Promise<{ ok: boolean; answers?: Record<string, OnlineExamAnswerFeedback>; error?: string }> {
+  const sb = getSupabase();
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("get_online_exam_answer_feedback", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("getOnlineExamAnswerFeedback:", error);
+    return { ok: false, error: error?.message || "تعذر جلب تغذية الإجابة الراجعة" };
+  }
+  const answers = (data as Record<string, unknown>).answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
+    return { ok: false, error: "استجابة تغذية الإجابة غير صالحة" };
+  }
+  return { ok: true, answers: answers as Record<string, OnlineExamAnswerFeedback> };
+}
+
+/** نسخة محاولة آمنة مع مفاتيح موضوعية أصدرها الخادم لهذه الجلسة فقط. */
+export type OnlineExamTimerResultAttempt = ReturnType<typeof fromAttemptRow> & {
+  answerFeedback?: Record<string, OnlineExamAnswerFeedback>
+}
+
+/**
+ * يستعيد محاولة واحدة بالسر العشوائي الذي أصدره الخادم عند البدء. الدالة لا
+ * تقرأ exam_attempts مباشرة؛ التعليقات ودرجات المقال لا تصل قبل الإطلاق.
+ */
+export async function getOnlineExamTimerResult(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">
+): Promise<{
+  ok: boolean
+  state?: "in_progress" | "submitted"
+  attempt?: OnlineExamTimerResultAttempt
+  feedback?: Record<string, OnlineExamAnswerFeedback>
+  error?: string
+}> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: "Supabase غير متصل" }
+  const { data, error } = await sb.rpc("get_online_exam_result", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+  })
+  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+    console.warn("getOnlineExamTimerResult:", error)
+    return { ok: false, error: error?.message || "تعذر استعادة نتيجة الاختبار" }
+  }
+  const row = data as Record<string, unknown>
+  if (row.state === "in_progress") return { ok: true, state: "in_progress" }
+  if (row.state !== "submitted" || !row.attempt || typeof row.attempt !== "object" || Array.isArray(row.attempt)) {
+    return { ok: false, error: "استجابة نتيجة الاختبار غير صالحة" }
+  }
+  const rawFeedback = row.feedback
+  const feedback = rawFeedback && typeof rawFeedback === "object" && !Array.isArray(rawFeedback)
+    ? rawFeedback as Record<string, OnlineExamAnswerFeedback>
+    : {}
+  return {
+    ok: true,
+    state: "submitted",
+    attempt: {
+      ...fromAttemptRow(row.attempt),
+      answerFeedback: feedback,
+    },
+    feedback,
   }
 }
 
-/** عدد محاولات زائر (بلا حساب) في اختبار — بالاسم والمجموعة، لحد المحاولات عبر الأجهزة */
-export async function fetchGuestAttemptCount(
-  examId: string,
-  studentName: string,
-  groupId: string
-): Promise<number | null> {
+/** يسلم الجلسة المعتمدة؛ يرجع المحاولة التي حسب الخادم جزأها الموضوعي. */
+export async function submitOnlineExamTimerSession(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  answers: Record<string, unknown>
+): Promise<{ ok: boolean; attempt?: any; timedOut?: boolean; error?: string }> {
   const sb = getSupabase();
-  const name = (studentName || "").trim();
-  if (!sb || !examId || !name) return null;
-  const { count, error } = await sb
-    .from("exam_attempts")
-    .select("id", { count: "exact", head: true })
-    .eq("exam_id", examId)
-    .eq("student_name", name)
-    .is("student_id", null)
-    .eq("group_id", groupId || "");
-  if (error) return null;
-  return count ?? 0;
+  if (!sb) return { ok: false, error: "Supabase غير متصل" };
+  const { data, error } = await sb.rpc("submit_online_exam_session", {
+    p_session_id: session.id,
+    p_session_secret: session.secret,
+    p_answers: answers,
+  });
+  if (error || !data || typeof data !== "object") {
+    console.warn("submitOnlineExamTimerSession:", error);
+    return { ok: false, error: error?.message || "تعذر تسليم الاختبار إلى الخادم" };
+  }
+  const row = data as Record<string, any>;
+  const attempt = row.attempt;
+  if (row.state !== "submitted" || !attempt || typeof attempt !== "object" || typeof attempt.id !== "string") {
+    return { ok: false, error: "لم يؤكد الخادم تسليم الاختبار" };
+  }
+  return { ok: true, attempt, timedOut: row.timedOut === true || attempt.timedOut === true };
 }
 
 export async function submitPublicHonoree(h: any): Promise<void> {
@@ -1255,20 +1449,6 @@ export async function fetchStudentAccountByEmail(email: string): Promise<any | n
   return fromStudentAccountRow(byMail.data[0]);
 }
 
-/** عدد محاولات طالب في اختبار من العدّاد السحابي (بلا أي بيانات حساسة) */
-export async function fetchAttemptCount(examId: string, studentId: string): Promise<number | null> {
-  const sb = getSupabase();
-  if (!sb) return null;
-  const { data, error } = await sb
-    .from("exam_attempt_counts")
-    .select("attempts")
-    .eq("exam_id", examId)
-    .eq("student_id", studentId)
-    .maybeSingle();
-  if (error) return null;
-  return (data as any)?.attempts ?? 0;
-}
-
 export async function fetchPublicData(): Promise<PublicData | null> {
   const sb = getSupabase();
   if (!sb) return null;
@@ -1282,7 +1462,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     // حقول الجدول الآمنة فقط (أيام + أوقات) — لا أسعار ولا أعداد طلاب
     sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
     sb.from("app_settings").select("key,value"),
-    sb.from("exams").select("*"),
+    // Migration 015: RPC تُنقّي مفاتيح الإجابات داخل PostgreSQL قبل الشبكة.
+    sb.rpc("get_public_online_exams"),
   ]);
 
   if (ann.error || hon.error || files.error || links.error || grades.error || groups.error || settings.error) {
@@ -1310,7 +1491,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
       endTime: g.end_time || "",
     })),
     settings: settingsMap,
-    exams: exams.error ? [] : (exams.data as any[])
+    examsAvailable: !exams.error && Array.isArray(exams.data),
+    exams: exams.error || !Array.isArray(exams.data) ? [] : (exams.data as any[])
       .map(fromExamRow)
       .filter((e: any) => e.deliveryMode === "online" && e.allowOnline),
   };
@@ -1392,13 +1574,12 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
   if (!sb) return null
 
   try {
-    const [studentsRes, groupsRes, gradesRes, manualRes, attemptsRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
+    const [studentsRes, groupsRes, gradesRes, manualRes, duesRes, paymentsRes, attRes, honRes, histRes, transferRes, annRes, examsRes] =
       await Promise.all([
         sb.from("students").select("*"),
         sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
         sb.from("grades").select("id,name"),
         sb.from("manual_grades").select("*"),
-        sb.from("exam_attempts").select("*"),
         sb.from("dues").select("*"),
         sb.from("payments").select("*"),
         sb.from("attendance").select("*"),
@@ -1406,7 +1587,8 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
         sb.from("student_history").select("*"),
         sb.from("group_transfer_requests").select("*"),
         sb.from("announcements").select("*"),
-        sb.from("exams").select("*"),
+        // لا نقرأ exams الخام من بوابة الطالب؛ RPC 015 ينقّي المفاتيح أولاً.
+        sb.rpc("get_public_online_exams"),
       ])
 
     if (studentsRes.error) return null
@@ -1416,7 +1598,6 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
     const group = (groupsRes.data as any[] || []).find((g) => g.id === student.group_id)
     const grade = (gradesRes.data as any[] || []).find((g) => g.id === student.grade_id)
 
-    const attempts = attemptsRes.error ? [] : (attemptsRes.data as any[] || [])
     const manual = manualRes.error ? [] : (manualRes.data as any[] || [])
     const dues = duesRes.error ? [] : (duesRes.data as any[] || [])
     const payments = paymentsRes.error ? [] : (paymentsRes.data as any[] || [])
@@ -1425,7 +1606,7 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
     const hist = histRes.error ? [] : (histRes.data as any[] || [])
     const transfers = transferRes.error ? [] : (transferRes.data as any[] || [])
     const anns = annRes.error ? [] : (annRes.data as any[] || [])
-    const examRows = examsRes.error ? [] : (examsRes.data as any[] || [])
+    const examRows = examsRes.error || !Array.isArray(examsRes.data) ? [] : examsRes.data as any[]
 
     // مجموعات صفه (لطلب النقل + جدول مواعيده)
     const gradeGroupsAll = (groupsRes.data as any[] || []).filter((g) => g.grade_id === student.grade_id)
@@ -1439,7 +1620,9 @@ export async function fetchStudentPortalData(studentId: string): Promise<Student
       groupEndTime: group?.end_time || "",
       groupDays: Array.isArray(group?.days) ? group.days : [],
       manualGrades: manual.filter((m) => m.student_id === studentId).map(fromManualGradeRow),
-      examAttempts: attempts.filter((a) => a.student_id === studentId).map(fromAttemptRow),
+      // تعاد محاولات الاختبار من RPC get_online_exam_result بسر الجلسة في
+      // صفحة الطالب؛ لا نقرأ جدول exam_attempts الخام من بوابة anon.
+      examAttempts: [],
       dues: dues.filter((d) => d.student_id === studentId).map(fromDueRow),
       payments: payments.filter((p) => p.student_id === studentId).map(fromPaymentRow),
       attendance: att.filter((a) => a.student_id === studentId).map(fromAttendanceRow),

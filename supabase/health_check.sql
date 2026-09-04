@@ -169,17 +169,18 @@ FROM submit_tables s
 ORDER BY 1;
 
 -- ============================================================
--- 6) عدّاد محاولات الاختبار (لازم لحد المحاولات عبر الأجهزة)
+-- 6) حد المحاولات المعتمد من الخادم (Migration 015)
 -- ============================================================
+-- لا يعتمد الإصدار الحالي على VIEW عام: الدالة تبدأ الجلسة وتفحص الحد داخل
+-- نفس المعاملة، فلا يمكن تجاوز الحد بطلبين متزامنين أو بقراءة من جهاز آخر.
 SELECT
-  CASE WHEN to_regclass('public.exam_attempt_counts') IS NOT NULL
-       THEN 'موجود ✅' ELSE 'ناقص ❌ — نفّذ 010' END AS "الـ VIEW",
-  CASE WHEN to_regclass('public.exam_attempt_counts') IS NOT NULL
-        AND has_table_privilege('anon', 'public.exam_attempt_counts', 'SELECT')
-       THEN 'مفتوح للطلاب ✅'
-       WHEN to_regclass('public.exam_attempt_counts') IS NOT NULL
-       THEN 'موجود لكن الطلاب لا يرونه ❌'
-       ELSE '—' END AS "صلاحية anon"
+  CASE WHEN to_regprocedure('public.start_online_exam_session(text,text,text,text,text,text,text,text)') IS NOT NULL
+       THEN 'RPC بدء الجلسة موجود ✅' ELSE 'ناقص ❌ — نفّذ 015' END AS "جلسة الاختبار",
+  CASE WHEN to_regprocedure('public.get_online_exam_result(text,text)') IS NOT NULL
+       THEN 'RPC النتيجة المقيدة موجود ✅' ELSE 'ناقص ❌ — نفّذ 015' END AS "استعادة النتيجة",
+  CASE WHEN has_table_privilege('anon', 'public.exam_attempts', 'SELECT')
+       THEN 'قراءة المحاولات مكشوفة ❌ — نفّذ 015'
+       ELSE 'محاولات الزائر مغلقة ✅' END AS "حماية المحاولات"
 FROM (SELECT 1) x;
 
 -- ============================================================

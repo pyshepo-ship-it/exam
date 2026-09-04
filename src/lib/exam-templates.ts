@@ -127,6 +127,11 @@ export function getQuestionTypeMeta(type: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) {
 }
 
 export const getQuestionHeader = (q: Question): string => {
+  // في السؤال المقالي الإلكتروني، الوسم اختياري ولا يخلق نوع سؤال جديداً.
+  if (q.questionType === 8 && q.essayLabel?.trim()) {
+    const instruction = q.headerText?.trim()
+    return instruction ? `${q.essayLabel.trim()}: ${instruction}` : `${q.essayLabel.trim()}:`
+  }
   if (q.headerText && q.headerText.trim()) return q.headerText.trim()
   switch (q.questionType) {
     case 1: return "اختر الإجابة الصحيحة مما بين القوسين"
