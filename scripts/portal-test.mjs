@@ -42,6 +42,7 @@ const stripImportsOf = (src, spec) =>
   src.replace(new RegExp(`import\\s*\\{[^}]*\\}\\s*from\\s*"\\./${spec}"`), "")
 
 const stubs = `import { readRows as __memRows, writeRows as __memWrite } from "./memory-store.mjs"
+import { createHash } from "node:crypto"
 const queuePush = () => Promise.resolve()
 ${["pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
   .map((f) => `const ${f} = () => Promise.resolve()`).join("\n")}
@@ -60,10 +61,41 @@ const submitGroupTransferRequest = async (request) => {
 const exportToPDF = async () => true
 const printElement = () => {}
 const fetchRegistrationRequestByEmail = async () => null
-const fetchStudentAccountByEmail = async (mail) =>
-  __cloud.studentAccounts.find((a) => a.email === String(mail || "").trim().toLowerCase()) || null
+const fetchStudentAccountByEmail = async () => null
 const fetchStudentById = async (id) => ((globalThis.__remoteStudents) || {})[id] || null
-const studentLogin = async (_email, _pw, _fnv) => ({ ok: true, token: "test-token", name: "" })
+// دالة student_login الآمنة (SECURITY DEFINER): تتحقق من كلمة المرور والمصير
+// داخل قاعدة البيانات. في الاختبار نُحاكيها بقراءة المخزن السحابي الصوري نفسه
+// الذي اشتُقّت منه البيانات، فتعكس المنطق الفعلي (حسابات + طلبات).
+const studentLogin = async (email, pw, _fnv) => {
+  const __sha256 = (s) => createHash("sha256").update(String(s)).digest("hex")
+  const __fnv = (input) => {
+    let h1 = 0x811c9dc5, h2 = 0x01000193
+    for (let i = 0; i < input.length; i++) {
+      const c = input.charCodeAt(i)
+      h1 = ((h1 ^ c) * 0x01000193) >>> 0
+      h2 = ((h2 + c) * 0x85ebca6b) >>> 0
+    }
+    return "fnv$" + h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0")
+  }
+  const matchStored = (stored) =>
+    !!stored && (stored === __sha256(pw) || (stored.startsWith("fnv$") && stored === __fnv(pw)))
+  const mail = String(email || "").trim().toLowerCase()
+  const reqs = __memRows("registrationRequests").filter(r => String(r.email || "").trim().toLowerCase() === mail)
+  const accounts = __memRows("studentAccounts").filter(a => String(a.email || "").trim().toLowerCase() === mail)
+  const req = reqs.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))).pop()
+  const acc = accounts.sort((a, b) => String(a.createdAt || "").localeCompare(String(b.createdAt || ""))).pop()
+  if (!req && !acc) return { ok: false, code: "no_account", error: "لا يوجد حساب بهذا البريد — سجِّل أولاً من صفحة التسجيل" }
+  let ok = false
+  if (req && matchStored(req.passwordHash)) ok = true
+  if (acc && acc.active !== false && matchStored(acc.passwordHash)) ok = true
+  if (!ok) return { ok: false, code: "wrong_password", error: "كلمة المرور غير صحيحة" }
+  if (req && req.status === "pending") return { ok: false, code: "pending", status: "pending", error: "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً" }
+  if (req && req.status === "rejected") return { ok: false, code: "rejected", status: "rejected", error: "تم رفض طلب التسجيل" }
+  if (acc && acc.active === false) return { ok: false, code: "blocked", status: "blocked", error: "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم" }
+  const studentId = acc && acc.studentId ? acc.studentId : (req ? req.linkedStudentId : null)
+  if (!studentId) return { ok: false, code: "not_linked", error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+  return { ok: true, code: "ok", studentId, name: "", token: "test-token" }
+}
 const studentLogout = async () => {}`
 
 // 1) storage-keys (كامل — أي مفاتيح جديدة تُلتقط تلقائياً)

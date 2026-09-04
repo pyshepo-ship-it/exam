@@ -417,6 +417,84 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   const mail = (email || "").trim().toLowerCase()
   if (!mail || !password) return { ok: false, error: "يرجى إدخال البريد وكلمة المرور" }
 
+  // ============================================================
+  // المسار الأساسي: دالة student_login (SECURITY DEFINER) تتحقق من كلمة
+  // المرور وحالة الحساب داخل قاعدة البيانات وتُصدر توكين الجلسة. لا نعتمد على
+  // أي قراءة خام من anon لحسابات/طلبات الطلاب — أصلحنا REVOKE لذلك.
+  // (قد يُصل إلى هنا في بيئات قديمة أو المعاينة دون الدالة فيسقط للخطة أدناه).
+  // ============================================================
+  const mint = await studentLogin(mail, password, legacyFnvHex(password)).catch((e) => ({
+    ok: false, code: "unavailable" as const,
+    error: (e as Error)?.message || "تعذر الاتصال بقاعدة البيانات",
+  }))
+
+  if (mint.code !== "unavailable") {
+    // الأفضل رصد الطالب المعني (يُستخدم فقط إذا لم يُرجع الخادم studentId).
+    const resolveLocalStudentId = (): string | undefined => {
+      const byAccount = getStudentAccounts().find(a => norm(a.email) === norm(mail))?.studentId
+      const byReq = getRegistrationRequests()
+        .filter(r => norm(r.email) === norm(mail))
+        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
+        .pop()?.linkedStudentId
+      return byAccount || byReq
+    }
+
+    // نجاح — نبني الجلسة بإعادة جلب بيانات الطالب فقط (لا قائمة لبقية الطلاب).
+    if (mint.ok) {
+      const studentId = mint.studentId || resolveLocalStudentId()
+      if (!studentId) {
+        return { ok: false, error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+      }
+      let student = getStudents().find(s => s.id === studentId)
+      if (!student) {
+        const remote = await fetchStudentById(studentId).catch(() => null)
+        if (remote) student = remote
+      }
+      if (!student && mint.name) student = { id: studentId, name: mint.name } as any
+      if (!student) {
+        return {
+          ok: false,
+          error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — أعد المحاولة، وإن استمر راجع المعلم",
+        }
+      }
+      // نحفظ بيانات الطالب في ذاكرة الجلسة للعرض الفوري فقط — الأصل في السحابة.
+      try { if (!getStudents().some(s => s.id === student.id)) saveStudents([...getStudents(), student]) } catch { /* تجاهل */ }
+      if (student.status === "inactive") {
+        return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
+      }
+      const now = Date.now()
+      const session: PortalSession = {
+        email: mail,
+        studentId,
+        name: student.name,
+        iat: now,
+        exp: now + PORTAL_SESSION_TTL_MS,
+        token: mint.token,
+      }
+      if (typeof window !== "undefined") writeSessionCookie(session)
+      return { ok: true, session }
+    }
+
+    // نتائج سياسة موثوقة من قاعدة البيانات.
+    if (mint.code === "pending") return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
+    if (mint.code === "rejected") return { ok: false, error: mint.error || "تم رفض طلب التسجيل", status: "rejected" }
+    if (mint.code === "blocked") return { ok: false, error: mint.error || "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
+    if (mint.code === "no_account") return { ok: false, error: mint.error || "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+    if (mint.code === "not_linked") return { ok: false, error: mint.error || "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+    if (mint.code === "wrong_password") {
+      const failBucket = `login-fail:${norm(mail)}`
+      if (!consumeRate(failBucket, 5, 15 * 60 * 1000)) {
+        return { ok: false, error: `محاولات كثيرة بخطأ — انتظر ${minutesLeftInWindow(failBucket, 15 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
+      }
+      return { ok: false, error: mint.error || "كلمة المرور غير صحيحة" }
+    }
+    return { ok: false, error: mint.error || "تعذر تسجيل الدخول" }
+  }
+
+  // ============================================================
+  // خطة احتياطية (لا دالة في البيئة): المنطق المحلي + قراءة anon كما كان.
+  // ============================================================
+
   // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد وكلمة المرور من المدرس).
   // لا نسخة محلية دائمة: إن لم يكن في ذاكرة الجلسة يُجلب من Supabase مباشرة،
   // فيدخل الطالب من أي جهاز في العالم بأحدث حالة لحسابه (تفعيل/كلمة المرور).

@@ -1255,8 +1255,10 @@ REVOKE SELECT ON TABLE public.student_history FROM anon;
 REVOKE SELECT ON TABLE public.group_transfer_requests FROM anon;
 REVOKE SELECT ON TABLE public.inquiries FROM anon;
 REVOKE SELECT ON TABLE public.student_accounts FROM anon;
--- registration_requests يبقى مقروءاً لـ anon لمساعدة مسار التسجيل/الحالة في الواجهة؛
--- كلمات المرور بصمات SHA-256 ولا يكفي قراءتها لانتحال الدخول (تتطلب كلمة المرور نصاً).
+REVOKE SELECT ON TABLE public.registration_requests FROM anon;
+-- الحسابات وطلبات التسجيل تُقرأ الآن حصراً عبر الدوال الآمنة
+-- (SECURITY DEFINER). لا قراءة خام لـ anon — حماية كلمات المرور وبيانات
+-- الطلاب/الأولياء (أسماء، هواتف، بصمات) من أي زائر، والتحقق يتم داخل الخادم.
 
 -- ------------------------------------------------------------
 -- 4) دوال الدخول الآمنة
@@ -1291,7 +1293,7 @@ BEGIN
   END IF;
 
   IF v_account.id IS NULL AND v_req.id IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'لا يوجد حساب بهذا البريد — سجِّل أولاً من صفحة التسجيل');
+    RETURN jsonb_build_object('ok', false, 'code', 'no_account', 'error', 'لا يوجد حساب بهذا البريد — سجِّل أولاً من صفحة التسجيل');
   END IF;
 
   v_sha := encode(digest(p_password, 'sha256'), 'hex');
@@ -1302,27 +1304,27 @@ BEGIN
     IF v_account.password_hash = v_sha OR (p_legacy_fnv IS NOT NULL AND v_account.password_hash = p_legacy_fnv) THEN v_ok := true; END IF;
   END IF;
   IF NOT v_ok THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'كلمة المرور غير صحيحة');
+    RETURN jsonb_build_object('ok', false, 'code', 'wrong_password', 'error', 'كلمة المرور غير صحيحة');
   END IF;
 
   IF v_req.id IS NOT NULL AND v_req.status = 'pending' THEN
-    RETURN jsonb_build_object('ok', false, 'status', 'pending', 'error', 'طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً');
+    RETURN jsonb_build_object('ok', false, 'code', 'pending', 'status', 'pending', 'error', 'طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً');
   END IF;
   IF v_req.id IS NOT NULL AND v_req.status = 'rejected' THEN
-    RETURN jsonb_build_object('ok', false, 'status', 'rejected', 'error',
+    RETURN jsonb_build_object('ok', false, 'code', 'rejected', 'status', 'rejected', 'error',
       'تم رفض طلب التسجيل' || CASE WHEN COALESCE(v_req.review_note, '') <> '' THEN ': ' || v_req.review_note ELSE '' END);
   END IF;
   IF v_account.id IS NOT NULL AND v_account.active = false THEN
-    RETURN jsonb_build_object('ok', false, 'status', 'blocked', 'error', 'تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم');
+    RETURN jsonb_build_object('ok', false, 'code', 'blocked', 'status', 'blocked', 'error', 'تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم');
   END IF;
 
   v_student_id := COALESCE(v_account.student_id, v_req.linked_student_id);
   SELECT * INTO v_student FROM public.students WHERE id = v_student_id;
   IF v_student.id IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم');
+    RETURN jsonb_build_object('ok', false, 'code', 'not_linked', 'error', 'حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم');
   END IF;
   IF v_student.status = 'inactive' THEN
-    RETURN jsonb_build_object('ok', false, 'status', 'blocked', 'error', 'حسابك موقوف حالياً — يرجى التواصل مع المعلم');
+    RETURN jsonb_build_object('ok', false, 'code', 'blocked', 'status', 'blocked', 'error', 'حسابك موقوف حالياً — يرجى التواصل مع المعلم');
   END IF;
 
   v_token := encode(gen_random_bytes(32), 'hex');
@@ -1341,6 +1343,7 @@ BEGIN
     'name', v_student.name,
     'email', v_mail,
     'token', v_token,
+    'code', 'ok',
     'exp', floor(extract(epoch from now()) * 1000)::bigint + 2592000000::bigint
   );
 END;

@@ -1598,6 +1598,8 @@ export interface StudentPortalData {
 export interface StudentLoginResult {
   ok: boolean
   status?: 'pending' | 'rejected' | 'blocked'
+  /** رمز مميز لنتيجة الدخول — لتمييز لا يوجد حساب / كلمة مرور خاطئة / إلخ */
+  code?: 'ok' | 'no_account' | 'wrong_password' | 'pending' | 'rejected' | 'blocked' | 'not_linked' | 'unavailable'
   error?: string
   studentId?: string
   name?: string
@@ -1615,25 +1617,38 @@ export async function studentLogin(
   legacyFnv?: string
 ): Promise<StudentLoginResult> {
   const sb = getSupabase()
-  if (!sb) return { ok: false, error: "Supabase غير متصل" }
+  if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
   let data: Record<string, any>
+  const msg = (e: any) => String(e?.message || e || "")
   try {
     const res = await sb.rpc("student_login", {
       p_email: email,
       p_password: password,
       p_legacy_fnv: legacyFnv || null,
     })
-    if (res.error || !res.data || typeof res.data !== "object") {
+    if (res.error) {
       console.warn("studentLogin:", res.error)
-      return { ok: false, error: res.error?.message || "تعذر إنشاء الجلسة" }
+      // دالة غير موجودة/مخطط قديم → ننزل للخطة المحلية كي يبقى الدخول عاملاً
+      // حتى تشغيل سكربت الإصلاح (REVOKE + دوال SECURITY DEFINER).
+      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      return {
+        ok: false,
+        code: "unavailable",
+        error: missing
+          ? "خدمة الدخول غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+          : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
+      }
+    }
+    if (!res.data || typeof res.data !== "object") {
+      return { ok: false, code: "unavailable", error: "استجابة الدخول غير صالحة" }
     }
     data = res.data as Record<string, any>
   } catch (e) {
     console.warn("studentLogin:", e)
-    return { ok: false, error: "تعذر إنشاء الجلسة" }
+    return { ok: false, code: "unavailable", error: "تعذر إنشاء الجلسة" }
   }
   if (data.ok !== true) {
-    return { ok: false, status: data.status as any, error: data.error }
+    return { ok: false, status: data.status as any, code: data.code as any, error: data.error }
   }
   return { ok: true, studentId: data.studentId, name: data.name, token: data.token }
 }

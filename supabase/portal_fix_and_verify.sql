@@ -1,44 +1,20 @@
--- ============================================================
--- 016) تأمين بوابة الطالب: قراءة مقيّدة + جلسات آمنة
--- ============================================================
--- المشكلة التي يحلها هذا الترحيل:
---   1) كانت بوابة الطالب تقرأ بيانات الطلاب/الدرجات/المالية عبر مفتاح anon
---      وتُفلتر في المتصفح، فتُرسَل بيانات كل الطلاب خلف الكواليس (تسريب PII)،
---      بينما الجداول الحسّاسة (students/dues/payments/attendance) بلا سياسة
---      قراءة لـ anon أصلاً، فكانت البوابة معطّلة ("غير محدد").
---   2) جلسة الطالب كانت مجرد كوكي base64 بلا توقيع، فيستطيع أي أحد انتحاله.
--- الحل:
---   • جلسة آمنة: student_login يتحقق من كلمة المرور (بصمة SHA-256 في قاعدة
---     البيانات) ويصدر توكين عشوائي يُخزَّن بصمته في student_sessions.
---   • القراءة الوحيدة لبيانات الطالب تمر عبر get_student_portal_data / 
---     get_student_inquiries (SECURITY DEFINER) بالتحقق من التوكين، فتعيد
---     بيانات الطالب المسجَّل فقط.
---   • لا قراءة خام (SELECT) لـ anon على جداول الطلاب/الدرجات/المالية/السجل.
---   • جداول الطلبات (تسجيل/نقل/استفسار/شرف) تبقى قابلة للإدراج للزوار.
--- ============================================================
+-- ============================================================================
+-- 016-fix) إصلاح + تأمين بوابة الطالب + فحص سلامة شامل (آمن لإعادة التشغيل)
+-- ============================================================================
+-- يُشغَّل كاملاً في Supabase → SQL Editor.
+--
+-- ماذا يفعل:
+--   1) يُنشئ الجداول/الأعمدة/الدوال/السياسات/الصلاحيات إن لم توجد (IDEMPOTENT).
+--   2) يمنع أي قراءة خام (SELECT) من anon على بيانات الطلاب/الدرجات/المالية/السجل.
+--   3) يجعل الدخول والقراءة عبر دوال SECURITY DEFINER فقط.
+--   4) يفحص في النهاية سلامة الجداول وأعمدة RLS وصلاحيات anon والدوال، ويطبع تقريراً.
+-- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
--- ------------------------------------------------------------
--- 1) جلسات الطلاب الآمنة (لا وصول لـ anon/authenticated مباشرة)
---    يكتب فيها فقط student_login / student_logout (SECURITY DEFINER)
--- ------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS student_sessions (
-  student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
-  token_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  expires_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_student_sessions_token_hash ON student_sessions(token_hash);
-ALTER TABLE student_sessions ENABLE ROW LEVEL SECURITY;
--- لا وصول لأي دور (حتى authenticated)؛ الدوال المالكة فقط تصل إليها،
--- لأن token_hash سرّ جلسة حساس.
-REVOKE ALL ON TABLE public.student_sessions FROM anon, authenticated;
--- لا سياسات على student_sessions؛ الدوال المالكة فقط تصل إليها.
-
--- ------------------------------------------------------------
--- 2) جداول بوابة الطالب (من 008/009) — تُنشأ إن لم تكن موجودة
--- ------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+-- (1) جداول بوابة الطالب — تُنشأ إن لم تكن موجودة + ضمان الأعمدة الناقصة
+-- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS manual_grades (
   id TEXT PRIMARY KEY,
   student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
@@ -69,6 +45,10 @@ CREATE TABLE IF NOT EXISTS registration_requests (
   created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   reviewed_at TEXT
 );
+-- أعمدة قد تأتي ناقصة من ترحيلات سابقة
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS guardian_phone TEXT;
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS password_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE registration_requests ADD COLUMN IF NOT EXISTS linked_student_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_reg_requests_email ON registration_requests(email);
 CREATE INDEX IF NOT EXISTS idx_reg_requests_status ON registration_requests(status);
 
@@ -84,6 +64,8 @@ CREATE TABLE IF NOT EXISTS group_transfer_requests (
   created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
   reviewed_at TEXT
 );
+ALTER TABLE group_transfer_requests ADD COLUMN IF NOT EXISTS student_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE group_transfer_requests ADD COLUMN IF NOT EXISTS to_grade_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_transfer_student ON group_transfer_requests(student_id);
 
 CREATE TABLE IF NOT EXISTS student_history (
@@ -105,10 +87,10 @@ CREATE TABLE IF NOT EXISTS student_accounts (
   password_hash TEXT,
   created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
 );
+-- قد يكون العمود ناقصاً في قواعد قديمة (قد لا يكون فيه كلمة مرور)
+ALTER TABLE student_accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
 CREATE INDEX IF NOT EXISTS idx_student_accounts_email ON student_accounts(email);
 CREATE INDEX IF NOT EXISTS idx_student_accounts_student ON student_accounts(student_id);
--- أمان على قواعد قديمة: العمود قد يكون ناقصاً من ترحيلات سابقة
-ALTER TABLE student_accounts ADD COLUMN IF NOT EXISTS password_hash TEXT;
 
 CREATE TABLE IF NOT EXISTS inquiries (
   id TEXT PRIMARY KEY,
@@ -123,16 +105,28 @@ CREATE TABLE IF NOT EXISTS inquiries (
 );
 CREATE INDEX IF NOT EXISTS idx_inquiries_student ON inquiries(student_id);
 
--- ------------------------------------------------------------
--- 3) RLS على جداول البوابة: وصول كامل للمعلم، ولا قراءة لـ anon.
---    الزائر يرسل طلباته فقط (إدراج) — أما القراءة فتمرّ عبر الدوال الآمنة.
--- ------------------------------------------------------------
+-- جلسات الطلاب الآمنة (لا وصول لـ anon/authenticated؛ الدوال المالكة فقط)
+CREATE TABLE IF NOT EXISTS student_sessions (
+  student_id TEXT PRIMARY KEY REFERENCES students(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_student_sessions_token_hash ON student_sessions(token_hash);
+
+-- عمود قناة الاستفسار على الطلاب — قد يكون ناقصاً
+ALTER TABLE students ADD COLUMN IF NOT EXISTS inquiry_blocked BOOLEAN DEFAULT false;
+
+-- ----------------------------------------------------------------------------
+-- (2) RLS: كل الجداول الحسّاسة مغلقة عن anon نهائياً
+-- ----------------------------------------------------------------------------
 ALTER TABLE manual_grades            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE registration_requests    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE group_transfer_requests  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE student_history          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE student_accounts         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE inquiries                ENABLE ROW LEVEL SECURITY;
+ALTER TABLE student_sessions         ENABLE ROW LEVEL SECURITY;
 
 -- وصول كامل للمعلم (المصادق)
 DROP POLICY IF EXISTS "authenticated full access" ON manual_grades;
@@ -148,7 +142,7 @@ CREATE POLICY "authenticated full access" ON student_accounts FOR ALL TO authent
 DROP POLICY IF EXISTS "authenticated full access" ON inquiries;
 CREATE POLICY "authenticated full access" ON inquiries FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- إزالة أي قراءة عامة قديمة (من 008/009) ثم إبقاء الإدراج للطلبات فقط
+-- إزالة أي سياسات قراءة عامة قديمة (من 008/009) ثم إبقاء الإدراج للطلبات فقط
 DROP POLICY IF EXISTS "public read" ON manual_grades;
 DROP POLICY IF EXISTS "public read" ON registration_requests;
 DROP POLICY IF EXISTS "public insert" ON registration_requests;
@@ -159,26 +153,37 @@ DROP POLICY IF EXISTS "public read" ON student_accounts;
 DROP POLICY IF EXISTS "public read" ON inquiries;
 DROP POLICY IF EXISTS "public insert" ON inquiries;
 
+-- الزائر يرسل طلباته فقط (إدراج) — لا قراءة لبيانات أي طالب/حساب/درجات/مالية/سجل
 CREATE POLICY "anon insert registration_requests" ON registration_requests FOR INSERT TO anon WITH CHECK (true);
 CREATE POLICY "anon insert group_transfer_requests" ON group_transfer_requests FOR INSERT TO anon WITH CHECK (true);
 CREATE POLICY "anon insert inquiries" ON inquiries FOR INSERT TO anon WITH CHECK (true);
 
--- لا قراءة REST لـ anon على بيانات الطلاب/الدرجات/السجل/الاستفسارات/الحسابات
-REVOKE SELECT ON TABLE public.manual_grades FROM anon;
-REVOKE SELECT ON TABLE public.student_history FROM anon;
-REVOKE SELECT ON TABLE public.group_transfer_requests FROM anon;
-REVOKE SELECT ON TABLE public.inquiries FROM anon;
-REVOKE SELECT ON TABLE public.student_accounts FROM anon;
-REVOKE SELECT ON TABLE public.registration_requests FROM anon;
--- الحسابات وطلبات التسجيل تُقرأ الآن حصراً عبر الدوال الآمنة
--- (SECURITY DEFINER). لا قراءة خام لـ anon — حماية كلمات المرور وبيانات
--- الطلاب/الأولياء (أسماء، هواتف، بصمات) من أي زائر، والتحقق يتم داخل الخادم.
+-- لا قراءة خام لـ anon على كل بيانات البوابة الحسّاسة
+REVOKE SELECT ON TABLE public.manual_grades            FROM anon;
+REVOKE SELECT ON TABLE public.student_history          FROM anon;
+REVOKE SELECT ON TABLE public.group_transfer_requests  FROM anon;
+REVOKE SELECT ON TABLE public.inquiries                FROM anon;
+REVOKE SELECT ON TABLE public.student_accounts         FROM anon;
+REVOKE SELECT ON TABLE public.registration_requests    FROM anon;
+REVOKE SELECT ON TABLE public.student_sessions         FROM anon, authenticated;
 
--- ------------------------------------------------------------
--- 4) دوال الدخول الآمنة
--- ------------------------------------------------------------
--- التحقق من البريد/الحالة/كلمة المرور (بصمة SHA-256 في قاعدة البيانات
--- أو بصمة FNV القديمة المرسلة من العميل للتوافق الرجعي) ثم إصدار توكين جلسة.
+-- الصلاحيات للأدوار الموثوقة
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.manual_grades           TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.registration_requests   TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.group_transfer_requests TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.student_history         TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.student_accounts        TO authenticated, service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.inquiries               TO authenticated, service_role;
+GRANT INSERT ON TABLE public.registration_requests   TO anon;
+GRANT INSERT ON TABLE public.group_transfer_requests TO anon;
+GRANT INSERT ON TABLE public.inquiries               TO anon;
+
+-- ----------------------------------------------------------------------------
+-- (3) دوال الدخول الآمنة (SECURITY DEFINER) — قراءة داخلية بلا حاجة لقراءة anon
+-- ----------------------------------------------------------------------------
+
+-- التحقق من البريد/الحالة/كلمة المرور ثم إصدار توكين جلسة.
+-- يُميّز النتائج برمز code حتى تعرض الواجهة الرسالة الصحيحة.
 CREATE OR REPLACE FUNCTION public.student_login(p_email TEXT, p_password TEXT, p_legacy_fnv TEXT DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -200,6 +205,7 @@ BEGIN
     WHERE lower(email) = v_mail ORDER BY created_at DESC LIMIT 1;
   SELECT * INTO v_req FROM public.registration_requests
     WHERE lower(email) = v_mail ORDER BY created_at DESC LIMIT 1;
+  -- إن لم يوجد طلب بالبريد لكن الحساب مربوط بطلب معتمد (بريد تغيّر من المدرس)
   IF v_req.id IS NULL AND v_account.student_id IS NOT NULL THEN
     SELECT * INTO v_req FROM public.registration_requests
       WHERE linked_student_id = v_account.student_id AND status = 'approved'
@@ -252,12 +258,8 @@ BEGIN
         expires_at = EXCLUDED.expires_at;
 
   RETURN jsonb_build_object(
-    'ok', true,
-    'studentId', v_student_id,
-    'name', v_student.name,
-    'email', v_mail,
-    'token', v_token,
-    'code', 'ok',
+    'ok', true, 'code', 'ok', 'studentId', v_student_id,
+    'name', v_student.name, 'email', v_mail, 'token', v_token,
     'exp', floor(extract(epoch from now()) * 1000)::bigint + 2592000000::bigint
   );
 END;
@@ -278,10 +280,7 @@ BEGIN
 END;
 $$;
 
--- ------------------------------------------------------------
--- 5) قراءة بيانات الطالب (SECURITY DEFINER) — تعيد بيانات الطالب المسجَّل
---    فقط، بلا أي قائمة أخرى من بقية الطلاب.
--- ------------------------------------------------------------
+-- قراءة بيانات الطالب المسجَّل فقط عبر التوكين — بلا أي قائمة من بقية الطلاب
 CREATE OR REPLACE FUNCTION public.get_student_portal_data(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -294,16 +293,19 @@ DECLARE
   v_student public.students%ROWTYPE;
   v_manual jsonb; v_dues jsonb; v_payments jsonb; v_att jsonb; v_hist jsonb; v_transfers jsonb;
 BEGIN
+  IF p_token IS NULL OR p_token = '' THEN
+    RETURN jsonb_build_object('ok', false, 'code', 'invalid', 'error', 'جلسة غير صالحة — سجّل الدخول من جديد');
+  END IF;
   SELECT student_id INTO v_student_id FROM public.student_sessions
     WHERE token_hash = v_hash
       AND expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   IF v_student_id IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'جلسة غير صالحة أو منتهية — سجّل الدخول من جديد');
+    RETURN jsonb_build_object('ok', false, 'code', 'invalid', 'error', 'جلسة غير صالحة أو منتهية — سجّل الدخول من جديد');
   END IF;
 
   SELECT * INTO v_student FROM public.students WHERE id = v_student_id;
   IF v_student.id IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'الطالب غير موجود');
+    RETURN jsonb_build_object('ok', false, 'code', 'invalid', 'error', 'الطالب غير موجود');
   END IF;
 
   SELECT COALESCE(jsonb_agg(to_jsonb(m) ORDER BY created_at), '[]'::jsonb) INTO v_manual
@@ -320,8 +322,7 @@ BEGIN
     FROM public.group_transfer_requests t WHERE t.student_id = v_student_id;
 
   RETURN jsonb_build_object(
-    'ok', true,
-    'student', to_jsonb(v_student),
+    'ok', true, 'code', 'ok', 'student', to_jsonb(v_student),
     'manualGrades', COALESCE(v_manual, '[]'::jsonb),
     'dues', COALESCE(v_dues, '[]'::jsonb),
     'payments', COALESCE(v_payments, '[]'::jsonb),
@@ -332,6 +333,7 @@ BEGIN
 END;
 $$;
 
+-- استفسارات الطالب المسجَّل فقط (مثل قراءة بياناته)
 CREATE OR REPLACE FUNCTION public.get_student_inquiries(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -343,31 +345,22 @@ DECLARE
   v_student_id TEXT;
   v_rows jsonb;
 BEGIN
+  IF p_token IS NULL OR p_token = '' THEN
+    RETURN jsonb_build_object('ok', false, 'code', 'invalid', 'error', 'جلسة غير صالحة');
+  END IF;
   SELECT student_id INTO v_student_id FROM public.student_sessions
     WHERE token_hash = v_hash
       AND expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
   IF v_student_id IS NULL THEN
-    RETURN jsonb_build_object('ok', false, 'error', 'جلسة غير صالحة أو منتهية');
+    RETURN jsonb_build_object('ok', false, 'code', 'invalid', 'error', 'جلسة غير صالحة أو منتهية');
   END IF;
   SELECT COALESCE(jsonb_agg(to_jsonb(i) ORDER BY created_at), '[]'::jsonb) INTO v_rows
     FROM public.inquiries i WHERE i.student_id = v_student_id;
-  RETURN jsonb_build_object('ok', true, 'inquiries', COALESCE(v_rows, '[]'::jsonb));
+  RETURN jsonb_build_object('ok', true, 'code', 'ok', 'inquiries', COALESCE(v_rows, '[]'::jsonb));
 END;
 $$;
 
--- ------------------------------------------------------------
--- 6) الصلاحيات
--- ------------------------------------------------------------
-GRANT ALL PRIVILEGES ON TABLE public.manual_grades TO authenticated, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.registration_requests TO authenticated, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.group_transfer_requests TO authenticated, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.student_history TO authenticated, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.student_accounts TO authenticated, service_role;
-GRANT ALL PRIVILEGES ON TABLE public.inquiries TO authenticated, service_role;
-GRANT INSERT ON TABLE public.registration_requests TO anon;
-GRANT INSERT ON TABLE public.group_transfer_requests TO anon;
-GRANT INSERT ON TABLE public.inquiries TO anon;
-
+-- صلاحيات الدوال: anon ينفّذها فقط (لا يقرأ مصدرها/بياناتها خاماً)
 REVOKE ALL ON FUNCTION public.student_login(TEXT, TEXT, TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.student_logout(TEXT) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.get_student_portal_data(TEXT) FROM PUBLIC;
@@ -377,4 +370,102 @@ GRANT EXECUTE ON FUNCTION public.student_logout(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_student_portal_data(TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.get_student_inquiries(TEXT) TO anon, authenticated;
 
-COMMIT;
+-- ----------------------------------------------------------------------------
+-- (4) الفحص الشامل — يطبع تقريراً في سجل الرسائل (Messages) يعرض مشاكل إن وُجدت
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+  ok BOOLEAN;
+  issues TEXT[] := '{}';
+  required_tables TEXT[] := ARRAY[
+    'grades','groups','students','dues','payments','exams','sessions','attendance',
+    'announcements','honorees','shared_files','important_links','year_archives',
+    'manual_grades','registration_requests','group_transfer_requests','student_history',
+    'student_accounts','inquiries','student_sessions'
+  ];
+  required_functions TEXT[] := ARRAY[
+    'student_login(text,text,text)','student_logout(text)',
+    'get_student_portal_data(text)','get_student_inquiries(text)',
+    'get_public_online_exams()','start_online_exam_session(text,text,text,text,text,text,text,text)',
+    'get_online_exam_result(text,text)'
+  ];
+  portal_tables TEXT[] := ARRAY[
+    'manual_grades','registration_requests','group_transfer_requests',
+    'student_history','student_accounts','inquiries','student_sessions'
+  ];
+  t TEXT;
+  fn TEXT;
+BEGIN
+  -- (أ) وجود الجداول
+  FOREACH t IN ARRAY required_tables LOOP
+    IF to_regclass('public.' || t) IS NULL THEN
+      issues := issues || ('جدول مفقود: ' || t);
+    END IF;
+  END LOOP;
+
+  -- (ب) تفعيل RLS على جداول البوابة الحسّاسة
+  FOREACH t IN ARRAY portal_tables LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      SELECT relrowsecurity INTO ok FROM pg_class WHERE oid = to_regclass('public.' || t);
+      IF ok IS DISTINCT FROM true THEN
+        issues := issues || ('RLS غير مفعّل: ' || t);
+      END IF;
+    END IF;
+  END LOOP;
+
+  -- (ج) منع القراءة الخام من anon
+  FOREACH t IN ARRAY portal_tables LOOP
+    IF to_regclass('public.' || t) IS NOT NULL AND has_table_privilege('anon', 'public.' || t, 'SELECT') THEN
+      issues := issues || ('anon يملك SELECT على جدول حسّاس: ' || t);
+    END IF;
+  END LOOP;
+
+  -- (د) وجود الدوال وامتلاك anon حق التنفيذ
+  FOREACH fn IN ARRAY required_functions LOOP
+    IF to_regprocedure('public.' || fn) IS NULL THEN
+      issues := issues || ('دالة مفقودة: ' || fn);
+    ELSE
+      -- هل anon يستطيع تنفيذها (إن كانت من دوال البوابة الآمنة)؟
+      IF fn LIKE 'student_login%' OR fn LIKE 'student_logout%' OR fn LIKE 'get_student_portal_data%'
+         OR fn LIKE 'get_student_inquiries%' THEN
+        IF NOT has_function_privilege('anon', 'public.' || fn, 'EXECUTE') THEN
+          issues := issues || ('anon لا يملك تنفيذ: ' || fn);
+        END IF;
+      END IF;
+    END IF;
+  END LOOP;
+
+  IF array_length(issues, 1) IS NULL THEN
+    RAISE NOTICE '✅ كل الفحوصات سليمة: الجداول موجودة، RLS مفعّل، anon بلا قراءة خام، والدوال متاحة.';
+  ELSE
+    RAISE NOTICE '⚠️ اكتُشفت % مشكلة/مشاكل:', array_length(issues, 1);
+    FOREACH t IN ARRAY issues LOOP
+      RAISE NOTICE '   - %', t;
+    END LOOP;
+    RAISE NOTICE '❌ أصلح المشاكل أعلاه ثم أعد تشغيل هذا الملف.';
+  END IF;
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- (5) عدّ سريع للسجلات الفعلية في كل جدول (للتأكد أن البيانات في السحابة)
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+  t TEXT;
+  n BIGINT;
+  counts TEXT[] := '{}';
+  count_tables TEXT[] := ARRAY[
+    'grades','students','registration_requests','student_accounts',
+    'student_sessions','dues','exam_attempts'
+  ];
+BEGIN
+  FOREACH t IN ARRAY count_tables LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('SELECT count(*) FROM public.%I', t) INTO n;
+      counts := counts || (t || ' = ' || n);
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'عدد السجلات الفعلية في قاعدة البيانات: %', array_to_string(counts, ', ');
+END;
+$$;
