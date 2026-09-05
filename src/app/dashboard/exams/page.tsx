@@ -88,7 +88,6 @@ import {
   getExamTotalMarks,
   getTemplate,
   renderCompleteParts,
-  getUnderlinedWords,
   getOrnamentPreset,
   ORNAMENT_OPACITY_CHOICES,
   type OrnamentDensity,
