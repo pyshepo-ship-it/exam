@@ -262,28 +262,87 @@ export const ORNAMENT_COLORS: Record<OrnamentKind, string> = {
 /** كثافة الزخارف حول الأسئلة/الصفحة */
 export type OrnamentDensity = "low" | "medium" | "high"
 
+/**
+ * شفافية الزخارف الافتراضية حسب الكثافة (0 = مخفية، 1 = كاملة اللون).
+ * القيم منخفضة عمداً: الزخارف خلفية خفيفة ولا يجوز أن تغطي كلام الاختبار.
+ */
+export const ORNAMENT_OPACITY_BY_DENSITY: Record<OrnamentDensity, number> = {
+  low: 0.14,
+  medium: 0.18,
+  high: 0.22,
+}
+
+/** شفافية زخارف زوايا الصفحة (أبعد عن الأسئلة فتتحمل وضوحاً أكبر قليلاً) */
+export const PAGE_ORNAMENT_OPACITY_BY_DENSITY: Record<OrnamentDensity, number> = {
+  low: 0.2,
+  medium: 0.26,
+  high: 0.3,
+}
+
+/** خيارات شفافية الزخارف التي يختار منها المعلم في المحرر/المعاينة */
+export const ORNAMENT_OPACITY_CHOICES: { id: string; label: string; value: number }[] = [
+  { id: "faint", label: "خفيفة جداً", value: 0.08 },
+  { id: "soft", label: "شفافة", value: 0.14 },
+  { id: "normal", label: "متوسطة", value: 0.22 },
+  { id: "clear", label: "واضحة", value: 0.32 },
+]
+
+/**
+ * الشفافية الفعلية للزخارف: اختيار المعلم أولاً، ثم افتراضي الكثافة.
+ * تُقيَّد دائماً بين 0.04 و 0.5 حتى لا تعود الزخارف لتغطي الأسئلة.
+ */
+export function resolveOrnamentOpacity(
+  chosen: number | undefined,
+  density: OrnamentDensity,
+  kind: "question" | "page" = "question"
+): number {
+  const fallback = kind === "page" ? PAGE_ORNAMENT_OPACITY_BY_DENSITY[density] : ORNAMENT_OPACITY_BY_DENSITY[density]
+  const raw = typeof chosen === "number" && isFinite(chosen) && chosen > 0 ? chosen : fallback
+  return Math.min(0.5, Math.max(0.04, Math.round(raw * 100) / 100))
+}
+
 /** إعدادات العرض الافتراضية للزخارف حسب القالب */
 export interface OrnamentPreset {
   /** الحجم المبدئي للرمز (px) */
   size: number
   /** كثافة الرموز */
   density: OrnamentDensity
+  /** الشفافية الافتراضية (0..1) — خفيفة حتى لا تغطي الكلام */
+  opacity: number
 }
 
 export function getOrnamentPreset(templateId?: ExamTemplateId): OrnamentPreset {
   switch (templateId) {
-    case "cosmos": return { size: 42, density: "high" }
-    case "explorer": return { size: 42, density: "high" }
-    case "lab": return { size: 36, density: "high" }
-    case "life": return { size: 36, density: "high" }
-    case "royal": return { size: 30, density: "medium" }
-    case "wedding": return { size: 30, density: "medium" }
-    case "parchment": return { size: 26, density: "low" }
-    case "modern": return { size: 24, density: "low" }
+    case "cosmos": return { size: 42, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "explorer": return { size: 42, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "lab": return { size: 36, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "life": return { size: 36, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "royal": return { size: 30, density: "medium", opacity: ORNAMENT_OPACITY_BY_DENSITY.medium }
+    case "wedding": return { size: 30, density: "medium", opacity: ORNAMENT_OPACITY_BY_DENSITY.medium }
+    case "parchment": return { size: 26, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
+    case "modern": return { size: 24, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
     case "classic":
-    default: return { size: 24, density: "low" }
+    default: return { size: 24, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
   }
 }
+
+/**
+ * خط ورقة الاختبار الموحّد — قرار المالك صراحةً:
+ * كل القوالب تستخدم خط قالب «النقاء الأنيق» نفسه (Noto Kufi Arabic) لأنه
+ * الأوضح والأكثر عملية للطلاب على الورق والشاشة، بينما الخطوط المزخرفة
+ * الأخرى (أميري، نسخ، مركازي، ريم كوفي، مرحي، المسيري، المرعي) كانت
+ * غير مريحة في القراءة وغير عملية للطلاب.
+ * ⚠️ لا تُضف خطاً مختلفاً لأي قالب جديد — الورقة كلها بهذا الخط.
+ */
+export const EXAM_PAPER_FONT = "'Noto Kufi Arabic', 'Tajawal', 'Cairo', sans-serif"
+
+/**
+ * الخطوط المستخدمة فعلياً في الموقع: Cairo للواجهة، وNoto Kufi Arabic + Tajawal
+ * لورقة الاختبار. مصدر واحد يشترك فيه layout.tsx وإطار الطباعة في pdf-utils
+ * حتى تظهر الورقة بالخط نفسه على الشاشة وفي الطباعة والتصدير PDF.
+ */
+export const APP_FONTS_URL =
+  "https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=Noto+Kufi+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700;800&display=swap"
 
 export interface ExamTemplateDef {
   id: ExamTemplateId
@@ -292,7 +351,7 @@ export interface ExamTemplateDef {
   bestFor: string
   swatch: string[]
   previewClass: string
-  /** خط عربي مميز للورقة — يُطبَّق على كامل الصفحة */
+  /** خط الورقة — موحّد لكل القوالب على EXAM_PAPER_FONT (خط «النقاء الأنيق») */
   fontFamily: string
   /** لون النصوص/الحدود الزخرفية الرئيسية */
   accent: string
@@ -308,7 +367,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "كل الصفوف — Closest to official Egyptian papers",
     swatch: ["#1e3a5f", "#c5a059", "#ffffff"],
     previewClass: "from-slate-800 to-navy-900",
-    fontFamily: "'Noto Naskh Arabic', 'Amiri', serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#1e3a5f",
     decorative: false,
   },
@@ -319,7 +378,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الإعدادي والأول الثانوي",
     swatch: ["#0f766e", "#14b8a6", "#ecfeff"],
     previewClass: "from-teal-700 to-cyan-600",
-    fontFamily: "'Tajawal', 'Cairo', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#0f766e",
     decorative: true,
   },
@@ -330,7 +389,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الرابع حتى الإعدادي (أحياء)",
     swatch: ["#166534", "#22c55e", "#f0fdf4"],
     previewClass: "from-green-800 to-emerald-500",
-    fontFamily: "'Almarai', 'Tajawal', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#166534",
     decorative: true,
   },
@@ -341,7 +400,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "السادس والإعدادي والثانوي",
     swatch: ["#1e1b4b", "#c5a059", "#312e81"],
     previewClass: "from-indigo-950 to-violet-700",
-    fontFamily: "'Reem Kufi', 'Cairo', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#1e1b4b",
     decorative: true,
   },
@@ -352,7 +411,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الرابع والخامس والسادس الابتدائي",
     swatch: ["#4f46e5", "#f59e0b", "#10b981"],
     previewClass: "from-indigo-500 via-amber-400 to-emerald-500",
-    fontFamily: "'Marhey', 'Tajawal', 'Cairo', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#4f46e5",
     decorative: true,
   },
@@ -363,7 +422,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الثانوية والمرحلة الإعدادية",
     swatch: ["#132a4a", "#d4af37", "#f8f4e8"],
     previewClass: "from-[#132a4a] via-[#233a5e] to-[#d4af37]",
-    fontFamily: "'Amiri', 'Cairo', serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#132a4a",
     decorative: true,
   },
@@ -374,7 +433,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "كل الصفوف — لمظهر رسمي تراثي",
     swatch: ["#7c5a2e", "#c9a24b", "#fbf3df"],
     previewClass: "from-[#7c5a2e] via-[#b98a3c] to-[#f2c879]",
-    fontFamily: "'Markazi Text', 'Amiri', serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#6b4f23",
     decorative: false,
   },
@@ -385,7 +444,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "الابتدائية العليا والإعدادي",
     swatch: ["#0b5d43", "#d4af37", "#f0faf5"],
     previewClass: "from-[#0b5d43] via-[#14805f] to-[#d4af37]",
-    fontFamily: "'El Messiri', 'Cairo', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#0b5d43",
     decorative: true,
   },
@@ -396,7 +455,7 @@ export const EXAM_TEMPLATES: ExamTemplateDef[] = [
     bestFor: "المرحلة الثانوية والجامعية",
     swatch: ["#1f2937", "#6b7280", "#ffffff"],
     previewClass: "from-gray-700 via-gray-400 to-white",
-    fontFamily: "'Noto Kufi Arabic', 'Tajawal', sans-serif",
+    fontFamily: EXAM_PAPER_FONT,
     accent: "#1f2937",
     decorative: false,
   },
@@ -406,9 +465,13 @@ export function getTemplate(id?: ExamTemplateId): ExamTemplateDef {
   return EXAM_TEMPLATES.find(t => t.id === id) || EXAM_TEMPLATES[0]
 }
 
-/** خط الورقة الخاص بالقالب — يُطبَّق على كامل الصفحة عبر style fontFamily */
-export function getTemplateFont(id?: ExamTemplateId): string {
-  return getTemplate(id).fontFamily
+/**
+ * خط الورقة — يُطبَّق على كامل الصفحة عبر style fontFamily.
+ * موحّد لكل القوالب بقرار المالك (خط «النقاء الأنيق» = Noto Kufi Arabic):
+ * يُرجع الخط نفسه مهما كان القالب، حتى لا يعود قالب مستقبلي بخط غير واضح.
+ */
+export function getTemplateFont(_id?: ExamTemplateId): string {
+  return EXAM_PAPER_FONT
 }
 
 /** جملة «أكمل» للمعاينة والورقة */

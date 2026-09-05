@@ -7,14 +7,34 @@ export interface Grade {
   createdAt: string
 }
 
+/**
+ * طريقة تسعير المجموعة:
+ *  - monthly: سعر شهري ثابت (الطريقة القديمة — افتراضي للسجلات القائمة)
+ *  - session: سعر للحصة الواحدة × عدد الحصص في الشهر (حسب مواعيدهم)
+ */
+export type GroupPricingMode = "monthly" | "session"
+
 export interface Group {
   id: string
   name: string
   days: string[]
   startTime: string
   endTime: string
+  /**
+   * السعر الشهري الفعلي للمجموعة.
+   * عند التسعير بالحصّة يُحسب تلقائياً = سعر الحصة × عدد الحصص شهرياً،
+   * ويبقى هذا الحقل هو المرجع لكل الشاشات والتقارير القديمة.
+   */
   monthlyFee: number
   studentsCount: number
+  /** طريقة التسعير — غير المحددة = شهري (توافق مع المجموعات القديمة) */
+  pricingMode?: GroupPricingMode
+  /** سعر الحصة الواحدة (ج.م) — عند التسعير بالحصّة */
+  sessionFee?: number
+  /** عدد الحصص في الشهر حسب مواعيد المجموعة */
+  sessionsPerMonth?: number
+  /** سعر الأسبوع (ج.م) — اختياري، ويُحسب تلقائياً إن لم يُحدَّد */
+  weeklyFee?: number
 }
 
 export interface Student {
@@ -113,20 +133,47 @@ export interface StudentAccount {
   createdAt: string
 }
 
+/**
+ * دورة الاستحقاق:
+ *  - monthly: استحقاق شهر (الطريقة القديمة — افتراضي للسجلات القائمة)
+ *  - weekly : استحقاق أسبوع محدّد
+ *  - session: استحقاق بعدد حصص (حصة واحدة أو أكثر)
+ *  - custom : مبلغ حر يحدده المعلم (مصروفات/حصة إضافية/خصم…)
+ */
+export type DueCycle = 'monthly' | 'weekly' | 'session' | 'custom'
+
 export interface Due {
   id: string
   studentId: string
   groupId: string
+  /** شهر الفترة (يُشتق من بداية الفترة للاستحقاقات الأسبوعية/بالحصّة) */
   month: number
   year: number
   amount: number
   status: 'pending' | 'paid' | 'partial'
   createdAt: string
+  /** دورة الاستحقاق — غير المحددة = شهري (توافق مع السجلات القديمة) */
+  cycle?: DueCycle
+  /**
+   * مفتاح الفترة الفريد لمنع تكرار الاستحقاق:
+   * شهري = ‎2026-09، أسبوعي = ‎2026-W36، بالحصّة = ‎2026-09-05#2 (تاريخ#عدد الحصص)
+   */
+  periodKey?: string
+  /** وصف الفترة كما يظهر للمعلم ولولي الأمر: «سبتمبر 2026» / «أسبوع 7–13 سبتمبر» / «حصتان يوم 5 سبتمبر» */
+  periodLabel?: string
+  /** تاريخ الاستحقاق YYYY-MM-DD */
+  dueDate?: string
+  /** عدد الحصص المحاسَب عليها (دورة بالحصّة) */
+  sessionsCount?: number
+  /** سعر الوحدة المستخدم (سعر الحصة أو سعر الأسبوع) */
+  unitPrice?: number
+  notes?: string
 }
 
 export interface Payment {
   id: string
   studentId: string
+  /** الاستحقاق المسدَّد (أسبوعي/شهري/بالحصّة) — يربط الدفعة بفترتها بدقة */
   dueId?: string
   amount: number
   paymentDate: string
@@ -192,6 +239,11 @@ export interface Exam {
   ornamentSize?: number
   /** كثافة الزخارف حول الأسئلة والصفحة */
   ornamentDensity?: "low" | "medium" | "high"
+  /**
+   * شفافية الزخارف (0..1) — افتراضياً خفيفة حسب الكثافة،
+   * والهدف ألا تغطي الزخارف نص الأسئلة أبداً.
+   */
+  ornamentOpacity?: number
   teacherName?: string
   schoolName?: string
   /**
@@ -624,6 +676,90 @@ export interface ImportantLink {
   addedAt: string
 }
 
+// ---- الاستبيانات (سؤال رأي للطلاب) ----
+
+/**
+ * جمهور الاستبيان:
+ *  - all  : مفتوح لكل الطلاب (كل الصفوف والمجموعات)
+ *  - grade: موجّه لصف (فصل) معيّن — كل مجموعاته
+ *  - group: موجّه لمجموعات محدّدة
+ */
+export type SurveyAudience = "all" | "grade" | "group"
+
+/** أنواع أسئلة الاستبيان */
+export type SurveyQuestionType = "single" | "multi" | "rating" | "yesno" | "text"
+
+export interface SurveyQuestion {
+  id: string
+  type: SurveyQuestionType
+  title: string
+  /** سؤال إجباري — لا يُرسل الاستبيان بدونه */
+  required?: boolean
+  /** خيارات الاختيار (single / multi) */
+  options?: string[]
+  /** أقصى قيمة للتقييم (افتراضي 5) */
+  maxRating?: number
+  /** نص إرشادي لحقل الكتابة */
+  placeholder?: string
+}
+
+export interface Survey {
+  id: string
+  title: string
+  description?: string
+  /** لمن يوجَّه الاستبيان */
+  audience: SurveyAudience
+  /** الصف المستهدف (audience = grade) */
+  gradeId?: string
+  /** المجموعات المستهدفة (audience = group) */
+  groupIds?: string[]
+  questions: SurveyQuestion[]
+  /** منشور للطلاب (غير المنشور لا يظهر لأحد) */
+  published: boolean
+  /** يظهر في لوحة الإعلانات العامة ويقبل إجابات الزوار (بالاسم ورقم الهاتف) */
+  allowGuests?: boolean
+  /** إجابات مجهولة: لا يُسجَّل اسم الطالب مع إجابته */
+  anonymous?: boolean
+  /** آخر موعد للإجابة (ISO) — اختياري */
+  deadline?: string
+  /**
+   * رقم النسخة — يبدأ من ١ ويرتفع تلقائياً عند تعديل الأسئلة.
+   * الغرض: ردّ واحد لكل شخص في كل نسخة، فمن أجاب على نسخة قديمة يستطيع
+   * الإجابة على الأسئلة الجديدة، ولا يكرر الإجابة على نفس الأسئلة.
+   */
+  version?: number
+  /** قفل الإجابة بعد إرسالها: لا تصحيح ولا تعديل (يبقى ردّ واحد دائماً) */
+  lockAfterSubmit?: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** إجابة سؤال واحد داخل الاستبيان */
+export interface SurveyAnswer {
+  /** خيارات محددة (اختيار من متعدد / اختيار واحد) */
+  choice?: string[]
+  /** إجابة نصية */
+  text?: string
+  /** تقييم رقمي (1..maxRating) */
+  rating?: number
+}
+
+/** رد طالب (أو زائر) على استبيان — رد واحد لكل طالب في كل استبيان */
+export interface SurveyResponse {
+  id: string
+  surveyId: string
+  /** النسخة التي أُجيب عنها (للمقارنة مع نسخة الاستبيان الحالية) */
+  version?: number
+  /** فارغ للإجابات المجهولة أو لزوار لوحة الإعلانات */
+  studentId?: string
+  studentName: string
+  phone?: string
+  gradeId?: string
+  groupId?: string
+  answers: Record<string, SurveyAnswer>
+  createdAt: string
+}
+
 // ---- أرشيف السنوات الدراسية المغلقة ----
 
 export interface YearArchive {
@@ -676,6 +812,8 @@ import {
   pushStudentHistory,
   pushStudentAccounts,
   pushInquiries,
+  pushSurveys,
+  pushSurveyResponses,
 } from "./supabase/sync"
 
 /**
@@ -858,6 +996,20 @@ export const saveInquiries = (items: InquiryThread[]): void => {
 export const saveStudentAccounts = (items: StudentAccount[]): void => {
   saveToStore(STORAGE_KEYS.STUDENT_ACCOUNTS, items)
   queuePush(() => pushStudentAccounts(items))
+}
+
+// ---------- الاستبيانات ----------
+export const getSurveys = (): Survey[] => getFromStore<Survey>(STORAGE_KEYS.SURVEYS)
+export const saveSurveys = (items: Survey[]): void => {
+  saveToStore(STORAGE_KEYS.SURVEYS, items)
+  queuePush(() => pushSurveys(items))
+}
+
+export const getSurveyResponses = (): SurveyResponse[] =>
+  getFromStore<SurveyResponse>(STORAGE_KEYS.SURVEY_RESPONSES)
+export const saveSurveyResponses = (items: SurveyResponse[]): void => {
+  saveToStore(STORAGE_KEYS.SURVEY_RESPONSES, items)
+  queuePush(() => pushSurveyResponses(items))
 }
 
 // ---- إدارة العام الدراسي ----
@@ -1304,7 +1456,24 @@ function applyCascadeDelete(opts: { gradeIds?: Set<string>; groupIds?: Set<strin
       return out
     })
 
+  // الاستبيانات: ردود الطلاب المحذوفين تُحذف، والاستهداف بمجموعة/صف محذوف يُنظَّف
+  const surveyResponses = getSurveyResponses().filter(r => !studentIds.has(r.studentId || ""))
+  const surveys = getSurveys().map(sv => {
+    let out: Survey = sv
+    if (out.groupIds && out.groupIds.some(id => droppedGroupIds.has(id))) {
+      out = { ...out, groupIds: out.groupIds.filter(id => !droppedGroupIds.has(id)) }
+    }
+    if (out.gradeId && gradeIds.has(out.gradeId)) {
+      // يبقى «موجهاً لصف» بلا صف صالح: فلا يُبثّ لكل الطلاب بالخطأ،
+      // ولا يظهر لأحد حتى يحدّد المعلم فصلاً جديداً من شاشة الاستبيانات.
+      out = { ...out, gradeId: undefined }
+    }
+    return out
+  })
+
   // الحفظ بالترتيب المعتمد — كل حفظ يدفع للسحابة ويتحقق من المراجع المعلّقة
+  saveSurveys(surveys)
+  saveSurveyResponses(surveyResponses)
   saveGrades(grades)
   saveStudents(students)
   saveDues(dues)

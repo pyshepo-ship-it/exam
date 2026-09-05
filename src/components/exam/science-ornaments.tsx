@@ -41,6 +41,7 @@ import {
   type OrnamentDensity,
   ORNAMENT_COLORS,
   getOrnamentsForGrade,
+  resolveOrnamentOpacity,
 } from "@/lib/exam-templates"
 
 const ICONS: Record<OrnamentKind, LucideIcon> = {
@@ -107,57 +108,62 @@ interface OrnamentSlot {
   scale: number
 }
 
+/**
+ * أماكن زخارف السؤال — كلها في الحواف والزوايا الخارجية فقط،
+ * بعيداً عن رأس السؤال ونص الإجابة وخطوط النقاط، حتى لا تغطي أي كلام.
+ */
 const QUESTION_LAYOUT: Record<OrnamentDensity, OrnamentSlot[]> = {
   low: [
-    { cls: "bottom-1 left-3", scale: 1 },
-    { cls: "top-1 right-3", scale: 0.9 },
+    { cls: "bottom-0.5 left-1.5", scale: 0.85 },
+    { cls: "bottom-0.5 right-1.5", scale: 0.8 },
   ],
   medium: [
-    { cls: "bottom-1.5 left-2.5", scale: 1 },
-    { cls: "top-1 left-2.5", scale: 0.9 },
-    { cls: "bottom-2 right-3", scale: 0.95 },
-    { cls: "top-2 right-3", scale: 0.85 },
+    { cls: "bottom-0.5 left-1.5", scale: 0.9 },
+    { cls: "bottom-0.5 right-1.5", scale: 0.85 },
+    { cls: "top-1/2 -translate-y-1/2 left-0.5", scale: 0.7 },
+    { cls: "top-1/2 -translate-y-1/2 right-0.5", scale: 0.7 },
   ],
   high: [
-    { cls: "bottom-1.5 left-2", scale: 1 },
-    { cls: "top-1.5 left-2", scale: 0.9 },
-    { cls: "bottom-1.5 right-2", scale: 0.95 },
-    { cls: "top-1.5 right-2", scale: 0.9 },
-    { cls: "bottom-1.5 left-1/2 -translate-x-1/2", scale: 0.8 },
-    { cls: "top-1.5 left-1/2 -translate-x-1/2", scale: 0.8 },
+    { cls: "bottom-0.5 left-1.5", scale: 0.95 },
+    { cls: "bottom-0.5 right-1.5", scale: 0.9 },
+    { cls: "top-1/3 left-0.5", scale: 0.75 },
+    { cls: "top-2/3 right-0.5", scale: 0.75 },
+    { cls: "top-1/2 -translate-y-1/2 left-0.5", scale: 0.7 },
+    { cls: "top-1/2 -translate-y-1/2 right-0.5", scale: 0.7 },
   ],
-}
-
-const OPACITY: Record<OrnamentDensity, number> = {
-  low: 0.18,
-  medium: 0.24,
-  high: 0.3,
 }
 
 /**
  * زخارف علمية ملوّنة حول كتلة السؤال — تتغير حسب الصف
- * - الحجم والكثافة قابلان للتحكم (size = الحجم المبدئي بالبكسل)
- * - تُوضع في الحواف والزوايا بعيداً عن رأس السؤال ودرجته ونص الإجابة
- *   (خلف المحتوى عبر z-10 و pointer-events-none) حتى لا تغطي أي كلام
+ * - شفافة دائماً (خلفية خفيفة) ولا تتقدم على النص أبداً (z-0 خلف المحتوى z-10)
+ * - الحجم والكثافة والشفافية قابلة للتحكم من المحرر ومن المعاينة
+ * - تُوضع في الحواف والزوايا فقط بعيداً عن رأس السؤال ودرجته ونص الإجابة
  */
 export function QuestionOrnaments({
   gradeName,
   index = 0,
   size = 24,
   density = "low",
+  opacity,
 }: {
   gradeName: string
   index?: number
   size?: number
   density?: OrnamentDensity
+  /** شفافية صريحة (0..1) — وإلا تُحسب من الكثافة */
+  opacity?: number
 }) {
   const set = getOrnamentsForGrade(gradeName)
   if (set.length === 0) return null
   const layout = QUESTION_LAYOUT[density]
-  const opacity = OPACITY[density]
+  const effOpacity = resolveOrnamentOpacity(opacity, density, "question")
 
   return (
-    <div className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+    <div
+      className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden"
+      style={{ opacity: effOpacity, zIndex: 0 }}
+      aria-hidden
+    >
       {layout.map((slot, i) => {
         const kind = set[(index + i * 2) % set.length]
         return (
@@ -174,50 +180,51 @@ export function QuestionOrnaments({
   )
 }
 
+/** زوايا الصفحة: أطراف الورقة فقط — لا تقترب من رأس الصفحة أو الأسئلة */
 const PAGE_LAYOUT: Record<OrnamentDensity, OrnamentSlot[]> = {
   low: [
-    { cls: "top-2.5 right-2.5", scale: 1 },
-    { cls: "top-2.5 left-2.5", scale: 1 },
+    { cls: "top-1.5 right-1.5", scale: 1 },
+    { cls: "top-1.5 left-1.5", scale: 1 },
   ],
   medium: [
-    { cls: "top-3 right-3", scale: 1 },
-    { cls: "top-3 left-3", scale: 1 },
-    { cls: "bottom-3 right-3", scale: 1 },
-    { cls: "bottom-3 left-3", scale: 1 },
+    { cls: "top-1.5 right-1.5", scale: 1 },
+    { cls: "top-1.5 left-1.5", scale: 1 },
+    { cls: "bottom-1.5 right-1.5", scale: 1 },
+    { cls: "bottom-1.5 left-1.5", scale: 1 },
   ],
   high: [
-    { cls: "top-3 right-3", scale: 1 },
-    { cls: "top-3 left-3", scale: 1 },
-    { cls: "bottom-3 right-3", scale: 1 },
-    { cls: "bottom-3 left-3", scale: 1 },
-    { cls: "top-1/2 right-2 -translate-y-1/2", scale: 0.8 },
-    { cls: "top-1/2 left-2 -translate-y-1/2", scale: 0.8 },
+    { cls: "top-1.5 right-1.5", scale: 1 },
+    { cls: "top-1.5 left-1.5", scale: 1 },
+    { cls: "bottom-1.5 right-1.5", scale: 1 },
+    { cls: "bottom-1.5 left-1.5", scale: 1 },
+    { cls: "top-1/2 right-0.5 -translate-y-1/2", scale: 0.8 },
+    { cls: "top-1/2 left-0.5 -translate-y-1/2", scale: 0.8 },
   ],
 }
 
-const PAGE_OPACITY: Record<OrnamentDensity, number> = {
-  low: 0.3,
-  medium: 0.4,
-  high: 0.5,
-}
-
-/** إطار زخرفي لصفحة الامتحان (زوايا الصفحة) */
+/** إطار زخرفي لصفحة الامتحان (زوايا الصفحة) — شفاف وخلف المحتوى دائماً */
 export function PaperCornerOrnaments({
   gradeName,
   size = 32,
   density = "medium",
+  opacity,
 }: {
   gradeName: string
   size?: number
   density?: OrnamentDensity
+  opacity?: number
 }) {
   const set = getOrnamentsForGrade(gradeName)
   if (set.length === 0) return null
   const layout = PAGE_LAYOUT[density]
-  const opacity = PAGE_OPACITY[density]
+  const effOpacity = resolveOrnamentOpacity(opacity, density, "page")
 
   return (
-    <div className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+    <div
+      className="exam-ornaments pointer-events-none absolute inset-0 overflow-hidden"
+      style={{ opacity: effOpacity, zIndex: 0 }}
+      aria-hidden
+    >
       {layout.map((slot, i) => {
         const kind = set[i % set.length]
         return (

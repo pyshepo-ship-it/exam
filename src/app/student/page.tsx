@@ -32,6 +32,7 @@ import {
   XCircle,
   Hourglass,
   Eye,
+  ClipboardList,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -78,6 +79,7 @@ import {
   type StudentReportType,
 } from "@/lib/student-report"
 import { HtmlPrintDialog } from "@/components/html-print-dialog"
+import { StudentSurveysPanel } from "@/components/surveys/student-surveys-panel"
 import { formatTime12 } from "@/lib/utils"
 
 const MONTHS = [
@@ -87,11 +89,12 @@ const MONTHS = [
 
 const money = (n: number) => `${Number(n || 0).toLocaleString("ar-EG")} ج.م`
 
-type SectionKey = "honor" | "announcements" | "exams" | "reports" | "inquiries"
+type SectionKey = "honor" | "announcements" | "surveys" | "exams" | "reports" | "inquiries"
 
 const SECTIONS: { key: SectionKey; label: string; icon: React.ElementType }[] = [
   { key: "honor", label: "لوحة الشرف", icon: Trophy },
   { key: "announcements", label: "الإعلانات والمواعيد", icon: Megaphone },
+  { key: "surveys", label: "الاستبيانات", icon: ClipboardList },
   { key: "exams", label: "اختباراتي", icon: PlayCircle },
   { key: "reports", label: "تقاريري", icon: BarChart3 },
   { key: "inquiries", label: "الاستفسارات والطلبات", icon: MessageCircleQuestion },
@@ -910,6 +913,8 @@ export default function StudentPortalPage() {
           )}
 
           {/* ============ 5) الاستفسارات والطلبات ============ */}
+          {section === "surveys" && <StudentSurveysPanel token={session?.token || ""} />}
+
           {section === "inquiries" && (
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
               {/* الاستفسار — رسالة واحدة ورد المعلم */}

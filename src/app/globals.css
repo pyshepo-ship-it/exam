@@ -152,9 +152,11 @@
   letter-spacing: 0;
 }
 
-/* ورقة الامتحان — طباعة ومعاينة A4 */
+/* ورقة الامتحان — طباعة ومعاينة A4
+   الخط موحّد لكل القوالب (خط «النقاء الأنيق») بقرار المالك لأنه الأوضح للطلاب.
+   يجب أن يطابق EXAM_PAPER_FONT في src/lib/exam-templates.ts — يفحصه الاختبار. */
 .exam-paper {
-  font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+  font-family: 'Noto Kufi Arabic', 'Tajawal', 'Cairo', sans-serif;
   width: 100%;
   max-width: 190mm;
   margin-inline: auto;
@@ -172,7 +174,9 @@
 }
 
 @media print {
-  .exam-ornaments { opacity: 0.85; }
+  /* الزخارف تبقى شفافة في الطباعة أيضاً — الشفافية تُضبط من المكوّن نفسه
+     (لا نرفعها هنا حتى لا تغطي كلام الاختبار في الورقة المطبوعة) */
+  .exam-ornaments { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   
   .exam-page {
     box-shadow: none !important;

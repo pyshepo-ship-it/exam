@@ -86,6 +86,7 @@ import {
   renderCompleteParts,
   getUnderlinedWords,
   getOrnamentPreset,
+  ORNAMENT_OPACITY_CHOICES,
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
@@ -163,6 +164,7 @@ export default function ExamsPage() {
   const [previewMaxPages, setPreviewMaxPages] = useState<number | undefined>(undefined)
   const [previewOrnamentSize, setPreviewOrnamentSize] = useState(32)
   const [previewOrnamentDensity, setPreviewOrnamentDensity] = useState<OrnamentDensity>("medium")
+  const [previewOrnamentOpacity, setPreviewOrnamentOpacity] = useState<number>(ORNAMENT_OPACITY_CHOICES[1].value)
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -177,6 +179,7 @@ export default function ExamsPage() {
     showDecorations: true,
     ornamentSize: 32,
     ornamentDensity: "medium" as OrnamentDensity,
+    ornamentOpacity: ORNAMENT_OPACITY_CHOICES[1].value,
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode: "offline" as ExamDeliveryMode,
@@ -711,6 +714,7 @@ export default function ExamsPage() {
     showDecorations: true,
     ornamentSize: 32,
     ornamentDensity: "medium" as OrnamentDensity,
+    ornamentOpacity: ORNAMENT_OPACITY_CHOICES[1].value,
     teacherName: TEACHER_NAME,
     schoolName: "",
     deliveryMode,
@@ -760,6 +764,7 @@ export default function ExamsPage() {
       showDecorations: form.showDecorations,
       ornamentSize: form.ornamentSize,
       ornamentDensity: form.ornamentDensity,
+      ornamentOpacity: form.ornamentOpacity,
       teacherName: form.teacherName || undefined,
       schoolName: form.schoolName || undefined,
       deliveryMode: form.deliveryMode,
@@ -856,6 +861,7 @@ export default function ExamsPage() {
       showDecorations: exam.showDecorations !== false,
       ornamentSize: exam.ornamentSize ?? 32,
       ornamentDensity: (exam.ornamentDensity || "medium") as OrnamentDensity,
+      ornamentOpacity: exam.ornamentOpacity ?? ORNAMENT_OPACITY_CHOICES[1].value,
       teacherName: exam.teacherName || TEACHER_NAME,
       schoolName: exam.schoolName || "",
       deliveryMode: examDeliveryMode(exam),
@@ -995,6 +1001,9 @@ export default function ExamsPage() {
     setPreviewDecorations(exam.showDecorations !== false)
     setPreviewOrnamentSize(exam.ornamentSize ?? getOrnamentPreset(exam.templateId || "classic").size)
     setPreviewOrnamentDensity(exam.ornamentDensity ?? getOrnamentPreset(exam.templateId || "classic").density)
+    setPreviewOrnamentOpacity(
+      exam.ornamentOpacity ?? getOrnamentPreset(exam.templateId || "classic").opacity
+    )
     setPreviewCompact(false)
     setPreviewMaxPages(undefined)
     setPreviewDialogOpen(true)
@@ -1099,25 +1108,36 @@ export default function ExamsPage() {
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
                 transition={{ delay: index * 0.05 }}
+                className="h-full"
               >
-                <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
-                  <CardHeader>
+                {/*
+                  بطاقات موحّدة الحجم دون إخفاء شيء: البطاقة تملأ ارتفاع صفّها
+                  في الشبكة (h-full) فتصطف كل البطاقات على الطول نفسه، والعنوان
+                  يلتف على أسطره كاملةً (بلا اقتصاص) مع مساحة ثابتة لسطرين
+                  لمحاذاة البطاقات الأقصر، والشارات تأخذ الوسط ويتمدد، وأزرار
+                  الإجراءات مثبّتة بأسفل البطاقة (mt-auto) في موضع واحد.
+                */}
+                <Card className="h-full flex flex-col bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
+                  <CardHeader className="shrink-0 pb-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
-                        <CardTitle className="truncate text-lg text-gray-900 dark:text-white">
+                        <CardTitle
+                          className="text-lg leading-snug text-gray-900 dark:text-white break-words min-h-[3.25rem]"
+                          title={exam.title}
+                        >
                           {exam.title}
                         </CardTitle>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 break-words">
                           {getGradeName(exam.gradeId)}
                         </p>
                       </div>
-                      <Badge variant="outline" className="bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300">
+                      <Badge variant="outline" className="shrink-0 bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300">
                         {exam.questions.length} سؤال
                       </Badge>
                     </div>
                   </CardHeader>
-                  <CardContent>
-                    <div className="flex flex-wrap gap-2 mb-4">
+                  <CardContent className="flex-1 flex flex-col pt-0">
+                    <div className="flex flex-wrap content-start items-start gap-2 flex-1 min-h-[6.5rem]">
                       {online ? (
                         <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
                           <Globe className="w-3 h-3 ml-1" />
@@ -1194,7 +1214,7 @@ export default function ExamsPage() {
                         )
                       })()}
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 mt-auto pt-3 border-t border-gray-100 dark:border-gray-800">
                       <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="min-w-[9rem] flex-1">
                         <Eye className="w-4 h-4" />
                         <span>معاينة</span>
@@ -1599,7 +1619,29 @@ export default function ExamsPage() {
                     </button>
                   ))}
                 </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-bold text-gray-600 dark:text-gray-300 ml-1">الشفافية:</span>
+                  {ORNAMENT_OPACITY_CHOICES.map(o => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      title={`شفافية الزخارف ${Math.round(o.value * 100)}% — حتى لا تغطي نص الأسئلة`}
+                      onClick={() => setExamForm(prev => ({ ...prev, ornamentOpacity: o.value }))}
+                      className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                        Math.abs((examForm.ornamentOpacity ?? 0) - o.value) < 0.005
+                          ? "border-indigo-500 bg-indigo-600 text-white"
+                          : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
               </div>
+              <p className="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+                الزخارف شفافة وخلف الكلام دائماً (لا تغطي نص السؤال ولا رأسه ولا درجة السؤال)،
+                وتبقى شفافتها محفوظة مع الاختبار في الطباعة وفي تصدير PDF.
+              </p>
               </section>
             )}
 
@@ -2529,6 +2571,23 @@ export default function ExamsPage() {
                       </button>
                     ))}
                   </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 ml-1">الشفافية:</span>
+                    {ORNAMENT_OPACITY_CHOICES.map(o => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        onClick={() => setPreviewOrnamentOpacity(o.value)}
+                        className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${
+                          Math.abs(previewOrnamentOpacity - o.value) < 0.005
+                            ? "border-indigo-500 bg-indigo-600 text-white"
+                            : "border-gray-300 bg-white text-gray-600 hover:border-indigo-400 dark:bg-gray-900 dark:text-gray-200 dark:border-gray-700"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
@@ -2542,6 +2601,7 @@ export default function ExamsPage() {
                   maxPages={previewMaxPages}
                   ornamentSize={previewOrnamentSize}
                   ornamentDensity={previewOrnamentDensity}
+                  ornamentOpacity={previewOrnamentOpacity}
                 />
               </div>
             </>

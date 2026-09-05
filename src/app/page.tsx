@@ -18,8 +18,10 @@ import {
   GraduationCap,
   Globe,
   KeyRound,
+  UserPlus,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PublicSurveysBoard } from "@/components/surveys/public-surveys-board"
 import { Badge } from "@/components/ui/badge"
 import {
   Announcement,
@@ -270,40 +272,75 @@ export default function HomePage() {
       `}</style>
       {/* Header */}
       <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-30">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
-              <BookOpen className="w-6 h-6 text-white" />
+        <div className="max-w-5xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+              <div className="w-10 h-10 sm:w-12 sm:h-12 shrink-0 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="font-bold text-sm sm:text-base text-gray-900 dark:text-white leading-tight truncate">أ/ ضحى العربي</h1>
+                <p className="text-[11px] sm:text-xs text-gray-500 dark:text-gray-400 truncate">
+                  الإعلانات ولوحة الشرف والملفات
+                </p>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h1 className="font-bold text-gray-900 dark:text-white leading-tight truncate">أ/ ضحى العربي</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                الإعلانات ولوحة الشرف والملفات
-              </p>
+
+            {/* سطح المكتب والشاشات المتوسطة: الأزرار الثلاثة في سطر العنوان */}
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              <a
+                href="/student/register"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-700 hover:to-purple-700 transition-all"
+              >
+                <UserPlus className="w-4 h-4" />
+                تسجيل طالب جديد
+              </a>
+              <a
+                href="/student/login"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold border-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-all"
+              >
+                دخول الطالب
+              </a>
+              {/* دخول المعلم: زر هادئ غير بارز (أيقونة مفتاح صغيرة + نص رمادي) — للوصول إلى لوحة التحكم */}
+              <a
+                href="/login"
+                aria-label="دخول المعلم"
+                title="دخول المعلم — للوصول إلى لوحة التحكم"
+                className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                دخول المعلم
+              </a>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+
+          {/*
+            الهاتف: صف أزرار مستقل بثلاثة أعمدة متساوية تحت العنوان مباشرة،
+            فلا يختفي زر «تسجيل طالب جديد» مهما ضاقت الشاشة (حتى 320px).
+          */}
+          <div className="sm:hidden grid grid-cols-3 gap-1.5 mt-3">
             <a
               href="/student/register"
-              className="hidden sm:inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 hover:from-indigo-700 hover:to-purple-700 transition-all"
+              className="flex flex-col items-center justify-center gap-1 px-1 py-2 rounded-xl text-[11px] font-bold leading-tight text-center bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-md shadow-indigo-500/25 active:scale-[0.98] transition-transform"
             >
-              تسجيل طالب جديد
+              <UserPlus className="w-4 h-4" />
+              <span className="break-words">تسجيل طالب جديد</span>
             </a>
             <a
               href="/student/login"
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold border-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-all"
+              className="flex flex-col items-center justify-center gap-1 px-1 py-2 rounded-xl text-[11px] font-bold leading-tight text-center border-2 border-indigo-500 text-indigo-600 dark:text-indigo-400 active:scale-[0.98] transition-transform"
             >
-              دخول الطالب
+              <GraduationCap className="w-4 h-4" />
+              <span className="break-words">دخول الطالب</span>
             </a>
-            {/* دخول المعلم: زر هادئ غير بارز (أيقونة مفتاح صغيرة + نص رمادي) — للوصول إلى لوحة التحكم */}
             <a
               href="/login"
               aria-label="دخول المعلم"
               title="دخول المعلم — للوصول إلى لوحة التحكم"
-              className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-xs font-semibold text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all"
+              className="flex flex-col items-center justify-center gap-1 px-1 py-2 rounded-xl text-[11px] font-semibold leading-tight text-center border border-gray-300 dark:border-gray-700 text-gray-500 dark:text-gray-400 active:scale-[0.98] transition-transform"
             >
-              <KeyRound className="w-3.5 h-3.5" />
-              دخول المعلم
+              <KeyRound className="w-4 h-4" />
+              <span className="break-words">دخول المعلم</span>
             </a>
           </div>
         </div>
@@ -646,6 +683,9 @@ export default function HomePage() {
                 ))
               )}
             </motion.section>
+
+            {/* ============ استبيانات مفتوحة للزوار ============ */}
+            {mounted && <PublicSurveysBoard />}
 
             {/* ============ ملفات للتحميل ============ */}
             {files.length > 0 && (

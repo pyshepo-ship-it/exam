@@ -17,6 +17,7 @@ import {
   purgeLegacyLocalStorage,
 } from "../memory-store";
 import { STORAGE_KEYS } from "../storage-keys";
+import { localIdentityKey, normalizeSurveyPhone, planLocalSurveySubmit } from "../surveys";
 
 // ---------- أنواع بنيوية (للتجنب الاستيراد الدائري) ----------
 interface GroupShape {
@@ -27,6 +28,11 @@ interface GroupShape {
   endTime: string;
   monthlyFee: number;
   studentsCount: number;
+  /** طريقة التسعير: شهري أو سعر الحصة × عدد الحصص شهرياً */
+  pricingMode?: "monthly" | "session";
+  sessionFee?: number;
+  sessionsPerMonth?: number;
+  weeklyFee?: number;
 }
 interface GradeShape {
   id: string;
@@ -77,6 +83,8 @@ const DB_TABLES = [
   "student_history",
   "student_accounts",
   "inquiries",
+  "surveys",
+  "survey_responses",
 ] as const;
 
 function nil<T>(v: T | null | undefined): T | undefined {
@@ -105,7 +113,15 @@ export const toGroupRows = (g: GradeShape) =>
     end_time: gr.endTime || "",
     monthly_fee: gr.monthlyFee ?? 0,
     students_count: gr.studentsCount ?? 0,
+    // التسعير بالحصّة (ترحيل 020) — تُحذف تلقائياً إن لم تُرحَّل القاعدة بعد
+    pricing_mode: gr.pricingMode === "session" ? "session" : "monthly",
+    session_fee: gr.sessionFee ?? null,
+    sessions_per_month: gr.sessionsPerMonth ?? null,
+    weekly_fee: gr.weeklyFee ?? null,
   }));
+
+/** أعمدة التسعير الجديدة في جدول groups — تُسقط عند خطأ «عمود غير موجود» */
+const GROUP_PRICING_COLUMNS = ["pricing_mode", "session_fee", "sessions_per_month", "weekly_fee"];
 
 export const fromGradeRow = (row: any, groups: any[]): GradeShape => ({
   id: row.id,
@@ -122,6 +138,13 @@ export const fromGradeRow = (row: any, groups: any[]): GradeShape => ({
       endTime: gr.end_time,
       monthlyFee: Number(gr.monthly_fee),
       studentsCount: gr.students_count ?? 0,
+      pricingMode: gr.pricing_mode === "session" ? ("session" as const) : ("monthly" as const),
+      sessionFee: gr.session_fee === null || gr.session_fee === undefined ? undefined : Number(gr.session_fee),
+      sessionsPerMonth:
+        gr.sessions_per_month === null || gr.sessions_per_month === undefined
+          ? undefined
+          : Number(gr.sessions_per_month),
+      weeklyFee: gr.weekly_fee === null || gr.weekly_fee === undefined ? undefined : Number(gr.weekly_fee),
     })),
 });
 
@@ -162,7 +185,18 @@ const toDueRow = (d: any) => ({
   amount: d.amount ?? 0,
   status: d.status || "pending",
   created_at: d.createdAt || new Date().toISOString(),
+  // دورات الاستحقاق: شهري / أسبوعي / بالحصّة / مبلغ مخصص (ترحيل 020)
+  cycle: d.cycle === "weekly" || d.cycle === "session" || d.cycle === "custom" ? d.cycle : "monthly",
+  period_key: d.periodKey || null,
+  period_label: d.periodLabel || null,
+  due_date: d.dueDate || null,
+  sessions_count: d.sessionsCount ?? null,
+  unit_price: d.unitPrice ?? null,
+  notes: d.notes || null,
 });
+
+/** أعمدة الدورات الجديدة في جدول dues — تُسقط عند خطأ «عمود غير موجود» */
+const DUE_CYCLE_COLUMNS = ["cycle", "period_key", "period_label", "due_date", "sessions_count", "unit_price", "notes"];
 
 const fromDueRow = (row: any) => ({
   id: row.id,
@@ -173,6 +207,13 @@ const fromDueRow = (row: any) => ({
   amount: Number(row.amount),
   status: row.status,
   createdAt: row.created_at,
+  cycle: row.cycle === "weekly" || row.cycle === "session" || row.cycle === "custom" ? row.cycle : ("monthly" as const),
+  periodKey: nil(row.period_key),
+  periodLabel: nil(row.period_label),
+  dueDate: nil(row.due_date),
+  sessionsCount: row.sessions_count === null || row.sessions_count === undefined ? undefined : Number(row.sessions_count),
+  unitPrice: row.unit_price === null || row.unit_price === undefined ? undefined : Number(row.unit_price),
+  notes: nil(row.notes),
 });
 
 const toPaymentRow = (p: any) => ({
@@ -229,6 +270,7 @@ export const toExamRow = (e: any) => ({
     showDecorations: e.showDecorations !== false,
     ornamentSize: e.ornamentSize,
     ornamentDensity: e.ornamentDensity,
+    ornamentOpacity: typeof e.ornamentOpacity === "number" ? e.ornamentOpacity : undefined,
     teacherName: e.teacherName || "",
     schoolName: e.schoolName || "",
     // نوع الاختبار مستقل عن حالة النشر: أونلاين يمكن أن يبقى مسودة قبل إتاحته للطلاب.
@@ -272,6 +314,7 @@ export const fromExamRow = (row: any) => {
     showDecorations: wrapped ? q.showDecorations !== false : true,
     ornamentSize: wrapped ? q.ornamentSize : undefined,
     ornamentDensity: wrapped ? q.ornamentDensity : undefined,
+    ornamentOpacity: wrapped && typeof q.ornamentOpacity === "number" ? q.ornamentOpacity : undefined,
     teacherName: wrapped ? (q.teacherName || undefined) : undefined,
     schoolName: wrapped ? (q.schoolName || undefined) : undefined,
     // توافق رجعي: المنشور القديم يُستنتج كأونلاين، أما غير المنشور فنتركه
@@ -524,14 +567,20 @@ export const fromStudentHistoryRow = (row: any) => ({
   createdAt: row.created_at,
 });
 
-export const toStudentAccountRow = (a: any) => ({
-  id: a.id || a.email,
-  email: a.email,
-  student_id: a.studentId,
-  active: a.active !== false,
-  created_at: a.createdAt || new Date().toISOString(),
-  password_hash: a.passwordHash || null,
-});
+export const toStudentAccountRow = (a: any) => {
+  const row: Record<string, unknown> = {
+    id: a.id || a.email,
+    email: a.email,
+    student_id: a.studentId,
+    active: a.active !== false,
+    created_at: a.createdAt || new Date().toISOString(),
+  };
+  // لا نرسل password_hash إلا عند وجود بصمة فعلاً: إرسال null كان يمحو
+  // البصمة التي أنشأتها دوال السحابة (student_register / الموافقة)، فيفشل
+  // دخول الطالب رغم قبول طلبه.
+  if (a.passwordHash) row.password_hash = a.passwordHash;
+  return row;
+};
 
 export const fromStudentAccountRow = (row: any) => ({
   id: row.id || row.email,
@@ -596,6 +645,32 @@ function warnSyncError(err: unknown) {
   // رسائل الاتصال تظهر في صفحة الإعدادات فقط عبر SyncStatus
 }
 
+/**
+ * حفظ يتسامح مع الأعمدة الجديدة التي لم تُرحَّل بعد في قاعدة البيانات:
+ * عند خطأ «عمود غير موجود» (42703) تُسقط الأعمدة الاختيارية وتُعاد المحاولة،
+ * فلا يتوقف حفظ المجموعات/الاستحقاقات عند معلم لم يشغّل الترحيل الجديد.
+ */
+async function pushRowsOptionalColumns(
+  dbTable: string,
+  remoteRows: any[],
+  optionalColumns: string[]
+): Promise<void> {
+  try {
+    await pushRows(dbTable, remoteRows);
+  } catch (err) {
+    if (!isMissingColumnError(err, "") || optionalColumns.length === 0) throw err;
+    const stripped = remoteRows.map((r) => {
+      const copy: Record<string, unknown> = { ...r };
+      for (const col of optionalColumns) delete copy[col];
+      return copy;
+    });
+    console.warn(
+      `⚠️ جدول ${dbTable} لا يحتوي أعمدة جديدة بعد — حُفظت السجلات بدونها. شغّل supabase/migrations/020_billing_cycles.sql`
+    );
+    await pushRows(dbTable, stripped);
+  }
+}
+
 /** تنفيذ حفظ فوري (يُستخدم مع await) */
 async function pushRows(dbTable: string, remoteRows: any[]): Promise<void> {
   const sb = getSupabase();
@@ -638,14 +713,36 @@ function isForeignKeyError(err: any): boolean {
 }
 
 /**
- * هل الخطأ «عمود غير موجود» (42703) لعمود بعينه؟
+ * هل الخطأ «عمود غير موجود» لعمود بعينه؟
  * يُستخدم للتراجع الآمن عندما تكون قاعدة البيانات لم تُرحَّل بعد
- * (مثلاً عمود phone في exam_attempts المُضاف في 013) — فلا تضيع محاولة الطالب.
+ * (مثلاً عمود phone في exam_attempts المُضاف في 013، وأعمدة التسعير في 020)
+ * — فلا تضيع محاولة الطالب ولا يتوقف حفظ المجموعات والاستحقاقات.
+ *
+ * يغطي الصيغتين:
+ *   • Postgres المباشر: code 42703 «column "x" of relation "y" does not exist»
+ *   • PostgREST الحديث: code PGRST204 «Could not find the 'x' column of 'y' in the schema cache»
+ *     (بدون هذا الكشف يفشل الحفظ عند معلم لم يشغّل الترحيل الأخير بدل أن
+ *     يُسقط الأعمدة الجديدة ويعيد المحاولة).
+ *
+ * @param column اسم العمود المطلوب التحقق منه — وإن مُرِّر "" يُقبل أي عمود.
  */
 function isMissingColumnError(err: any, column: string): boolean {
-  if (err?.code !== "42703") return false;
-  const msg = String(err?.message || "");
-  return msg.includes(column) || /column .* does not exist/i.test(msg);
+  const code = String(err?.code || "")
+  const msg = String(err?.message || "")
+
+  // Postgres: column "phone" of relation "exam_attempts" does not exist
+  if (code === "42703" || /column .* does not exist/i.test(msg)) {
+    return column ? msg.includes(column) : true
+  }
+
+  // PostgREST: Could not find the 'phone' column of 'exam_attempts' in the schema cache
+  if (code === "PGRST204" || /Could not find the .* column/i.test(msg)) {
+    const m = /Could not find the '([^']+)' column/i.exec(msg)
+    if (!m) return column ? msg.includes(column) : true
+    return column ? m[1] === column : true
+  }
+
+  return false
 }
 
 /**
@@ -668,6 +765,8 @@ async function pushAllOrdered(): Promise<void> {
   await pushStudentHistory(memoryRows(STORAGE_KEYS.STUDENT_HISTORY) as any[]);
   await pushStudentAccounts(memoryRows(STORAGE_KEYS.STUDENT_ACCOUNTS) as any[]);
   await pushInquiries(memoryRows(STORAGE_KEYS.INQUIRIES) as any[]);
+  await pushSurveys(memoryRows(STORAGE_KEYS.SURVEYS) as any[]);
+  await pushSurveyResponses(memoryRows(STORAGE_KEYS.SURVEY_RESPONSES) as any[]);
 }
 
 /** جدولة مزامنة فورية (متسلسلة — مع إعادة محاولة ذكية عند خطأ التبعيات) */
@@ -704,7 +803,7 @@ export function pushGrades(grades: GradeShape[]) {
     const gradeRows = grades.map(toGradeRow);
     const groupRows = grades.flatMap(toGroupRows);
     await pushRows("grades", gradeRows);
-    await pushRows("groups", groupRows);
+    await pushRowsOptionalColumns("groups", groupRows, GROUP_PRICING_COLUMNS);
   })();
 }
 
@@ -743,7 +842,7 @@ export function pushDues(rows: any[]) {
       if (gradesLoaded && row.group_id && !groupIds.has(row.group_id)) row.group_id = null;
       return row;
     });
-  return pushRows("dues", cleaned);
+  return pushRowsOptionalColumns("dues", cleaned, DUE_CYCLE_COLUMNS);
 }
 export function pushPayments(rows: any[]) {
   const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
@@ -864,6 +963,296 @@ export const fromInquiryRow = (row: any) => ({
 
 export function pushInquiries(rows: any[]) {
   return pushRows("inquiries", rows.map(toInquiryRow));
+}
+
+// ============================================================
+// الاستبيانات — استبيان يوجهه المعلم لفصل/مجموعة/للجميع
+// ============================================================
+
+export const toSurveyRow = (v: any) => ({
+  id: v.id,
+  title: v.title || "استبيان",
+  description: v.description || "",
+  audience: v.audience === "grade" || v.audience === "group" ? v.audience : "all",
+  grade_id: v.gradeId || null,
+  group_ids: Array.isArray(v.groupIds) ? v.groupIds : [],
+  questions: Array.isArray(v.questions) ? v.questions : [],
+  published: v.published === true,
+  allow_guests: v.allowGuests === true,
+  anonymous: v.anonymous === true,
+  deadline: v.deadline || null,
+  // النسخة يرفعها مُشغِّل في قاعدة البيانات عند تغيّر الأسئلة؛ العميل يرسل
+  // رقمه ليبقى عرضُه مطابقاً، ولا يُقبل أي تنزيل للرقم في الخادم (ترحيل 022).
+  version: Math.max(1, Math.round(Number(v.version) || 1)),
+  lock_after_submit: v.lockAfterSubmit === true,
+  created_at: v.createdAt || new Date().toISOString(),
+  updated_at: v.updatedAt || v.createdAt || new Date().toISOString(),
+});
+
+export const fromSurveyRow = (row: any) => ({
+  id: row.id,
+  title: row.title,
+  description: nil(row.description),
+  audience: row.audience === "grade" || row.audience === "group" ? row.audience : ("all" as const),
+  gradeId: nil(row.grade_id),
+  groupIds: Array.isArray(row.group_ids) ? row.group_ids : [],
+  questions: Array.isArray(row.questions) ? row.questions : [],
+  published: row.published === true,
+  allowGuests: row.allow_guests === true,
+  anonymous: row.anonymous === true,
+  deadline: nil(row.deadline),
+  version: Number(row.version) || 1,
+  lockAfterSubmit: row.lock_after_submit === true,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+export const toSurveyResponseRow = (r: any) => ({
+  id: r.id,
+  survey_id: r.surveyId,
+  version: Math.max(1, Math.round(Number(r.version) || 1)),
+  student_id: r.studentId || null,
+  student_name: r.studentName || "",
+  phone: r.phone || null,
+  grade_id: r.gradeId || null,
+  group_id: r.groupId || null,
+  answers: r.answers && typeof r.answers === "object" ? r.answers : {},
+  created_at: r.createdAt || new Date().toISOString(),
+});
+
+export const fromSurveyResponseRow = (row: any) => ({
+  id: row.id,
+  surveyId: row.survey_id,
+  version: Number(row.version) || 1,
+  studentId: nil(row.student_id),
+  studentName: row.student_name || "",
+  phone: nil(row.phone),
+  gradeId: nil(row.grade_id),
+  groupId: nil(row.group_id),
+  answers: row.answers && typeof row.answers === "object" ? row.answers : {},
+  createdAt: row.created_at,
+});
+
+export function pushSurveys(rows: any[]) {
+  const grades = memoryRows<GradeShape>(STORAGE_KEYS.GRADES);
+  const gradesLoaded = grades.length > 0;
+  const gradeIds = new Set(grades.map((g) => g.id));
+  const groupIds = new Set(grades.flatMap((g) => g.groups.map((gr) => gr.id)));
+  const cleaned = rows.map((v) => {
+    const row = toSurveyRow(v);
+    if (gradesLoaded && row.grade_id && !gradeIds.has(row.grade_id)) row.grade_id = null;
+    if (gradesLoaded && Array.isArray(row.group_ids)) {
+      row.group_ids = row.group_ids.filter((id: string) => groupIds.has(id));
+    }
+    return row;
+  });
+  return pushRows("surveys", cleaned);
+}
+
+export function pushSurveyResponses(rows: any[]) {
+  const students = memoryRows<any>(STORAGE_KEYS.STUDENTS);
+  const surveys = memoryRows<any>(STORAGE_KEYS.SURVEYS);
+  const studentsLoaded = students.length > 0;
+  const surveysLoaded = surveys.length > 0;
+  const studentIds = new Set(students.map((s) => s.id));
+  const surveyIds = new Set(surveys.map((v) => v.id));
+  // survey_id NOT NULL: لا يُرفع رد فقد استبيانه
+  const cleaned = rows
+    .filter((r) => !surveysLoaded || surveyIds.has(r.surveyId))
+    .map((r) => {
+      const row = toSurveyResponseRow(r);
+      if (studentsLoaded && row.student_id && !studentIds.has(row.student_id)) row.student_id = null;
+      return row;
+    });
+  return pushRows("survey_responses", cleaned);
+}
+
+/**
+ * استبيانات الطالب وردوده — عبر دالة آمنة (SECURITY DEFINER) بسرّ الجلسة،
+ * فلا يقرأ anon جدول الردود الخام (يحتوي أسماء وإجابات طلاب آخرين).
+ */
+export async function fetchStudentSurveys(
+  token: string
+): Promise<{ surveys: any[]; responses: any[]; answeredKeys: string[] } | null> {
+  const sb = getSupabase();
+  if (!sb || !token) return null;
+  try {
+    const { data, error } = await sb.rpc("get_student_surveys", { p_token: token });
+    if (error) {
+      console.warn("fetchStudentSurveys:", error);
+      return null;
+    }
+    const payload = (data || {}) as Record<string, any>;
+    if (payload.ok !== true) return null;
+    return {
+      surveys: (Array.isArray(payload.surveys) ? payload.surveys : []).map(fromSurveyRow),
+      responses: (Array.isArray(payload.responses) ? payload.responses : []).map(fromSurveyResponseRow),
+      // مفاتيح «أجبت» لكل نسخة — تشمل الردود المجهولة (تُكتشف بالبصمة وحدها)
+      answeredKeys: Array.isArray(payload.answeredKeys)
+        ? payload.answeredKeys.map((k: unknown) => String(k))
+        : [],
+    };
+  } catch (e) {
+    console.warn("fetchStudentSurveys:", e);
+    return null;
+  }
+}
+
+export interface SurveySubmitInput {
+  surveyId: string;
+  answers: Record<string, unknown>;
+  /** سرّ جلسة الطالب المسجّل */
+  token?: string;
+  /** بيانات الزائر من لوحة الإعلانات (بلا حساب) */
+  guestName?: string;
+  guestPhone?: string;
+  guestGradeId?: string;
+  guestGroupId?: string;
+}
+
+/**
+ * الهوية المحفوظة محليًا: في الاستبيان المجهول لا اسم ولا رقم ولا صف —
+ * تُستخدم البصمة (identityKey) لمنع التكرار فقط، تمامًا كما في الخادم.
+ */
+function localIdentityPayload(input: SurveySubmitInput, anonymous: boolean) {
+  if (anonymous) return { studentName: "", phone: undefined, gradeId: undefined, groupId: undefined };
+  return {
+    studentName: input.guestName || "",
+    phone: normalizeSurveyPhone(input.guestPhone || "") || undefined,
+    gradeId: input.guestGradeId,
+    groupId: input.guestGroupId,
+  };
+}
+
+/** نتيجة الإرسال: updated = تعديل ردّه هو (ليس ردًّا ثانيًا) */
+export interface SurveySubmitResult {
+  ok: boolean
+  error?: string
+  responseId?: string
+  /** true حين كان الرد موجودًا فحُدِّت إجاباته (لا يُنشأ صف ثانٍ أبدًا) */
+  updated?: boolean
+  /** locked = المعلم قفل التعديل بعد الإرسال */
+  code?: "ok" | "updated" | "locked"
+  version?: number
+}
+
+/** إرسال رد على استبيان — يُدرج في السحابة أولاً (لا تخزين محلي للبيانات) */
+export async function submitSurveyResponse(
+  input: SurveySubmitInput
+): Promise<SurveySubmitResult> {
+  const sb = getSupabase();
+  if (!sb) {
+    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — بنفس قاعدة الخادم
+    const all = storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES);
+    const survey = storeRows<any>(STORAGE_KEYS.SURVEYS).find((x) => x.id === input.surveyId);
+    // البصمة المحلية من سرّ الجلسة (طالب) أو رقم الزائر — نفس حقول الإدخال
+    const identity = localIdentityKey({ token: input.token, phone: input.guestPhone });
+    const plan = planLocalSurveySubmit(all, survey, identity);
+    if (plan.action === "reject") return { ok: false, error: plan.error, code: "locked" };
+    const nowIso = new Date().toISOString();
+    const payload = {
+      surveyId: input.surveyId,
+      ...localIdentityPayload(input, survey?.anonymous === true),
+      answers: input.answers,
+      version: plan.version,
+      identityKey: identity,
+    };
+    let saved: any;
+    if (plan.action === "update" && plan.id) {
+      saved = { ...all.find((r) => r.id === plan.id), ...payload, updatedAt: nowIso };
+      setStore(STORAGE_KEYS.SURVEY_RESPONSES, all.map((r) => (r.id === plan.id ? saved : r)));
+    } else {
+      saved = { id: `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: nowIso, ...payload };
+      setStore(STORAGE_KEYS.SURVEY_RESPONSES, [...all, saved]);
+    }
+    return {
+      ok: true,
+      responseId: saved.id,
+      updated: plan.action === "update",
+      code: plan.action === "update" ? "updated" : "ok",
+      version: plan.version,
+    };
+  }
+  try {
+    const { data, error } = await sb.rpc("submit_survey_response", {
+      p_token: input.token || null,
+      p_survey_id: input.surveyId,
+      p_answers: input.answers || {},
+      p_guest_name: input.guestName || null,
+      p_guest_phone: input.guestPhone || null,
+      p_guest_grade_id: input.guestGradeId || null,
+      p_guest_group_id: input.guestGroupId || null,
+    });
+    if (error) {
+      console.warn("submitSurveyResponse:", error);
+      return { ok: false, error: explainSupabaseError(error) };
+    }
+    const payload = (data || {}) as Record<string, any>;
+    if (payload.ok !== true) {
+      return {
+        ok: false,
+        error: payload.error || "تعذر إرسال الاستبيان",
+        code: payload.code === "locked" ? "locked" : undefined,
+        responseId: typeof payload.responseId === "string" ? payload.responseId : undefined,
+      };
+    }
+    // بعد نجاح السحابة فقط نُحدِّث ذاكرة الجلسة للعرض الفوري
+    const saved = payload.response
+      ? fromSurveyResponseRow(payload.response)
+      : {
+          id: payload.responseId || `sr-${Date.now()}`,
+          surveyId: input.surveyId,
+          studentName: input.guestName || "",
+          answers: input.answers,
+          version: Number(payload.version) || 1,
+          createdAt: new Date().toISOString(),
+        };
+    // الاستبدال لا الإضافة: تحديث ردّ قديم لا يصنع نسخة ثانية في الجلسة
+    const prev = storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES);
+    const exists = prev.some((r) => r.id === saved.id);
+    setStore(
+      STORAGE_KEYS.SURVEY_RESPONSES,
+      exists ? prev.map((r) => (r.id === saved.id ? saved : r)) : [...prev, saved]
+    );
+    return {
+      ok: true,
+      responseId: saved.id,
+      updated: payload.updated === true,
+      code: payload.updated === true ? "updated" : "ok",
+      version: Number(payload.version) || saved.version || 1,
+    };
+  } catch (e) {
+    console.warn("submitSurveyResponse:", e);
+    return { ok: false, error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" };
+  }
+}
+
+/** استبيانات لوحة الإعلانات العامة (المنشورة والمفتوحة للزوار) */
+export async function fetchPublicSurveys(
+  guestPhone?: string
+): Promise<{ surveys: any[]; answeredKeys: string[]; available: boolean }> {
+  const sb = getSupabase();
+  if (!sb) return { surveys: [], answeredKeys: [], available: false };
+  try {
+    const { data, error } = await sb.rpc("get_public_surveys", { p_phone: guestPhone || null });
+    if (error) {
+      console.warn("fetchPublicSurveys:", error);
+      return { surveys: [], answeredKeys: [], available: false };
+    }
+    const payload = (data || {}) as Record<string, any>;
+    if (payload.ok !== true) return { surveys: [], answeredKeys: [], available: false };
+    return {
+      surveys: (Array.isArray(payload.surveys) ? payload.surveys : []).map(fromSurveyRow),
+      // «أجبت» مربوط بالنسخة: من أجاب على نسخة قديمة يُفتح له من جديد
+      answeredKeys: Array.isArray(payload.answeredKeys)
+        ? payload.answeredKeys.map((k: unknown) => String(k))
+        : [],
+      available: true,
+    };
+  } catch (e) {
+    console.warn("fetchPublicSurveys:", e);
+    return { surveys: [], answeredKeys: [], available: false };
+  }
 }
 
 /** جلب أحدث طلب تسجيل ببريد معين — لمصالحة الحالة على جهاز الطالب بعد الموافقة من جهاز آخر */
@@ -1059,6 +1448,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       studentHistoryRes,
       studentAccountsRes,
       inquiriesRes,
+      surveysRes,
+      surveyResponsesRes,
     ] = await Promise.all([
       sb.from("grades").select("*"),
       sb.from("groups").select("*"),
@@ -1080,6 +1471,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       sb.from("student_history").select("*"),
       sb.from("student_accounts").select("*"),
       sb.from("inquiries").select("*"),
+      sb.from("surveys").select("*"),
+      sb.from("survey_responses").select("*"),
     ]);
 
     const all = [
@@ -1099,7 +1492,7 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       settingsRes,
     ];
     // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — نتعامل معها بمرونة
-    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes, inquiriesRes];
+    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes, inquiriesRes, surveysRes, surveyResponsesRes];
     for (const res of all) {
       if (res.error) throw res.error;
     }
@@ -1159,6 +1552,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       { key: STORAGE_KEYS.STUDENT_HISTORY, res: studentHistoryRes, fromRow: fromStudentHistoryRow },
       { key: STORAGE_KEYS.STUDENT_ACCOUNTS, res: studentAccountsRes, fromRow: fromStudentAccountRow },
       { key: STORAGE_KEYS.INQUIRIES, res: inquiriesRes, fromRow: fromInquiryRow },
+      { key: STORAGE_KEYS.SURVEYS, res: surveysRes, fromRow: fromSurveyRow },
+      { key: STORAGE_KEYS.SURVEY_RESPONSES, res: surveyResponsesRes, fromRow: fromSurveyResponseRow },
     ];
     for (const t of portalTables) {
       if (t.res.error) continue; // الجدول غير موجود بعد — سيُنشأ بتشغيل ترحيل 008
@@ -1172,6 +1567,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       [transferReqRes, "group_transfer_requests"],
       [studentHistoryRes, "student_history"],
       [studentAccountsRes, "student_accounts"],
+      [surveysRes, "surveys"],
+      [surveyResponsesRes, "survey_responses"],
     ] as [any, string][]) {
       if (!t.error && Array.isArray(t.data)) {
         remoteIds[db] = new Set((t.data as any[]).map((r) => r.id as string));
@@ -1477,6 +1874,30 @@ export async function fetchStudentAccountByEmail(email: string): Promise<any | n
   const byMail = await sb.from("student_accounts").select("*").ilike("email", mail).limit(1);
   if (byMail.error || !byMail.data || !byMail.data[0]) return null;
   return fromStudentAccountRow(byMail.data[0]);
+}
+
+/**
+ * إعدادات الموقع العامة من السحابة (app_settings) — قراءة anon آمنة.
+ *
+ * لماذا هي لازمة: إعدادات مثل «فتح التسجيل» و«التفعيل المباشر» يقرؤها جهاز
+ * الطالب قبل أي قرار. ذاكرة الجلسة على جهازه فارغة تماماً (لا تخزين محلي)،
+ * فبدون جلبها من السحابة كان التفعيل المباشر يبدو مغلقاً دائماً ويُرسل الطلب
+ * للموافقة اليدوية رغم أن المعلم فعّله.
+ */
+export async function fetchPublicSettings(): Promise<Record<string, string>> {
+  const sb = getSupabase();
+  if (!sb) return {};
+  try {
+    const { data, error } = await sb.from("app_settings").select("key,value");
+    if (error || !Array.isArray(data)) return {};
+    const out: Record<string, string> = {};
+    for (const row of data as any[]) {
+      if (row && typeof row.key === "string") out[row.key] = String(row.value ?? "");
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export async function fetchPublicData(): Promise<PublicData | null> {
