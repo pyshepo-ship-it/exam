@@ -13,10 +13,11 @@
     "test:deep": "node scripts/system-deep-audit.mjs",
     "test:schedule": "node scripts/schedule-test.mjs",
     "test:schedule-print": "node scripts/schedule-print-test.mjs",
-    "verify": "tsc --noEmit && node scripts/cloud-only-audit.mjs && node scripts/sql-schema-audit.mjs && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/portal-test.mjs && node scripts/exam-access-test.mjs && node scripts/schedule-test.mjs && node scripts/schedule-print-test.mjs && node scripts/system-deep-audit.mjs && node scripts/seal-review-test.mjs",
+    "verify": "tsc --noEmit && node scripts/cloud-only-audit.mjs && node scripts/sql-schema-audit.mjs && next build && node scripts/audit.mjs && node scripts/logic-test.mjs && node scripts/portal-test.mjs && node scripts/exam-access-test.mjs && node scripts/schedule-test.mjs && node scripts/schedule-print-test.mjs && node scripts/system-deep-audit.mjs && node scripts/seal-review-test.mjs && node scripts/exams-ui-test.mjs",
     "test:portal": "node scripts/portal-test.mjs",
     "test:exam-access": "node scripts/exam-access-test.mjs",
-    "test:seal": "node scripts/seal-review-test.mjs"
+    "test:seal": "node scripts/seal-review-test.mjs",
+    "test:exams-ui": "node scripts/exams-ui-test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

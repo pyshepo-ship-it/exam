@@ -98,7 +98,7 @@ check(
 )
 check("الاختبارات: يمكن نشرها للطلاب على الموقع", exams.includes("allowOnline"))
 check("ورقة الاختبار تحمل توقيع المعلمة", read("src/components/exam/exam-paper.tsx").includes("TEACHER_SIGNATURE_LINE"))
-check("طباعة A4 متاحة من المعاينة", exams.includes("printA4"))
+check("طباعة A4 متاحة من المعاينة", exams.includes('printElement("exam-preview-content")'))
 
 const attendance = read("src/app/dashboard/attendance/page.tsx")
 check(

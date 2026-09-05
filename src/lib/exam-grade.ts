@@ -24,13 +24,24 @@ export interface GradeResult {
 
 export function normalizeAnswer(value: string): string {
   return (value || "")
-    .trim()
+    // الفواصل تفصل بين مفردات الإجابة فتتحول إلى مسافة، والشرطة تُحذف
+    .replace(/-/g, "")
+    .replace(/[.,،;؛:!؟?"'()«»]/g, " ")
     .replace(/\s+/g, " ")
+    .trim()
     .replace(/[ًٌٍَُِّْـ]/g, "")
     .replace(/[أإآ]/g, "ا")
     .replace(/ة/g, "ه")
     .replace(/ى/g, "ي")
     .toLowerCase()
+}
+
+/** مفردات الإجابة بعد التطبيع وحذف حروف الربط — تُستعمل لمقارنة الإجابات متعددة المفردات. */
+function answerTerms(value?: string): string[] {
+  return normalizeAnswer(value || "")
+    .split(" ")
+    .map(term => term.replace(/^(و|او|أو|ف|ثم)+/, ""))
+    .filter(Boolean)
 }
 
 function marksOf(sq: SubQuestion): number {
@@ -39,7 +50,12 @@ function marksOf(sq: SubQuestion): number {
 
 function textsMatch(a?: string, b?: string): boolean {
   if (!a || !b) return false
-  return normalizeAnswer(a) === normalizeAnswer(b)
+  if (normalizeAnswer(a) === normalizeAnswer(b)) return true
+  // «أكمل» متعدد الفراغات: نفس المفردات تُقبل ولو اختلف ترتيبها أو حروف الربط بينها.
+  const left = answerTerms(a)
+  const right = answerTerms(b)
+  if (left.length < 2 || right.length < 2) return false
+  return left.every(term => right.includes(term)) && right.every(term => left.includes(term))
 }
 
 /** تصحيح تلقائي للأسئلة الموضوعية. المقال (نوع 4) يُستبعد من المجموع الآلي. */
@@ -228,7 +244,15 @@ export function summarizeAttemptReview(
   }
 }
 
-export function shouldPromoteToHonor(exam: Exam, result: GradeResult): boolean {
+/**
+ * قاعدة الترشيح للوحة الشرف — المصدر الوحيد لهذه القاعدة.
+ * تُستعمل في مسارين: التسليم الآلي للاختبار الموضوعي (المجموع = الجزء الآلي)،
+ * وإطلاق المعلم نتيجة الاختبار المقالي/المختلط (المجموع = الآلي + المقالي).
+ */
+export function shouldPromoteToHonor(
+  exam: Pick<Exam, "autoHonorBoard" | "honorMinPercent">,
+  result: Pick<GradeResult, "autoTotal" | "percent">
+): boolean {
   if (!exam.autoHonorBoard) return false
   if (result.autoTotal <= 0) return false
   const min = exam.honorMinPercent ?? 100

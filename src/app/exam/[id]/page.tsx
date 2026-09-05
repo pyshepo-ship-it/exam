@@ -50,8 +50,8 @@ import {
   saveExamAttempts,
   maybeAutoHonor,
 } from "@/lib/data-storage"
-import { gradeExam } from "@/lib/exam-grade"
-import { gradeSealedExam, sealExamForStudent } from "@/lib/exam-public"
+import { gradeExam, shouldPromoteToHonor } from "@/lib/exam-grade"
+import { gradeSealedExam, sealExamForStudent, withServerFeedback } from "@/lib/exam-public"
 import { isSupabaseConfigured } from "@/lib/supabase/client"
 import { rememberOnlineExamResultSession } from "@/lib/online-exam-result-session"
 import {
@@ -107,39 +107,6 @@ function newExamNonce(prefix: string): string {
     return `${prefix}-${crypto.randomUUID()}`
   }
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 14)}`
-}
-
-/** يضيف مفاتيح التغذية الراجعة التي أصدرها الخادم فقط إلى نسخة عرض الطالب. */
-function withServerFeedback(
-  exam: Exam,
-  feedback: Record<string, { choiceId?: string; text?: string; isTrue?: boolean }>
-): Exam {
-  return {
-    ...exam,
-    questions: (exam.questions || []).map(question => ({
-      ...question,
-      subQuestions: (question.subQuestions || []).map(subQuestion => {
-        const spec = feedback[subQuestion.id]
-        if (!spec) return subQuestion
-        if (question.questionType === 1) {
-          return {
-            ...subQuestion,
-            choices: subQuestion.choices?.map(choice => ({ ...choice, isCorrect: choice.id === spec.choiceId })),
-          }
-        }
-        if (question.questionType === 3) return { ...subQuestion, isTrue: spec.isTrue }
-        if (question.questionType === 5) {
-          const corrections = subQuestion.corrections && subQuestion.corrections.length > 0
-            ? subQuestion.corrections.map((correction, index) => (
-              index === 0 ? { ...correction, correctAnswer: spec.text || "" } : correction
-            ))
-            : [{ id: `feedback-${subQuestion.id}`, wrongWord: "", correctAnswer: spec.text || "", wordPosition: 1 }]
-          return { ...subQuestion, corrections }
-        }
-        return { ...subQuestion, correctAnswer: spec.text }
-      }),
-    })),
-  }
 }
 
 /** تُستخدم أرقام الخادم كمصدر الحقيقة حتى لو كانت نسخة السؤال خالية من المفتاح. */
@@ -664,14 +631,21 @@ export default function TakeExamPage() {
     saveExamAttempts(all, activeTimerSession ? { sync: false } : undefined)
 
     // لا تدخل المحاولة المختلطة أو المقالية لوحة الشرف قبل اكتمال التصحيح اليدوي وإطلاق النتيجة.
-    if (graded.manualTotal === 0) {
+    const honorScore = attempt.autoScore ?? graded.score
+    const honorTotal = attempt.autoTotal ?? graded.autoTotal
+    const canPromote = graded.manualTotal === 0 &&
+      shouldPromoteToHonor(exam, {
+        autoTotal: honorTotal,
+        percent: honorTotal > 0 ? (honorScore / honorTotal) * 100 : 0,
+      })
+    if (canPromote) {
       const honoree = maybeAutoHonor({
         exam,
         studentName: attempt.studentName,
         groupId: attempt.groupId,
         studentId: attempt.studentId,
-        score: attempt.autoScore ?? graded.score,
-        totalMarks: attempt.autoTotal ?? graded.autoTotal,
+        score: honorScore,
+        totalMarks: honorTotal,
         sync: false,
       })
       if (honoree) {

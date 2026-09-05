@@ -73,6 +73,7 @@ import { getOnlineExamMode, type Announcement, type Exam, type InquiryThread, ty
 import { ExamReviewDialog } from "@/components/exam-review-dialog"
 import {
   reportFromPortalData,
+  buildStudentGradeRows,
   buildStudentReportPagesHtml,
   STUDENT_REPORT_LABELS,
   type StudentReport,
@@ -786,22 +787,13 @@ export default function StudentPortalPage() {
                             <p className="text-sm text-gray-400 py-4 text-center">لا توجد درجات مسجلة بعد</p>
                           ) : (
                             <div className="space-y-2">
-                              {[
-                                ...report.manualGrades.map(m => ({ title: m.title, source: "تقييم من المعلم", score: m.score, max: m.maxScore, date: `${m.year}-${m.month}`, pending: false })),
-                                ...report.examAttempts.map(a => ({
-                                  title: "اختبار إلكتروني",
-                                  source: attemptNeedsResultRelease(a) ? "نتيجة بانتظار مراجعة وإطلاق المعلم" : "اختبار إلكتروني",
-                                  score: attemptNeedsResultRelease(a) ? 0 : effectiveAttemptScore(a),
-                                  max: a.totalMarks,
-                                  date: (a.submittedAt || "").slice(0, 10),
-                                  pending: attemptNeedsResultRelease(a),
-                                })),                              ].map((g, i) => {
+                              {buildStudentGradeRows(report).map((g, i) => {
                                 const pct = g.max > 0 ? Math.round((g.score / g.max) * 100) : 0
                                 return (
                                   <div key={i} className="flex items-center justify-between gap-3 bg-gray-50 dark:bg-gray-800/60 rounded-xl px-4 py-3 border border-gray-100 dark:border-gray-800">
                                     <div className="min-w-0">
                                       <p className="font-bold text-sm text-gray-900 dark:text-white">{g.title}</p>
-                                      <p className="text-xs text-gray-400">{g.pending ? g.source : g.date}</p>
+                                      <p className="text-xs text-gray-400">{g.subtitle}</p>
                                     </div>
                                     <div className="text-left shrink-0">
                                       {g.pending ? (

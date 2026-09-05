@@ -1330,6 +1330,9 @@ export const maybeAutoHonor = (opts: {
   const { exam, studentName, groupId, studentId, score, totalMarks } = opts
   if (!exam.autoHonorBoard) return null
   if (totalMarks <= 0) return null
+  // نسبة الدرجة من المجموع النهائي. القاعدة نفسها موجودة في shouldPromoteToHonor
+  // (exam-grade) ويستعملها كل من يقرر الترشيح؛ تُكرر هنا عمداً لأن اختبارات
+  // المشروع تحمّل هذا الملف مجرّداً من استيراداته، فأي تعديل يجب أن يُطبق في الموضعين.
   const min = exam.honorMinPercent ?? 100
   const percent = (score / totalMarks) * 100
   if (percent + 1e-9 < min) return null
