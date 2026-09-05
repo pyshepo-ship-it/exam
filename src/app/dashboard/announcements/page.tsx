@@ -19,6 +19,7 @@ import {
   UserPlus,
   X,
   CalendarClock,
+  ClipboardList,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -27,6 +28,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent } from "@/components/ui/card"
 import { SchedulePublishDialog } from "@/components/schedule-publish-dialog"
+import { SurveysManager } from "@/components/surveys/surveys-manager"
 import {
   Dialog,
   DialogContent,
@@ -70,13 +72,14 @@ const MONTHS = [
   "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر",
 ]
 
-type TabKey = "announcements" | "honorees" | "files" | "links"
+type TabKey = "announcements" | "honorees" | "files" | "links" | "surveys"
 
 const TABS: { key: TabKey; label: string; icon: React.ElementType }[] = [
   { key: "announcements", label: "الإعلانات", icon: Megaphone },
   { key: "honorees", label: "لوحة الشرف", icon: Trophy },
   { key: "files", label: "ملفات للتحميل", icon: FileDown },
   { key: "links", label: "روابط مهمة", icon: Link2 },
+  { key: "surveys", label: "الاستبيانات", icon: ClipboardList },
 ]
 
 // الحد الأقصى لحجم الملف المرفوع (2 ميجا) — يُرفع إلى Supabase
@@ -753,6 +756,9 @@ export default function AnnouncementsPage() {
           )}
         </div>
       )}
+
+      {/* ============ Tab: Surveys ============ */}
+      {tab === "surveys" && <SurveysManager grades={grades} students={students} />}
 
       {/* ============ Dialog: Announcement ============ */}
       <Dialog open={announcementDialogOpen} onOpenChange={setAnnouncementDialogOpen}>

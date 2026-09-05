@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useMemo } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { 
   DollarSign, 
@@ -51,6 +51,7 @@ import {
   Grade,
   Student,
   Due,
+  DueCycle,
   Payment,
   getGrades,
   getStudents,
@@ -60,6 +61,24 @@ import {
   savePayments,
   getStudentBalance,
 } from "@/lib/data-storage"
+import {
+  DUE_CYCLE_LABELS,
+  DUE_CYCLE_ORDER,
+  amountForCycle,
+  dueCycle as dueCycleOf,
+  duePeriodKey,
+  duePeriodLabel,
+  groupMonthlyFee,
+  groupSessionFee,
+  groupWeeklyFee,
+  monthlyPeriod,
+  weeklyPeriod,
+  sessionPeriod,
+  customPeriod,
+  toDateKey,
+  money as moneyLabel,
+  type PeriodInfo,
+} from "@/lib/billing"
 
 const MONTHS = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -78,6 +97,8 @@ export default function PaymentsPage() {
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [paymentForm, setPaymentForm] = useState({
     studentId: "",
+    /** الاستحقاق المسدَّد (شهري/أسبوعي/بالحصّة) — اختياري */
+    dueId: "",
     amount: 0,
     month: new Date().getMonth() + 1,
     year: new Date().getFullYear(),
@@ -94,6 +115,7 @@ export default function PaymentsPage() {
       setPaymentForm(prev => ({
         ...prev,
         studentId,
+        dueId: "",
         amount: 0,
         month: new Date().getMonth() + 1,
         year: new Date().getFullYear(),
@@ -107,6 +129,7 @@ export default function PaymentsPage() {
       setPaymentForm(prev => ({
         ...prev,
         studentId: "",
+        dueId: "",
         amount: 0,
         month: new Date().getMonth() + 1,
         year: new Date().getFullYear(),
@@ -125,13 +148,31 @@ export default function PaymentsPage() {
     s => s.groupId === payGroupId && s.status === "active"
   )
 
-  // Monthly Due Dialog
+  // ================= نافذة إنشاء الاستحقاقات (شهري / أسبوعي / بالحصّة / مخصص) =================
   const [dueDialogOpen, setDueDialogOpen] = useState(false)
-  const [dueForm, setDueForm] = useState({
-    month: new Date().getMonth() + 1,
-    year: new Date().getFullYear(),
+  const today = new Date()
+  const emptyDueForm = () => ({
+    /** دورة الاستحقاق */
+    cycle: "monthly" as DueCycle,
+    month: today.getMonth() + 1,
+    year: today.getFullYear(),
+    /** تاريخ داخل الأسبوع المطلوب (يُحسب منه السبت → الجمعة) */
+    weekStart: toDateKey(today),
+    /** تاريخ الحصة/الحصص */
+    sessionDate: toDateKey(today),
+    sessionsCount: 1,
+    /** وصف ومبلغ الاستحقاق المخصص */
+    customLabel: "",
+    customAmount: 0,
+    /** false = المعلم يكتب مبلغاً محدداً بدل سعر المجموعة */
+    useGroupPrice: true,
+    manualAmount: 0,
+    /** "groups" = كل طلاب المجموعات المختارة، "student" = طالب واحد */
+    scope: "groups" as "groups" | "student",
+    scopeStudentId: "",
     selectedGroups: [] as string[],
   })
+  const [dueForm, setDueForm] = useState(emptyDueForm)
 
   // Statement Dialog
   const [statementDialogOpen, setStatementDialogOpen] = useState(false)
@@ -167,6 +208,8 @@ export default function PaymentsPage() {
     const newPayment: Payment = {
       id: Date.now().toString(),
       studentId: paymentForm.studentId,
+      // ربط الدفعة بالاستحقاق (أسبوعي/شهري/بالحصّة) ليظهر التسديد في فترته
+      dueId: paymentForm.dueId || undefined,
       amount: paymentForm.amount,
       paymentDate: new Date().toISOString().split('T')[0],
       month: paymentForm.month,
@@ -178,55 +221,191 @@ export default function PaymentsPage() {
     const updatedPayments = [...payments, newPayment]
     setPayments(updatedPayments)
     savePayments(updatedPayments)
+
+    // تحديث حالة الاستحقاق المرتبط (مدفوع / جزئي) حسب ما حُصّل منه
+    if (paymentForm.dueId) {
+      const paidForDue = updatedPayments
+        .filter(pay => pay.dueId === paymentForm.dueId)
+        .reduce((sum, pay) => sum + pay.amount, 0)
+      const updatedDues = dues.map(d => {
+        if (d.id !== paymentForm.dueId) return d
+        const status = paidForDue + 1e-9 >= d.amount ? "paid" : paidForDue > 0 ? "partial" : "pending"
+        return { ...d, status: status as Due["status"] }
+      })
+      setDues(updatedDues)
+      saveDues(updatedDues)
+    }
+
     setPaymentDialogOpen(false)
     setPaymentForm({
       studentId: "",
+      dueId: "",
       amount: 0,
       month: new Date().getMonth() + 1,
       year: new Date().getFullYear(),
       notes: "",
     })
-    toast.success("تم تسجيل الدفعة بنجاح")
+    toast.success(
+      paymentForm.dueId
+        ? "تم تسجيل الدفعة وربطها بالاستحقاق بنجاح"
+        : "تم تسجيل الدفعة بنجاح"
+    )
   }
 
-  // Create monthly dues
-  const createMonthlyDues = () => {
-    if (dueForm.selectedGroups.length === 0) {
+  /** تحويل YYYY-MM-DD إلى تاريخ محلي (بداية اليوم) */
+  const toDate = (iso: string): Date => {
+    const d = new Date(`${iso}T00:00:00`)
+    return isNaN(d.getTime()) ? new Date() : d
+  }
+
+  /**
+   * الفترة التي سيُنشأ لها الاستحقاق:
+   * شهري (شهر/سنة) أو أسبوعي (السبت → الجمعة) أو بالحصّة (يوم + عدد الحصص) أو مبلغ مخصص.
+   */
+  const duePeriodInfo: PeriodInfo = useMemo(() => {
+    switch (dueForm.cycle) {
+      case "weekly":
+        return weeklyPeriod(toDate(dueForm.weekStart))
+      case "session":
+        return sessionPeriod(toDate(dueForm.sessionDate), dueForm.sessionsCount)
+      case "custom":
+        return customPeriod(dueForm.customLabel, toDate(dueForm.sessionDate))
+      default:
+        return monthlyPeriod(dueForm.month, dueForm.year)
+    }
+  }, [
+    dueForm.cycle,
+    dueForm.weekStart,
+    dueForm.sessionDate,
+    dueForm.sessionsCount,
+    dueForm.customLabel,
+    dueForm.month,
+    dueForm.year,
+  ])
+
+  /** الطلاب المستهدفون: كل طلاب المجموعات المختارة، أو طالب واحد */
+  const dueTargets = useMemo(() => {
+    if (dueForm.scope === "student") {
+      const student = students.find(s => s.id === dueForm.scopeStudentId)
+      if (!student) return []
+      const group = allGroups.find(g => g.id === student.groupId)
+      return [{ student, group }]
+    }
+    return dueForm.selectedGroups.flatMap(groupId => {
+      const group = allGroups.find(g => g.id === groupId)
+      if (!group) return []
+      return students
+        .filter(s => s.groupId === groupId && s.status === "active")
+        .map(student => ({ student, group }))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dueForm.scope, dueForm.scopeStudentId, dueForm.selectedGroups, students, grades])
+
+  /** مبلغ الاستحقاق لمجموعة في الدورة المختارة */
+  const amountForGroup = (group?: (typeof allGroups)[number]) => {
+    if (!group) {
+      return {
+        amount: dueForm.cycle === "custom" ? dueForm.customAmount : dueForm.manualAmount,
+        unitPrice: dueForm.cycle === "custom" ? dueForm.customAmount : dueForm.manualAmount,
+        sessionsCount: dueForm.cycle === "session" ? Math.max(1, dueForm.sessionsCount) : undefined,
+      }
+    }
+    if (dueForm.cycle === "custom") {
+      return amountForCycle(group, "custom", { customAmount: dueForm.customAmount })
+    }
+    if (!dueForm.useGroupPrice) {
+      return {
+        amount: dueForm.manualAmount,
+        unitPrice: dueForm.manualAmount,
+        sessionsCount: dueForm.cycle === "session" ? Math.max(1, dueForm.sessionsCount) : undefined,
+      }
+    }
+    return amountForCycle(group, dueForm.cycle, { sessionsCount: dueForm.sessionsCount })
+  }
+
+  /** المبلغ الذي سيظهر لكل مجموعة في القائمة حسب الدورة المختارة */
+  const groupCyclePrice = (group: (typeof allGroups)[number]): string => {
+    if (dueForm.cycle === "custom") return moneyLabel(dueForm.customAmount)
+    if (!dueForm.useGroupPrice) return moneyLabel(dueForm.manualAmount)
+    if (dueForm.cycle === "weekly") return `${moneyLabel(groupWeeklyFee(group))}/أسبوع`
+    if (dueForm.cycle === "session")
+      return `${moneyLabel(groupSessionFee(group))}/حصة × ${Math.max(1, dueForm.sessionsCount)}`
+    return `${moneyLabel(groupMonthlyFee(group))}/شهر`
+  }
+
+  /** إجمالي ما سيُنشأ الآن (للمعاينة قبل الحفظ) */
+  const duePreviewTotal = dueTargets.reduce((sum, t) => sum + (amountForGroup(t.group).amount || 0), 0)
+
+  // إنشاء الاستحقاقات (شهري / أسبوعي / بالحصّة / مبلغ مخصص)
+  const createDues = () => {
+    if (dueForm.scope === "groups" && dueForm.selectedGroups.length === 0) {
       toast.error("يرجى اختيار مجموعة واحدة على الأقل")
       return
     }
+    if (dueForm.scope === "student" && !dueForm.scopeStudentId) {
+      toast.error("يرجى اختيار الطالب")
+      return
+    }
+    if (dueTargets.length === 0) {
+      toast.error("لا يوجد طلاب نشطون في الاختيار الحالي")
+      return
+    }
 
+    const period = duePeriodInfo
+    const now = new Date().toISOString()
     const newDues: Due[] = []
+    let duplicated = 0
+    let noPrice = 0
 
-    dueForm.selectedGroups.forEach(groupId => {
-      const group = allGroups.find(g => g.id === groupId)
-      if (!group) return
-
-      const groupStudents = students.filter(s => s.groupId === groupId && s.status === 'active')
-      
-      groupStudents.forEach(student => {
-        // Check if due already exists
-        const existingDue = dues.find(
-          d => d.studentId === student.id && d.month === dueForm.month && d.year === dueForm.year
+    dueTargets.forEach(({ student, group }) => {
+      const priced = amountForGroup(group)
+      const amount = Math.round((priced.amount || 0) * 100) / 100
+      if (!(amount > 0)) {
+        noPrice += 1
+        return
+      }
+      const groupId = group?.id || student.groupId || ""
+      // منع التكرار: نفس الطالب + نفس الفترة (المفتاح الفريد للفترة)
+      const exists =
+        dueForm.cycle !== "custom" &&
+        dues.some(
+          d =>
+            d.studentId === student.id &&
+            (d.groupId || "") === groupId &&
+            duePeriodKey({ ...d, cycle: dueCycleOf(d) }) === period.key
         )
-
-        if (!existingDue) {
-          newDues.push({
-            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-            studentId: student.id,
-            groupId: groupId,
-            month: dueForm.month,
-            year: dueForm.year,
-            amount: group.monthlyFee,
-            status: 'pending',
-            createdAt: new Date().toISOString(),
-          })
-        }
+      if (exists) {
+        duplicated += 1
+        return
+      }
+      newDues.push({
+        id: `${Date.now()}-${student.id}-${period.key}-${Math.random().toString(36).slice(2, 8)}`,
+        studentId: student.id,
+        groupId,
+        month: period.month,
+        year: period.year,
+        amount,
+        status: "pending",
+        createdAt: now,
+        cycle: dueForm.cycle,
+        periodKey: period.key,
+        periodLabel: period.label,
+        dueDate: toDateKey(dueForm.cycle === "session" ? period.start : period.end),
+        sessionsCount: priced.sessionsCount,
+        unitPrice: priced.unitPrice || undefined,
+        notes:
+          dueForm.cycle === "custom" && dueForm.customLabel.trim()
+            ? dueForm.customLabel.trim()
+            : undefined,
       })
     })
 
     if (newDues.length === 0) {
-      toast.error("لا توجد استحقاقات جديدة لإنشائها (قد تكون موجودة مسبقاً)")
+      toast.error(
+        noPrice > 0 && duplicated === 0
+          ? "لا يوجد مبلغ محدد لهذه الاستحقاقات — اكتب السعر أو حدّد مبلغاً يدوياً"
+          : "لا توجد استحقاقات جديدة لإنشائها (موجودة مسبقاً لنفس الفترة)"
+      )
       return
     }
 
@@ -234,13 +413,17 @@ export default function PaymentsPage() {
     setDues(updatedDues)
     saveDues(updatedDues)
     setDueDialogOpen(false)
-    setDueForm({
-      month: new Date().getMonth() + 1,
-      year: new Date().getFullYear(),
-      selectedGroups: [],
-    })
+    setDueForm(emptyDueForm())
 
-    toast.success(`تم إنشاء ${newDues.length} استحقاق جديد بنجاح`)
+    const skipped =
+      duplicated > 0 ? ` — وتم تخطي ${duplicated} موجودة مسبقاً لنفس الفترة` : ""
+    const missing = noPrice > 0 ? ` — و${noPrice} بلا سعر محدد` : ""
+    toast.success(
+      `تم إنشاء ${newDues.length} استحقاق (${DUE_CYCLE_LABELS[dueForm.cycle]}: ${period.label}) بإجمالي ${moneyLabel(
+        newDues.reduce((sum, d) => sum + d.amount, 0)
+      )}${skipped}${missing}`,
+      { duration: 7000 }
+    )
   }
 
   // Toggle group selection
@@ -269,37 +452,82 @@ export default function PaymentsPage() {
   const collectionRate = totalDues > 0 ? ((totalPayments / totalDues) * 100).toFixed(1) : "0"
 
   // Get student statement data
+  /**
+   * كشف حساب الطالب: صف لكل **فترة استحقاق** (شهر / أسبوع / حصص / مبلغ مخصص).
+   * الدفعات المرتبطة باستحقاق تُحسب على فترتها، وغير المرتبطة تُجمع في شهرها.
+   */
   const getStudentStatement = (studentId: string) => {
     const studentDues = dues.filter(d => d.studentId === studentId)
     const studentPayments = payments.filter(p => p.studentId === studentId)
-    
-    const monthlyData: Record<string, { dues: number; payments: number }> = {}
-    
+
+    interface StatementRow {
+      key: string
+      label: string
+      cycle: DueCycle
+      month: number
+      year: number
+      sortKey: string
+      dues: number
+      payments: number
+    }
+    const rows = new Map<string, StatementRow>()
+    const ensure = (
+      key: string,
+      label: string,
+      cycle: DueCycle,
+      month: number,
+      year: number,
+      sortKey: string
+    ): StatementRow => {
+      const existing = rows.get(key)
+      if (existing) return existing
+      const row: StatementRow = { key, label, cycle, month, year, sortKey, dues: 0, payments: 0 }
+      rows.set(key, row)
+      return row
+    }
+
+    const dueKey = (due: Due) =>
+      dueCycleOf(due) === "monthly" ? `m-${due.year}-${due.month}` : `p-${duePeriodKey(due)}`
+
     studentDues.forEach(due => {
-      const key = `${due.year}-${due.month}`
-      if (!monthlyData[key]) monthlyData[key] = { dues: 0, payments: 0 }
-      monthlyData[key].dues += due.amount
+      const cycle = dueCycleOf(due)
+      const label = cycle === "monthly" ? `${MONTHS[due.month - 1]} ${due.year}` : duePeriodLabel(due)
+      const sortKey = due.dueDate || `${due.year}-${String(due.month).padStart(2, "0")}`
+      ensure(dueKey(due), label, cycle, due.month, due.year, sortKey).dues += due.amount
     })
-    
+
     studentPayments.forEach(payment => {
-      const key = `${payment.year}-${payment.month}`
-      if (!monthlyData[key]) monthlyData[key] = { dues: 0, payments: 0 }
-      monthlyData[key].payments += payment.amount
+      const linked = payment.dueId ? studentDues.find(d => d.id === payment.dueId) : undefined
+      if (linked) {
+        const cycle = dueCycleOf(linked)
+        const label = cycle === "monthly" ? `${MONTHS[linked.month - 1]} ${linked.year}` : duePeriodLabel(linked)
+        const sortKey = linked.dueDate || `${linked.year}-${String(linked.month).padStart(2, "0")}`
+        ensure(dueKey(linked), label, cycle, linked.month, linked.year, sortKey).payments += payment.amount
+        return
+      }
+      const key = `m-${payment.year}-${payment.month}`
+      const sortKey = payment.paymentDate || `${payment.year}-${String(payment.month).padStart(2, "0")}`
+      ensure(key, `${MONTHS[payment.month - 1]} ${payment.year}`, "monthly", payment.month, payment.year, sortKey)
+        .payments += payment.amount
     })
-    
-    return Object.entries(monthlyData)
-      .map(([key, data]) => {
-        const [year, month] = key.split('-')
-        return {
-          month: parseInt(month),
-          year: parseInt(year),
-          monthName: MONTHS[parseInt(month) - 1],
-          ...data,
-          balance: data.dues - data.payments,
-          status: data.dues - data.payments === 0 ? 'paid' : data.payments > 0 ? 'partial' : 'pending'
-        }
-      })
-      .sort((a, b) => b.year - a.year || b.month - a.month)
+
+    return [...rows.values()]
+      .map(row => ({
+        ...row,
+        monthName: MONTHS[row.month - 1],
+        balance: Math.round((row.dues - row.payments) * 100) / 100,
+        status:
+          row.dues <= 0
+            ? row.payments > 0
+              ? "paid"
+              : "pending"
+            : row.dues - row.payments <= 0
+            ? "paid"
+            : row.payments > 0
+            ? "partial"
+            : "pending",
+      }))
+      .sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0))
   }
 
   return (
@@ -312,10 +540,10 @@ export default function PaymentsPage() {
       >
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-            التحصيل الشهري
+            التحصيل والاستحقاقات
           </h1>
           <p className="text-gray-500 dark:text-gray-400">
-            إدارة التحصيل المالي والاستحقاقات الشهرية
+            إدارة التحصيل المالي — استحقاقات شهرية أو أسبوعية أو بالحصّة حسب تسعير كل مجموعة
           </p>
         </div>
         <div className="flex gap-3">
@@ -325,7 +553,7 @@ export default function PaymentsPage() {
             className="border-yellow-500 text-yellow-600 hover:bg-yellow-50 dark:hover:bg-yellow-950"
           >
             <Calendar className="w-5 h-5" />
-            <span>استحقاق شهري</span>
+            <span>إنشاء استحقاق</span>
           </Button>
           <Button 
             onClick={() => openPaymentDialog()}
@@ -566,6 +794,60 @@ export default function PaymentsPage() {
               </div>
             </div>
 
+            {/* ---------- ربط الدفعة باستحقاق محدّد (شهري/أسبوعي/بالحصّة) ---------- */}
+            {paymentForm.studentId && (
+              <div>
+                <Label>تسديد استحقاق محدّد (اختياري)</Label>
+                <Select
+                  value={paymentForm.dueId || "__none"}
+                  onValueChange={(val) => {
+                    const dueId = val === "__none" ? "" : val
+                    const due = dues.find(d => d.id === dueId)
+                    if (!due) {
+                      setPaymentForm(prev => ({ ...prev, dueId: "" }))
+                      return
+                    }
+                    const paid = payments
+                      .filter(p => p.dueId === due.id)
+                      .reduce((sum, p) => sum + p.amount, 0)
+                    setPaymentForm(prev => ({
+                      ...prev,
+                      dueId: due.id,
+                      amount: Math.max(0, Math.round((due.amount - paid) * 100) / 100),
+                      month: due.month,
+                      year: due.year,
+                      notes: prev.notes || (due.periodLabel ? `تحصيل ${due.periodLabel}` : ""),
+                    }))
+                  }}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="دفعة حرة غير مرتبطة باستحقاق" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">دفعة حرة (بدون ربط)</SelectItem>
+                    {dues
+                      .filter(d => d.studentId === paymentForm.studentId && d.status !== "paid")
+                      .sort((a, b) => (a.year - b.year) || (a.month - b.month))
+                      .map(due => {
+                        const paid = payments
+                          .filter(p => p.dueId === due.id)
+                          .reduce((sum, p) => sum + p.amount, 0)
+                        const rest = Math.max(0, Math.round((due.amount - paid) * 100) / 100)
+                        return (
+                          <SelectItem key={due.id} value={due.id}>
+                            {duePeriodLabel(due)} — {moneyLabel(due.amount)}
+                            {paid > 0 ? ` (مدفوع ${moneyLabel(paid)}، متبقٍ ${moneyLabel(rest)})` : ""}
+                          </SelectItem>
+                        )
+                      })}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  اختر الاستحقاق ليُملأ المبلغ المتبقي تلقائياً وتُحدَّث حالته (جزئي/مدفوع).
+                </p>
+              </div>
+            )}
+
             <div>
               <Label htmlFor="paymentAmount">المبلغ (ج.م) *</Label>
               <Input
@@ -578,7 +860,7 @@ export default function PaymentsPage() {
               />
               {paymentForm.studentId && (
                 <p className="text-xs text-gray-500 mt-1">
-                  الرصيد الحالي: {getStudentBalance(paymentForm.studentId).balance} ج.م
+                  الرصيد الحالي: {moneyLabel(getStudentBalance(paymentForm.studentId).balance)}
                 </p>
               )}
             </div>
@@ -639,90 +921,314 @@ export default function PaymentsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Monthly Due Dialog */}
+      {/* ============ نافذة إنشاء الاستحقاقات: شهري / أسبوعي / بالحصّة / مبلغ مخصص ============ */}
       <Dialog open={dueDialogOpen} onOpenChange={setDueDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>إنشاء استحقاق شهري</DialogTitle>
+            <DialogTitle>إنشاء استحقاق</DialogTitle>
             <DialogDescription>
-              أنشئ استحقاقات شهرية لجميع الطلاب في المجموعات المحددة
+              اختر دورة الاستحقاق (شهري أو أسبوعي أو بالحصّة أو مبلغ مخصص) ثم حدّد المجموعات أو الطالب
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>الشهر</Label>
-                <Select 
-                  value={dueForm.month.toString()} 
-                  onValueChange={(val) => setDueForm(prev => ({ ...prev, month: parseInt(val) }))}
-                >
-                  <SelectTrigger className="mt-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MONTHS.map((month, index) => (
-                      <SelectItem key={index} value={(index + 1).toString()}>
-                        {month}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>السنة</Label>
-                <Input
-                  type="number"
-                  value={dueForm.year}
-                  onChange={(e) => setDueForm(prev => ({ ...prev, year: parseInt(e.target.value) || new Date().getFullYear() }))}
-                  className="mt-1"
-                />
+          <div className="space-y-4 py-2">
+            {/* ---------- 1) دورة الاستحقاق ---------- */}
+            <div>
+              <Label>1. نوع الاستحقاق *</Label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                {DUE_CYCLE_ORDER.map(cycle => (
+                  <button
+                    key={cycle}
+                    type="button"
+                    onClick={() => setDueForm(prev => ({ ...prev, cycle }))}
+                    className={`rounded-xl border-2 px-2 py-2.5 text-center transition-all ${
+                      dueForm.cycle === cycle
+                        ? "border-orange-500 bg-orange-50 dark:bg-orange-950/40 shadow-md"
+                        : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-orange-300"
+                    }`}
+                  >
+                    <p className="text-sm font-extrabold text-gray-900 dark:text-white">
+                      {DUE_CYCLE_LABELS[cycle]}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 leading-tight">
+                      {cycle === "monthly"
+                        ? "شهر كامل"
+                        : cycle === "weekly"
+                        ? "أسبوع (السبت → الجمعة)"
+                        : cycle === "session"
+                        ? "حصة أو أكثر في يوم"
+                        : "مبلغ حر بوصف"}
+                    </p>
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div>
-              <Label>اختر المجموعات *</Label>
-              <div className="space-y-2 mt-2 max-h-60 overflow-y-auto">
-                {allGroups.map((group) => {
-                  const studentsCount = students.filter(s => s.groupId === group.id && s.status === 'active').length
-                  return (
-                    <div
-                      key={group.id}
-                      className="flex items-center justify-between p-3 border border-gray-200 dark:border-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
+            {/* ---------- 2) الفترة ---------- */}
+            <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/60 p-3 space-y-3">
+              <Label>2. الفترة *</Label>
+
+              {dueForm.cycle === "monthly" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">الشهر</Label>
+                    <Select
+                      value={dueForm.month.toString()}
+                      onValueChange={(val) => setDueForm(prev => ({ ...prev, month: parseInt(val) }))}
                     >
-                      <div className="flex items-center gap-3">
-                        <Checkbox
-                          id={`group-${group.id}`}
-                          checked={dueForm.selectedGroups.includes(group.id)}
-                          onCheckedChange={() => toggleGroupSelection(group.id)}
-                        />
-                        <div>
-                          <p className="font-medium text-gray-900 dark:text-white">
-                            {group.gradeName} - {group.name}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {studentsCount} طالب • {group.monthlyFee} ج.م/شهر
-                          </p>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {MONTHS.map((month, index) => (
+                          <SelectItem key={index} value={(index + 1).toString()}>
+                            {month}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-xs">السنة</Label>
+                    <Input
+                      type="number"
+                      value={dueForm.year}
+                      onChange={(e) =>
+                        setDueForm(prev => ({ ...prev, year: parseInt(e.target.value) || new Date().getFullYear() }))
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {dueForm.cycle === "weekly" && (
+                <div className="space-y-2">
+                  <div>
+                    <Label className="text-xs">أي يوم داخل الأسبوع المطلوب</Label>
+                    <Input
+                      type="date"
+                      value={dueForm.weekStart}
+                      onChange={(e) => setDueForm(prev => ({ ...prev, weekStart: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[-7, 0, 7].map(offset => (
+                      <button
+                        key={offset}
+                        type="button"
+                        onClick={() => {
+                          const d = new Date()
+                          d.setDate(d.getDate() + offset)
+                          setDueForm(prev => ({ ...prev, weekStart: toDateKey(d) }))
+                        }}
+                        className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg border border-orange-300 dark:border-orange-800 bg-white dark:bg-gray-900 text-orange-700 dark:text-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950"
+                      >
+                        {offset === 0 ? "الأسبوع الحالي" : offset < 0 ? "الأسبوع الماضي" : "الأسبوع القادم"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-600 dark:text-gray-300 font-semibold">
+                    الفترة: {duePeriodInfo.label}
+                  </p>
+                </div>
+              )}
+
+              {dueForm.cycle === "session" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">تاريخ الحصة</Label>
+                    <Input
+                      type="date"
+                      value={dueForm.sessionDate}
+                      onChange={(e) => setDueForm(prev => ({ ...prev, sessionDate: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">عدد الحصص</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={dueForm.sessionsCount}
+                      onChange={(e) =>
+                        setDueForm(prev => ({ ...prev, sessionsCount: Math.max(1, parseInt(e.target.value) || 1) }))
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-600 dark:text-gray-300 font-semibold sm:col-span-2">
+                    الفترة: {duePeriodInfo.label}
+                  </p>
+                </div>
+              )}
+
+              {dueForm.cycle === "custom" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">الوصف (يظهر في كشف الحساب)</Label>
+                    <Input
+                      placeholder="مثال: حصة إضافية / مصروفات ملازم"
+                      value={dueForm.customLabel}
+                      onChange={(e) => setDueForm(prev => ({ ...prev, customLabel: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">المبلغ (ج.م) *</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={dueForm.customAmount || ""}
+                      onChange={(e) =>
+                        setDueForm(prev => ({ ...prev, customAmount: parseFloat(e.target.value) || 0 }))
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">التاريخ</Label>
+                    <Input
+                      type="date"
+                      value={dueForm.sessionDate}
+                      onChange={(e) => setDueForm(prev => ({ ...prev, sessionDate: e.target.value }))}
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ---------- 3) على من يُنشأ الاستحقاق؟ ---------- */}
+            <div>
+              <Label>3. يُنشأ لـ *</Label>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                {([
+                  { id: "groups", label: "مجموعات كاملة", hint: "كل الطلاب النشطين فيها" },
+                  { id: "student", label: "طالب واحد", hint: "استحقاق خاص به" },
+                ] as const).map(scope => (
+                  <button
+                    key={scope.id}
+                    type="button"
+                    onClick={() => setDueForm(prev => ({ ...prev, scope: scope.id }))}
+                    className={`rounded-xl border-2 px-3 py-2 text-right transition-all ${
+                      dueForm.scope === scope.id
+                        ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40"
+                        : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 hover:border-indigo-300"
+                    }`}
+                  >
+                    <p className="text-sm font-bold text-gray-900 dark:text-white">{scope.label}</p>
+                    <p className="text-[10px] text-gray-500">{scope.hint}</p>
+                  </button>
+                ))}
+              </div>
+
+              {dueForm.scope === "student" ? (
+                <div className="mt-3">
+                  <Select
+                    value={dueForm.scopeStudentId}
+                    onValueChange={(val) => setDueForm(prev => ({ ...prev, scopeStudentId: val }))}
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue placeholder="اختر الطالب" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {students.filter(s => s.status === "active").length === 0 ? (
+                        <SelectItem value="__none" disabled>لا يوجد طلاب</SelectItem>
+                      ) : (
+                        students
+                          .filter(s => s.status === "active")
+                          .map(student => {
+                            const group = allGroups.find(g => g.id === student.groupId)
+                            return (
+                              <SelectItem key={student.id} value={student.id}>
+                                {student.name}
+                                {group ? ` — ${group.gradeName} / ${group.name}` : ""}
+                              </SelectItem>
+                            )
+                          })
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="space-y-2 mt-3 max-h-56 overflow-y-auto pr-1">
+                  {allGroups.map((group) => {
+                    const studentsCount = students.filter(s => s.groupId === group.id && s.status === "active").length
+                    return (
+                      <div
+                        key={group.id}
+                        className="flex items-center justify-between gap-3 p-3 border border-gray-200 dark:border-gray-800 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Checkbox
+                            id={`group-${group.id}`}
+                            checked={dueForm.selectedGroups.includes(group.id)}
+                            onCheckedChange={() => toggleGroupSelection(group.id)}
+                          />
+                          <div className="min-w-0">
+                            <p className="font-medium text-gray-900 dark:text-white truncate">
+                              {group.gradeName} - {group.name}
+                            </p>
+                            <p className="text-xs text-gray-500 truncate">
+                              {studentsCount} طالب • {groupCyclePrice(group)}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )
-                })}
-                {allGroups.length === 0 && (
-                  <p className="text-center text-gray-500 py-4">
-                    لا توجد مجموعات. أضف صفوف ومجموعات أولاً
-                  </p>
-                )}
-              </div>
+                    )
+                  })}
+                  {allGroups.length === 0 && (
+                    <p className="text-center text-gray-500 py-4">
+                      لا توجد مجموعات. أضف صفوف ومجموعات أولاً
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
-            {dueForm.selectedGroups.length > 0 && (
-              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg p-4">
-                <p className="text-sm text-blue-700 dark:text-blue-300">
-                  سيتم إنشاء استحقاقات لـ {
-                    dueForm.selectedGroups.reduce((sum, groupId) => 
-                      sum + students.filter(s => s.groupId === groupId && s.status === 'active').length, 0
-                    )
-                  } طالب في {dueForm.selectedGroups.length} مجموعة
+            {/* ---------- 4) المبلغ ---------- */}
+            {dueForm.cycle !== "custom" && (
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 accent-orange-600"
+                    checked={dueForm.useGroupPrice}
+                    onChange={(e) => setDueForm(prev => ({ ...prev, useGroupPrice: e.target.checked }))}
+                  />
+                  <span className="text-sm font-bold text-gray-900 dark:text-white">
+                    استخدام سعر المجموعة ({DUE_CYCLE_LABELS[dueForm.cycle]})
+                  </span>
+                </label>
+                {!dueForm.useGroupPrice && (
+                  <div>
+                    <Label className="text-xs">مبلغ محدّد يدوياً لكل طالب (ج.م)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={dueForm.manualAmount || ""}
+                      onChange={(e) =>
+                        setDueForm(prev => ({ ...prev, manualAmount: parseFloat(e.target.value) || 0 }))
+                      }
+                      className="mt-1"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ---------- الملخص ---------- */}
+            {dueTargets.length > 0 && (
+              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-lg p-4 space-y-1">
+                <p className="text-sm text-blue-700 dark:text-blue-300 font-semibold">
+                  سيتم إنشاء {dueTargets.length} استحقاق ({DUE_CYCLE_LABELS[dueForm.cycle]}) — الفترة: {duePeriodInfo.label}
+                </p>
+                <p className="text-xs text-blue-600/90 dark:text-blue-400/90">
+                  الإجمالي المتوقع: {moneyLabel(duePreviewTotal)} • تاريخ الاستحقاق: {toDateKey(duePeriodInfo.end)}
+                </p>
+                <p className="text-[11px] text-blue-600/70 dark:text-blue-400/70">
+                  الاستحقاقات الموجودة مسبقاً لنفس الفترة تُتخطى تلقائياً حتى لا تتكرر على الطالب.
                 </p>
               </div>
             )}
@@ -731,8 +1237,8 @@ export default function PaymentsPage() {
             <Button variant="outline" onClick={() => setDueDialogOpen(false)}>
               إلغاء
             </Button>
-            <Button 
-              onClick={createMonthlyDues}
+            <Button
+              onClick={createDues}
               className="bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700"
             >
               إنشاء الاستحقاقات
@@ -740,7 +1246,6 @@ export default function PaymentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
       {/* Student Statement Dialog */}
       <Dialog open={statementDialogOpen} onOpenChange={setStatementDialogOpen}>
         <DialogContent className="max-w-2xl">
@@ -796,7 +1301,7 @@ export default function PaymentsPage() {
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>الشهر</TableHead>
+                          <TableHead>الفترة</TableHead>
                           <TableHead>المستحق</TableHead>
                           <TableHead>المدفوع</TableHead>
                           <TableHead>المتبقي</TableHead>
@@ -807,12 +1312,19 @@ export default function PaymentsPage() {
                         {statement.map((item, index) => (
                           <TableRow key={index}>
                             <TableCell className="font-medium">
-                              {item.monthName} {item.year}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{item.label}</span>
+                                {item.cycle !== "monthly" && (
+                                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                                    {DUE_CYCLE_LABELS[item.cycle]}
+                                  </Badge>
+                                )}
+                              </div>
                             </TableCell>
-                            <TableCell>{item.dues} ج.م</TableCell>
-                            <TableCell className="text-green-600">{item.payments} ج.م</TableCell>
+                            <TableCell>{moneyLabel(item.dues)}</TableCell>
+                            <TableCell className="text-green-600">{moneyLabel(item.payments)}</TableCell>
                             <TableCell className={item.balance > 0 ? 'text-red-600 font-bold' : 'text-green-600'}>
-                              {item.balance} ج.م
+                              {moneyLabel(item.balance)}
                             </TableCell>
                             <TableCell>
                               {item.status === 'paid' ? (

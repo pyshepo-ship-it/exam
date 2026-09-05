@@ -18,10 +18,10 @@ import {
 } from "@/components/ui/select"
 import { Grade, getGrades } from "@/lib/data-storage"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
-import { writeRows } from "@/lib/memory-store"
+import { writeRows, writeSetting } from "@/lib/memory-store"
 import { fetchPublicData } from "@/lib/supabase/sync"
 import toast from "react-hot-toast"
-import { registerStudentAccount, isRegistrationOpen } from "@/lib/student-accounts"
+import { registerStudentAccount, refreshPortalSettings, portalLogin } from "@/lib/student-accounts"
 
 export default function StudentRegisterPage() {
   const router = useRouter()
@@ -41,13 +41,24 @@ export default function StudentRegisterPage() {
   const [done, setDone] = useState(false)
   const [regMessage, setRegMessage] = useState("طلبك الآن في انتظار موافقة المعلم.\nبمجرد الموافقة يمكنك تسجيل الدخول بنفس البريد وكلمة المرور")
   const [registrationOpen, setRegistrationOpen] = useState(true)
+  /** التفعيل المباشر مفعّل عند المعلم؟ — يُقرأ من السحابة لا من ذاكرة الجهاز */
+  const [autoApprove, setAutoApprove] = useState(false)
 
   useEffect(() => {
-    setRegistrationOpen(isRegistrationOpen())
-
     const load = async () => {
+      // إعدادات البوابة (فتح التسجيل / التفعيل المباشر) من Supabase أولاً:
+      // جهاز الطالب لا يحتفظ بأي بيانات، فبدون هذا الجلب يبدو التفعيل المباشر مغلقاً دائماً
+      const settings = await refreshPortalSettings()
+      setRegistrationOpen(settings.open)
+      setAutoApprove(settings.autoApprove)
+
       // الصفوف من Supabase مباشرة — المصدر الوحيد (لا تخزين محلي على الجهاز)
       const pub = await fetchPublicData()
+      if (pub?.settings) {
+        for (const [key, value] of Object.entries(pub.settings)) writeSetting(key, value)
+        setRegistrationOpen(pub.settings.registrationOpen !== "")
+        setAutoApprove(!!pub.settings.autoApproveRegistration)
+      }
       if (pub && pub.grades.length > 0) {
         const list = pub.grades.map(g => ({
           id: g.id,
@@ -89,11 +100,22 @@ export default function StudentRegisterPage() {
   const submit = async () => {
     setBusy(true)
     const res = await registerStudentAccount(form)
-    setBusy(false)
     if (res.ok) {
+      // التفعيل المباشر: نُدخل الطالب بوابته فوراً بدل أن يذهب لصفحة الدخول
+      if (autoApprove) {
+        const login = await portalLogin(form.email, form.password)
+        setBusy(false)
+        if (login.ok) {
+          toast.success("تم تفعيل حسابك — جارٍ فتح بوابتك 🎉")
+          router.push("/student")
+          return
+        }
+      }
+      setBusy(false)
       setDone(true)
       if (res.message) setRegMessage(res.message)
     } else {
+      setBusy(false)
       alert(res.error)
     }
   }
@@ -111,7 +133,9 @@ export default function StudentRegisterPage() {
           </div>
           <h1 className="text-2xl font-extrabold text-gray-900 dark:text-white mt-4">تسجيل طالب جديد</h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            سجّل بياناتك وستنتظر موافقة المعلم قبل تفعيل حسابك
+            {autoApprove
+              ? "سجّل بياناتك — حسابك يُفعَّل مباشرة وتدخل بوابتك فوراً"
+              : "سجّل بياناتك وستنتظر موافقة المعلم قبل تفعيل حسابك"}
           </p>
         </div>
 
@@ -265,7 +289,7 @@ export default function StudentRegisterPage() {
                   className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white h-12 text-base"
                 >
                   {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <UserPlus className="w-5 h-5" />}
-                  <span>{busy ? "جاري الإرسال..." : "إرسال طلب التسجيل"}</span>
+                  <span>{busy ? "جاري الإرسال..." : autoApprove ? "إنشاء الحساب والدخول مباشرة" : "إرسال طلب التسجيل"}</span>
                 </Button>
 
                 <p className="text-center text-sm text-gray-500 dark:text-gray-400">

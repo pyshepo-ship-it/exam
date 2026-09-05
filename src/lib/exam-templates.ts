@@ -262,26 +262,67 @@ export const ORNAMENT_COLORS: Record<OrnamentKind, string> = {
 /** كثافة الزخارف حول الأسئلة/الصفحة */
 export type OrnamentDensity = "low" | "medium" | "high"
 
+/**
+ * شفافية الزخارف الافتراضية حسب الكثافة (0 = مخفية، 1 = كاملة اللون).
+ * القيم منخفضة عمداً: الزخارف خلفية خفيفة ولا يجوز أن تغطي كلام الاختبار.
+ */
+export const ORNAMENT_OPACITY_BY_DENSITY: Record<OrnamentDensity, number> = {
+  low: 0.14,
+  medium: 0.18,
+  high: 0.22,
+}
+
+/** شفافية زخارف زوايا الصفحة (أبعد عن الأسئلة فتتحمل وضوحاً أكبر قليلاً) */
+export const PAGE_ORNAMENT_OPACITY_BY_DENSITY: Record<OrnamentDensity, number> = {
+  low: 0.2,
+  medium: 0.26,
+  high: 0.3,
+}
+
+/** خيارات شفافية الزخارف التي يختار منها المعلم في المحرر/المعاينة */
+export const ORNAMENT_OPACITY_CHOICES: { id: string; label: string; value: number }[] = [
+  { id: "faint", label: "خفيفة جداً", value: 0.08 },
+  { id: "soft", label: "شفافة", value: 0.14 },
+  { id: "normal", label: "متوسطة", value: 0.22 },
+  { id: "clear", label: "واضحة", value: 0.32 },
+]
+
+/**
+ * الشفافية الفعلية للزخارف: اختيار المعلم أولاً، ثم افتراضي الكثافة.
+ * تُقيَّد دائماً بين 0.04 و 0.5 حتى لا تعود الزخارف لتغطي الأسئلة.
+ */
+export function resolveOrnamentOpacity(
+  chosen: number | undefined,
+  density: OrnamentDensity,
+  kind: "question" | "page" = "question"
+): number {
+  const fallback = kind === "page" ? PAGE_ORNAMENT_OPACITY_BY_DENSITY[density] : ORNAMENT_OPACITY_BY_DENSITY[density]
+  const raw = typeof chosen === "number" && isFinite(chosen) && chosen > 0 ? chosen : fallback
+  return Math.min(0.5, Math.max(0.04, Math.round(raw * 100) / 100))
+}
+
 /** إعدادات العرض الافتراضية للزخارف حسب القالب */
 export interface OrnamentPreset {
   /** الحجم المبدئي للرمز (px) */
   size: number
   /** كثافة الرموز */
   density: OrnamentDensity
+  /** الشفافية الافتراضية (0..1) — خفيفة حتى لا تغطي الكلام */
+  opacity: number
 }
 
 export function getOrnamentPreset(templateId?: ExamTemplateId): OrnamentPreset {
   switch (templateId) {
-    case "cosmos": return { size: 42, density: "high" }
-    case "explorer": return { size: 42, density: "high" }
-    case "lab": return { size: 36, density: "high" }
-    case "life": return { size: 36, density: "high" }
-    case "royal": return { size: 30, density: "medium" }
-    case "wedding": return { size: 30, density: "medium" }
-    case "parchment": return { size: 26, density: "low" }
-    case "modern": return { size: 24, density: "low" }
+    case "cosmos": return { size: 42, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "explorer": return { size: 42, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "lab": return { size: 36, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "life": return { size: 36, density: "high", opacity: ORNAMENT_OPACITY_BY_DENSITY.high }
+    case "royal": return { size: 30, density: "medium", opacity: ORNAMENT_OPACITY_BY_DENSITY.medium }
+    case "wedding": return { size: 30, density: "medium", opacity: ORNAMENT_OPACITY_BY_DENSITY.medium }
+    case "parchment": return { size: 26, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
+    case "modern": return { size: 24, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
     case "classic":
-    default: return { size: 24, density: "low" }
+    default: return { size: 24, density: "low", opacity: ORNAMENT_OPACITY_BY_DENSITY.low }
   }
 }
 

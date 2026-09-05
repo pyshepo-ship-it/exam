@@ -44,7 +44,7 @@ const stripImportsOf = (src, spec) =>
 const stubs = `import { readRows as __memRows, writeRows as __memWrite } from "./memory-store.mjs"
 import { createHash } from "node:crypto"
 const queuePush = () => Promise.resolve()
-${["pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts"]
+${["pushGrades","pushStudents","pushDues","pushPayments","pushExams","pushSessions","pushAttendance","pushAnnouncements","pushHonorees","pushSharedFiles","pushImportantLinks","pushYearArchives","pushSetting","pushExamAttempts","pushManualGrades","pushRegistrationRequests","pushGroupTransferRequests","pushStudentHistory","pushStudentAccounts","pushSurveys","pushSurveyResponses"]
   .map((f) => `const ${f} = () => Promise.resolve()`).join("\n")}
 // محاكاة Supabase (سحابة صورية في الذاكرة) — لا تخزين محلي في الاختبار أيضاً
 const __cloud = (globalThis.__cloud = globalThis.__cloud || { registrationRequests: [], groupTransferRequests: [], studentAccounts: [] })
@@ -179,6 +179,10 @@ files["utils.mjs"] = rewrite(utils)
   files["student-accounts.mjs"] = stubs + "\n" + sa
 }
 {
+  // التسعير ودورات الاستحقاق — تعتمد عليها تقارير الطالب وصفحة التحصيل
+  files["billing.mjs"] = rewrite(readFileSync("src/lib/billing.ts", "utf8"))
+}
+{
   let sr = readFileSync("src/lib/student-report.ts", "utf8")
   sr = rewrite(sr)
   files["student-report.mjs"] = sr
@@ -231,7 +235,7 @@ const MEM = await import("file://" + join(TMP, "memory-store.mjs"))
 const ROW_KEYS = ["grades","students","dues","payments","exams","sessions","attendance",
   "examAttempts","announcements","honorees","sharedFiles","importantLinks","yearArchives",
   "manualGrades","registrationRequests","groupTransferRequests","studentHistory",
-  "studentAccounts","inquiries"]
+  "studentAccounts","inquiries","surveys","surveyResponses"]
 const SETTING_KEYS = ["currentAcademicYear","teacherName","teacherSignatureLine",
   "whatsappNumber","schedulePublished","registrationOpen","studentReportsEnabled"]
 const snapshotMemory = () => ({
@@ -737,7 +741,8 @@ section("سيناريو 13: كشف الحساب في تقرير الطالب (ا
 const rep2 = SR.collectStudentReport("st-old")
 eq("التقرير يحمل المستحقات بكامل حالتها", rep2.dues.length === 2 && rep2.dues.some(d => d.amount === 100) && rep2.dues.some(d => d.amount === 200))
 const stmtPages = SR.buildStudentReportPagesHtml({ report: rep2, type: "payments", mode: "teacher" })
-eq("كشف الحساب يعرض الاستحقاق والمدفوع والمتبقي", stmtPages.html.includes("كشف الحساب الشهري") && stmtPages.html.includes("الرصيد المتبقي"))
+eq("كشف الحساب يعرض الاستحقاق والمدفوع والمتبقي", stmtPages.html.includes("كشف الحساب") && stmtPages.html.includes("الرصيد المتبقي"))
+eq("كشف الحساب مرتّب حسب فترات الاستحقاق (لا الشهر فقط)", stmtPages.html.includes("الفترة"))
 eq("كشف الحساب يوضح الحالة الجزئية", stmtPages.html.includes("جزئي") && stmtPages.html.includes((40).toLocaleString("ar-EG")))
 const arMonthName = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"][new Date().getMonth()]
 eq("سجل الدفعات يعرض تاريخ التحصيل الفعلي", stmtPages.html.includes("سجل الدفعات") && stmtPages.html.includes(`${arMonthName} ${new Date().getDate()}`))
@@ -1017,6 +1022,95 @@ const chgBad = await SA.changePortalPassword(autoLogin.session.token || "", "WRO
 eq("التغيير بكلمة قديمة خاطئة يُرفض", chgBad.ok === false)
 SA.setAutoApproveRegistration(false)
 logoutAndRepull()
+
+// ============================================================
+section("سيناريو 15: التسعير بالحصّة ودورات الاستحقاق (شهري/أسبوعي/حصة/مخصص)")
+// ============================================================
+
+const BILL = await import("file://" + join(TMP, "billing.mjs"))
+
+// ---- تسعير المجموعة ----
+eq("عدد الحصص شهرياً من أيام الأسبوع (يومان × 4.33 = 9)", BILL.sessionsPerMonthFromDays(["السبت", "الثلاثاء"]) === 9)
+eq("مجموعة بلا أيام → صفر حصص", BILL.sessionsPerMonthFromDays([]) === 0)
+
+const sessionPriced = BILL.normalizeGroupPricing({
+  pricingMode: "session",
+  sessionFee: 50,
+  days: ["السبت", "الثلاثاء"],
+})
+eq("التسعير بالحصّة يشتق السعر الشهري (50 × 9 = 450)", sessionPriced.monthlyFee === 450 && sessionPriced.sessionsPerMonth === 9)
+eq("التسعير بالحصّة يشتق سعر الأسبوع (50 × يومان = 100)", sessionPriced.weeklyFee === 100)
+
+const monthlyPriced = BILL.normalizeGroupPricing({
+  pricingMode: "monthly",
+  monthlyFee: 400,
+  days: ["السبت", "الثلاثاء"],
+})
+eq("التسعير الشهري يشتق سعر الحصة الاسترشادي (400 ÷ 9 = 44.44)", monthlyPriced.sessionFee === 44.44)
+eq("التسعير الشهري يحفظ السعر كما هو", monthlyPriced.monthlyFee === 400)
+
+const legacyGroup = { id: "gr-x", name: "قديمة", days: [], monthlyFee: 433 }
+eq("مجموعة قديمة بلا طريقة تسعير تُعامل كسعر شهري", BILL.groupPricingMode(legacyGroup) === "monthly")
+eq("سعر الأسبوع المستنتج من الشهري (433 ÷ 4.33 = 100)", BILL.groupWeeklyFee(legacyGroup) === 100)
+eq("مجموعة قديمة حملت سعر حصة تُعامل كسعير بالحصّة", BILL.groupPricingMode({ sessionFee: 40 }) === "session")
+
+const grp = { id: "gr-1", name: "أولى", days: ["السبت", "الثلاثاء"], monthlyFee: 450, pricingMode: "session", sessionFee: 50, sessionsPerMonth: 9 }
+eq("السعر الشهري الفعلي لمجموعة الحصّة = سعر الحصة × الحصص", BILL.groupMonthlyFee(grp) === 450)
+eq("وصف التسعير يشرح الحساب للمعلم", BILL.pricingSummary(grp).includes("للحصة") && BILL.pricingSummary(grp).includes("9"))
+
+// ---- مبالغ الدورات ----
+eq("دورة شهرية → السعر الشهري", BILL.amountForCycle(grp, "monthly").amount === 450)
+eq("دورة أسبوعية → سعر الأسبوع", BILL.amountForCycle(grp, "weekly").amount === 100)
+eq("دورة بالحصّة (3 حصص) → 50 × 3 = 150", BILL.amountForCycle(grp, "session", { sessionsCount: 3 }).amount === 150)
+eq("دورة بالحصّة تحمل سعر الحصة وعدد الحصص", BILL.amountForCycle(grp, "session", { sessionsCount: 3 }).unitPrice === 50 && BILL.amountForCycle(grp, "session", { sessionsCount: 3 }).sessionsCount === 3)
+eq("مبلغ مخصص → كما كتبه المعلم", BILL.amountForCycle(grp, "custom", { customAmount: 250 }).amount === 250)
+eq("مبلغ يدوي يتجاوز سعر الدورة", BILL.amountForCycle(grp, "monthly", { customAmount: 300 }).amount === 300)
+
+// ---- مفاتيح الفترات (منع التكرار) ----
+eq("استحقاق قديم بلا دورة → مفتاح الشهر/السنة", BILL.duePeriodKey({ month: 9, year: 2025 }) === "2025-09")
+eq("استحقاق أسبوعي → مفتاح أسبوعه", BILL.duePeriodKey({ cycle: "weekly", periodKey: "2025-W37", month: 9, year: 2025 }) === "2025-W37")
+eq("دورة السجلات القديمة شهرية", BILL.dueCycle({}) === "monthly" && BILL.dueCycle({ cycle: "session" }) === "session")
+eq("وصف الفترة: شهري قديم", BILL.duePeriodLabel({ month: 9, year: 2025 }) === "سبتمبر 2025")
+eq("وصف الفترة: محفوظ مع الاستحقاق", BILL.duePeriodLabel({ cycle: "weekly", periodLabel: "أسبوع 37", month: 9, year: 2025 }) === "أسبوع 37")
+
+// ---- حدود الأسبوع (السبت → الجمعة) ----
+const week = BILL.weeklyPeriod(new Date(2025, 8, 3)) // الأربعاء 3 سبتمبر 2025
+eq("بداية الأسبوع سبت", week.start.getDay() === 6)
+eq("نهاية الأسبوع جمعة", week.end.getDay() === 5)
+eq("مفتاح الأسبوع يحمل السنة ورقم الأسبوع", /^2025-W\d\d$/.test(week.key), week.key)
+eq("وصف الأسبوع يبدأ بـ «أسبوع»", week.label.startsWith("أسبوع"), week.label)
+
+const sess = BILL.sessionPeriod(new Date(2025, 8, 10), 2)
+eq("مفتاح فترة الحصص يحمل التاريخ والعدد", sess.key === "2025-09-10#2", sess.key)
+eq("وصف فترة الحصص (حصتان)", sess.label.includes("حصتان"), sess.label)
+
+const cust = BILL.customPeriod("رحلة المنيا", new Date(2025, 8, 10))
+eq("المبلغ المخصص يحمل وصف المعلم", cust.label === "رحلة المنيا")
+eq("المبلغ المخصص بلا وصف → وصف افتراضي بالتاريخ", BILL.customPeriod("", new Date(2025, 8, 10)).label.includes("مبلغ مخصص"))
+
+// ---- كشف الحساب: استحقاق أسبوعي لا يذوب في الشهر ----
+const duesBeforeCycle = DS.getDues()
+DS.saveDues([
+  ...duesBeforeCycle,
+  {
+    id: "due-week-1",
+    studentId: "st-old",
+    groupId: "gr-1",
+    month: 9,
+    year: 2025,
+    amount: 100,
+    status: "unpaid",
+    cycle: "weekly",
+    periodKey: "2025-W37",
+    periodLabel: "أسبوع 37 (6 – 12 سبتمبر)",
+    dueDate: "2025-09-06",
+    createdAt: new Date().toISOString(),
+  },
+])
+const repCycle = SR.collectStudentReport("st-old")
+const stmtCycle = SR.buildStudentReportPagesHtml({ report: repCycle, type: "payments", mode: "teacher" })
+eq("الاستحقاق الأسبوعي يظهر بفترة مستقلة في كشف الحساب", stmtCycle.html.includes("أسبوع 37 (6 – 12 سبتمبر)"))
+eq("الاستحقاق الشهري القديم ما زال يظهر بشهره", stmtCycle.html.includes("سبتمبر"))
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

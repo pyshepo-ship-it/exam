@@ -57,6 +57,7 @@ import {
   rejectGroupTransferRequest,
   findMatchingStudent,
   fulfillRecoveryByTeacher,
+  isAutoApproveRegistration,
 } from "@/lib/student-accounts"
 import { forcePushAll } from "@/lib/supabase/sync"
 import {
@@ -78,6 +79,9 @@ const STATUS_BADGE: Record<string, { label: string; className: string }> = {
 
 export default function RequestsPage() {
   const [tab, setTab] = useState<TabKey>("registrations")
+  /** هل «القبول التلقائي» مفعّل في الإعدادات؟ */
+  const [autoApprove, setAutoApprove] = useState(false)
+  const [bulkBusy, setBulkBusy] = useState(false)
   const [grades, setGrades] = useState<Grade[]>([])
   const [students, setStudents] = useState<Student[]>([])
   const [regRequests, setRegRequests] = useState<RegistrationRequest[]>([])
@@ -118,11 +122,43 @@ export default function RequestsPage() {
     setRegRequests(getRegistrationRequests())
     setTransferRequests(getGroupTransferRequests())
     setInquiries(getInquiries())
+    setAutoApprove(isAutoApproveRegistration())
   }
 
   useEffect(() => {
     refresh()
   }, [])
+
+  /**
+   * تفعيل كل طلبات التسجيل المعلّقة دفعة واحدة.
+   * تظهر هذه الحاجة عندما يُفعّل المعلم «القبول التلقائي» بعد أن سجّل طلاب
+   * بالفعل: طلباتهم بقيت معلّقة فلا يستطيعون الدخول. ضغطة واحدة تُنشئ
+   * حساباتهم وتربطها ببياناتهم فيتمكنون من الدخول فوراً.
+   */
+  const activateAllPending = async () => {
+    const pending = regRequests.filter(r => r.status === "pending")
+    if (pending.length === 0) {
+      toast("لا توجد طلبات معلّقة", { icon: "ℹ️" })
+      return
+    }
+    if (!confirm(`تفعيل ${pending.length} طلب تسجيل معلّق الآن؟ سيُنشأ حساب لكل طالب ويستطيع الدخول مباشرة.`)) return
+    setBulkBusy(true)
+    let ok = 0
+    for (const r of pending) {
+      const res = approveRegistrationRequest(r.id)
+      if (res.ok) ok += 1
+    }
+    try {
+      await forcePushAll()
+    } catch { /* تُعاد المزامنة تلقائياً */ }
+    setBulkBusy(false)
+    refresh()
+    toast.success(
+      ok === pending.length
+        ? `تم تفعيل ${ok} حساباً — الطلاب يستطيعون تسجيل الدخول الآن`
+        : `تم تفعيل ${ok} من ${pending.length} طلباً — راجع بقية الطلبات يدوياً`
+    , { duration: 7000 })
+  }
 
   const gradeName = (id: string) => grades.find(g => g.id === id)?.name || "غير محدد"
   const groupName = (id: string) => {
@@ -318,6 +354,33 @@ export default function RequestsPage() {
       {/* ============ طلبات التسجيل ============ */}
       {tab === "registrations" && (
         <div className="space-y-4">
+          {/* القبول التلقائي مفعّل ومع ذلك توجد طلبات معلّقة = طلاب لا يستطيعون الدخول */}
+          {autoApprove && pendingRegs > 0 && (
+            <Card className="bg-emerald-50/80 dark:bg-emerald-950/30 border-2 border-emerald-400 dark:border-emerald-800">
+              <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <Sparkles className="w-6 h-6 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-emerald-800 dark:text-emerald-300">
+                      القبول التلقائي مفعّل — ولديك {pendingRegs} طلب معلّق
+                    </p>
+                    <p className="text-xs text-emerald-700/80 dark:text-emerald-400/80 mt-0.5 leading-relaxed">
+                      هذه الطلبات وصلَت قبل تفعيل القبول التلقائي (أو قبل تحديث قاعدة البيانات)،
+                      لذلك أصحابها لا يستطيعون تسجيل الدخول. فعّلها كلها الآن بضغطة واحدة.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={activateAllPending}
+                  disabled={bulkBusy}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0"
+                >
+                  {bulkBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                  <span>تفعيل كل الطلبات المعلّقة</span>
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           {/* طلبات استرجاع كلمة المرور — تظهر أولاً ولا تُفقد بين الطلبات */}
           {regRequests.filter(r => (r.reviewNote || "").includes("إعادة تعيين كلمة المرور")).map(r => (
             <Card key={`rec-${r.id}`} className="bg-violet-50/80 dark:bg-violet-950/30 border-2 border-violet-400 dark:border-violet-800">

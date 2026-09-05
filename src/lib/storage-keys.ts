@@ -21,4 +21,7 @@ export const STORAGE_KEYS = {
   STUDENT_HISTORY: "studentHistory",
   STUDENT_ACCOUNTS: "studentAccounts",
   INQUIRIES: "inquiries",
+  // الاستبيانات
+  SURVEYS: "surveys",
+  SURVEY_RESPONSES: "surveyResponses",
 } as const

@@ -17,6 +17,7 @@ import {
   getTemplate,
   getTemplateFont,
   getOrnamentPreset,
+  resolveOrnamentOpacity,
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
@@ -46,6 +47,8 @@ interface ExamPaperProps {
   ornamentSize?: number
   /** كثافة الزخارف: low / medium / high */
   ornamentDensity?: OrnamentDensity
+  /** شفافية الزخارف (0..1) — خفيفة دائماً حتى لا تغطي كلام الاختبار */
+  ornamentOpacity?: number
 }
 
 /** لوحة ألوان كل قالب — تُستخدم للحدود والخلفيات برمجياً */
@@ -292,6 +295,7 @@ function QuestionBlock({
   compact,
   ornamentSize,
   ornamentDensity,
+  ornamentOpacity,
 }: {
   question: Question
   index: number
@@ -301,6 +305,7 @@ function QuestionBlock({
   compact?: boolean
   ornamentSize?: number
   ornamentDensity?: OrnamentDensity
+  ornamentOpacity?: number
 }) {
   const header = getQuestionHeader(question)
   const marks = getQuestionMarks(question)
@@ -365,10 +370,21 @@ function QuestionBlock({
       }}
     >
       {showDecorations && (
-        <QuestionOrnaments gradeName={gradeName} index={index} size={ornamentSize} density={ornamentDensity} />
+        <QuestionOrnaments
+          gradeName={gradeName}
+          index={index}
+          size={ornamentSize}
+          density={ornamentDensity}
+          opacity={ornamentOpacity}
+        />
       )}
       {headerEl}
-      <div className={`relative z-10 px-4 ${compact ? "py-2 space-y-2" : "py-3 space-y-3"}`}>
+      {/* مساحة سفلية إضافية عند وجود زخارف: تبقى رموز الزوايا في منطقة فارغة لا فوق الكلام */}
+      <div
+        className={`relative z-10 px-4 ${compact ? "py-2 space-y-2" : "py-3 space-y-3"} ${
+          showDecorations ? (compact ? "pb-4" : "pb-5") : ""
+        }`}
+      >
         {question.subQuestions.map((sq, si) => (
           <React.Fragment key={sq.id}>
             {si > 0 && (
@@ -606,6 +622,7 @@ export function ExamPaper({
   maxPages,
   ornamentSize,
   ornamentDensity,
+  ornamentOpacity,
 }: ExamPaperProps) {
   const template: ExamTemplateId = templateId || exam.templateId || "classic"
   const decorations = showDecorations ?? exam.showDecorations !== false
@@ -626,6 +643,10 @@ export function ExamPaper({
   const preset = getOrnamentPreset(template)
   const effOrnamentSize = ornamentSize ?? exam.ornamentSize ?? preset.size
   const effOrnamentDensity = ornamentDensity ?? exam.ornamentDensity ?? preset.density
+  const effOrnamentOpacity = resolveOrnamentOpacity(
+    ornamentOpacity ?? exam.ornamentOpacity ?? preset.opacity,
+    effOrnamentDensity
+  )
 
   const shellBase: React.CSSProperties =
     template === "classic"
@@ -665,7 +686,12 @@ export function ExamPaper({
           style={{ ...shellBase, fontFamily, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
         >
           {decorations && (
-            <PaperCornerOrnaments gradeName={gradeName} size={effOrnamentSize + 8} density={effOrnamentDensity} />
+            <PaperCornerOrnaments
+              gradeName={gradeName}
+              size={effOrnamentSize + 8}
+              density={effOrnamentDensity}
+              opacity={effOrnamentOpacity + 0.06}
+            />
           )}
 
           <div className="relative z-10 flex flex-col justify-between flex-1 w-full">
@@ -700,6 +726,7 @@ export function ExamPaper({
                   compact={compact}
                   ornamentSize={effOrnamentSize}
                   ornamentDensity={effOrnamentDensity}
+                  ornamentOpacity={effOrnamentOpacity}
                 />
               ))}
             </div>

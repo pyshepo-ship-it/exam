@@ -137,16 +137,37 @@ section("4) خرائط Supabase مقابل مخطط قاعدة البيانات"
 const sync = read("src/lib/supabase/sync.ts")
 const schema = read("supabase/migrations/005_fix_id_types.sql")
 
-// استخراج أعمدة كل جدول من ملف SQL
+// كل ملفات الترحيل بالترتيب — الأعمدة المضافة لاحقًا بـ ALTER TABLE
+// جزء من المخطط الفعلي الحالي، ويجب أن تُحتسب مع أعمدة CREATE TABLE
+const MIGRATIONS_DIR = "supabase/migrations"
+const migrationsSql = readdirSync(join(process.cwd(), MIGRATIONS_DIR))
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((f) => readFileSync(join(process.cwd(), MIGRATIONS_DIR, f), "utf8"))
+  .join("\n")
+
+const ALTER_ADD_RE = (table) =>
+  new RegExp(
+    `ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:public\\.)?${table}\\s+ADD\\s+COLUMN\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?([a-z_][a-z0-9_]*)([^;]*)`,
+    "gi"
+  )
+
+function alterColumns(table) {
+  return [...migrationsSql.matchAll(ALTER_ADD_RE(table))].map((m) => m[1].toLowerCase())
+}
+
+// استخراج أعمدة كل جدول من ملف SQL (+ الأعمدة المضافة بالترحيلات اللاحقة)
 function sqlColumns(table) {
+  const added = alterColumns(table)
   const m = new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\);`).exec(schema)
-  if (!m) return null
-  return m[1]
+  if (!m) return added.length ? [...new Set(added)] : null
+  const created = m[1]
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !/^(PRIMARY|UNIQUE|FOREIGN|CONSTRAINT)/i.test(l))
     .map((l) => l.split(/\s+/)[0])
     .filter(Boolean)
+  return [...new Set([...created, ...added])]
 }
 
 // استخراج المفاتيح من دالة تحويل
@@ -181,11 +202,17 @@ for (const [table, fn] of pairs) {
 section("5) أعمدة NOT NULL محمية من القيم الفارغة")
 function notNullCols(table) {
   const m = new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\);`).exec(schema)
-  if (!m) return []
-  return m[1]
-    .split("\n")
-    .filter((l) => /NOT NULL/.test(l) && !/DEFAULT/.test(l))
-    .map((l) => l.trim().split(/\s+/)[0])
+  const created = !m
+    ? []
+    : m[1]
+        .split("\n")
+        .filter((l) => /NOT NULL/.test(l) && !/DEFAULT/.test(l))
+        .map((l) => l.trim().split(/\s+/)[0])
+  // أعمدة NOT NULL (بلا DEFAULT) أُضيفت بترحيل لاحق
+  const added = [...migrationsSql.matchAll(ALTER_ADD_RE(table))]
+    .filter((x) => /NOT\s+NULL/i.test(x[2]) && !/DEFAULT/i.test(x[2]))
+    .map((x) => x[1].toLowerCase())
+  return [...new Set([...created, ...added])]
 }
 // أعمدة المفاتيح الأجنبية لا تُملأ بقيم وهمية — تُحمى بترشيح السجلات
 // اليتيمة قبل الرفع (انظر pushDues / pushPayments / pushSessions / pushAttendance)

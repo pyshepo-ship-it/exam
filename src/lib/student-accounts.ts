@@ -29,6 +29,7 @@ import {
 } from "./data-storage"
 import {
   fetchStudentById,
+  fetchPublicSettings,
   submitRegistrationRequest,
   submitGroupTransferRequest,
   studentLogin,
@@ -36,7 +37,7 @@ import {
   studentRegisterAuto,
   changeStudentPassword,
 } from "./supabase/sync"
-import { clearStore } from "./memory-store"
+import { clearStore, writeSetting } from "./memory-store"
 import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
 // ------------------------------------------------------------
@@ -64,6 +65,53 @@ export function isAutoApproveRegistration(): boolean {
 
 export function setAutoApproveRegistration(enabled: boolean): void {
   saveSetting(AUTO_APPROVE_REGISTRATION_KEY, enabled ? "1" : "")
+}
+
+/**
+ * مفاتيح إعدادات البوابة التي يجب أن تُقرأ من السحابة قبل أي قرار.
+ *
+ * سبب الإلزام: جهاز الطالب جديد دائماً (ذاكرة الجلسة فارغة ولا تخزين محلي)،
+ * فلو اعتمدنا على الذاكرة فقط لرأى الطالب «التفعيل المباشر» مغلقاً حتى لو
+ * فعّله المعلم — فيُرسل طلباً ينتظر الموافقة ولا يستطيع الدخول. لذلك تُجلب
+ * الإعدادات من Supabase (المصدر الوحيد) قبل التسجيل وقبل تفسير رفض الدخول.
+ */
+const PORTAL_SETTING_KEYS = [
+  REGISTRATION_OPEN_KEY,
+  AUTO_APPROVE_REGISTRATION_KEY,
+  STUDENT_REPORTS_ENABLED_KEY,
+]
+
+export interface PortalSettingsSnapshot {
+  /** هل باب التسجيل مفتوح؟ */
+  open: boolean
+  /** هل التفعيل المباشر (قبول تلقائي) مفعّل؟ */
+  autoApprove: boolean
+  /** هل تقارير الطلاب مفعّلة؟ */
+  reports: boolean
+  /** هل وصلت القيم من السحابة فعلاً؟ */
+  fromCloud: boolean
+}
+
+/** جلب إعدادات البوابة من Supabase وتحديث ذاكرة الجلسة بها (للعرض الفوري) */
+export async function refreshPortalSettings(): Promise<PortalSettingsSnapshot> {
+  let fromCloud = false
+  try {
+    const cloud = await fetchPublicSettings()
+    if (cloud && Object.keys(cloud).length > 0) {
+      fromCloud = true
+      for (const key of PORTAL_SETTING_KEYS) {
+        if (typeof cloud[key] === "string") writeSetting(key, cloud[key])
+      }
+    }
+  } catch {
+    /* تعذر السحاب — تُستخدم القيم الحالية في ذاكرة الجلسة */
+  }
+  return {
+    open: isRegistrationOpen(),
+    autoApprove: isAutoApproveRegistration(),
+    reports: areStudentReportsEnabled(),
+    fromCloud,
+  }
 }
 
 /** هل تقارير الطلاب مفعّلة في البوابة؟ (افتراضياً مفعّلة) */
@@ -248,7 +296,9 @@ export type RegisterResult =
  * لا يمكن التسجيل مرتين بنفس البريد، والتسجيل مغلق إذا أغلق المعلم البوابة.
  */
 export async function registerStudentAccount(input: RegisterInput): Promise<RegisterResult> {
-  if (!isRegistrationOpen()) {
+  // الإعداد من السحابة أولاً: قرار «التفعيل المباشر» ليس تخميناً من ذاكرة جهاز الطالب
+  const portalSettings = await refreshPortalSettings()
+  if (!portalSettings.open) {
     return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
   }
 
@@ -325,7 +375,7 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
   }
 
   // التفعيل المباشر: أنشئ الحساب فوراً عبر الدالة الآمنة بدلاً من طلب ينتظر الموافقة
-  if (isAutoApproveRegistration()) {
+  if (portalSettings.autoApprove) {
     const auto = await studentRegisterAuto({
       name,
       phone,
@@ -344,11 +394,13 @@ export async function registerStudentAccount(input: RegisterInput): Promise<Regi
     if (auto.code === "closed") {
       return { ok: false, error: "التسجيل مغلق حالياً — يرجى التواصل مع المعلم" }
     }
-    if (auto.code !== "not_enabled") {
-      // فشل شبكة/خادم (وليس تغيّر إعداد) — نُبلغ الطالب ولا نحسبها ضمن الحد
-      return { ok: false, error: `تعذر إنشاء حسابك: ${auto.error || "تعذر الاتصال بقاعدة البيانات"}` }
+    if (auto.code === "email_taken" || auto.code === "bad_input") {
+      // خطأ في البيانات نفسها — لا فائدة من إرسال طلب عادي
+      return { ok: false, error: auto.error || "تعذر إنشاء حسابك — تحقق من البيانات وأعد المحاولة" }
     }
-    // auto.code === "not_enabled" → الإعداد تغيّر من جهاز آخر: نرسل طلباً عادياً للموافقة
+    // not_enabled (تغيّر الإعداد من جهاز آخر) أو unavailable (دالة التسجيل المباشر
+    // غير مثبّتة في قاعدة البيانات بعد): لا نفقد تسجيل الطالب — يتحول طلبه
+    // إلى الموافقة اليدوية، ويبقى المعلم قادراً على قبوله بضغطة واحدة.
   }
 
   const res = await submitRegistrationRequest(request)
@@ -566,7 +618,36 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   }
 
   // نتائج سياسة موثوقة من قاعدة البيانات.
-  if (mint.code === "pending") return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
+  if (mint.code === "pending") {
+    // «التفعيل المباشر» مفعّل عند المعلم؟ إذناً الطلب المعلّق خطأ قديم
+    // (سُجِّل قبل تفعيله أو قبل تحديث قاعدة البيانات): نُحدِّث الإعداد من
+    // السحابة ونعيد المحاولة مرة واحدة — قاعدة البيانات المحدّثة تُفعّل
+    // الحساب وتُصدر الجلسة فوراً.
+    const settings = await refreshPortalSettings()
+    if (settings.autoApprove) {
+      const retry = await studentLogin(mail, password, legacyFnvHex(password)).catch(() => null)
+      if (retry && retry.ok && retry.studentId && retry.token) {
+        const now = Date.now()
+        const session: PortalSession = {
+          email: mail,
+          studentId: retry.studentId,
+          name: retry.name || mail,
+          iat: now,
+          exp: now + PORTAL_SESSION_TTL_MS,
+          token: retry.token,
+        }
+        if (typeof window !== "undefined") writeSessionCookie(session)
+        return { ok: true, session }
+      }
+      return {
+        ok: false,
+        status: "pending",
+        error:
+          "التفعيل المباشر مفعّل لكن حسابك لم يُفعَّل بعد — أعد المحاولة بعد دقيقة، وإن استمر أخبر المعلم بالموافقة على طلبك من «طلبات الطلاب»",
+      }
+    }
+    return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
+  }
   if (mint.code === "rejected") return { ok: false, error: mint.error || "تم رفض طلب التسجيل", status: "rejected" }
   if (mint.code === "blocked") return { ok: false, error: mint.error || "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
   if (mint.code === "no_account") return { ok: false, error: mint.error || "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
@@ -722,6 +803,9 @@ function linkAccountToStudent(request: RegistrationRequest, student: Student, no
     email: accountId,
     studentId: student.id,
     active: true,
+    // بصمة كلمة المرور تنتقل من الطلب إلى الحساب (أو تبقى القديمة إن وُجدت)
+    // حتى لا يُمحى hash قائم في السحابة عند الموافقة — فيبقى الدخول ممكناً.
+    passwordHash: existingAccount?.passwordHash || request.passwordHash || undefined,
     createdAt: existingAccount?.createdAt || now,
   }
   saveStudentAccounts(

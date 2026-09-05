@@ -37,6 +37,7 @@ import {
   getStoredAcademicYear,
 } from "./data-storage"
 import { getTeacherName, getTeacherSignatureLine } from "./branding"
+import { DUE_CYCLE_LABELS, dueCycle, duePeriodKey, duePeriodLabel } from "./billing"
 import { formatTime12 } from "./utils"
 import { paginateBlocks } from "./schedule-print"
 import { attemptNeedsResultRelease, effectiveAttemptScore } from "./portal-content"
@@ -321,29 +322,73 @@ function paymentsBlocks(report: StudentReport): Block[] {
     </div>
   `
 
-  // كشف المطابقة الشهرية: استحقاق/مدفوع/متبقي + تاريخ آخر تحصيل — يوضح لولي الأمر
-  // مثال: استحقاق 150 ودُفع 100 والباقي 50 حُصّل لاحقاً في يوم آخر
-  const monthlyRows = report.dues
-    .slice()
-    .sort((a, b) => (a.year - b.year) || (a.month - b.month))
-    .map(d => {
-      const monthPayments = report.payments.filter(p => p.month === d.month && p.year === d.year)
-      const paidForMonth = monthPayments.reduce((s, p) => s + p.amount, 0)
-      const remaining = d.amount - paidForMonth
-      const lastDate = monthPayments.map(p => p.paymentDate).sort().pop()
+  // كشف المطابقة لكل فترة استحقاق (شهر / أسبوع / حصص / مبلغ مخصص):
+  // استحقاق + مدفوع + متبقٍ + تاريخ آخر تحصيل — يوضح لولي الأمر.
+  // الدفعات المرتبطة باستحقاق تُحسب على فترتها، وغير المرتبطة تُجمع في شهرها.
+  interface PeriodRow {
+    key: string
+    label: string
+    cycle: string
+    amount: number
+    paid: number
+    lastDate?: string
+    sort: string
+  }
+  const periodRows = new Map<string, PeriodRow>()
+  const ensureRow = (key: string, label: string, cycle: string, sort: string): PeriodRow => {
+    const found = periodRows.get(key)
+    if (found) return found
+    const row: PeriodRow = { key, label, cycle, amount: 0, paid: 0, sort }
+    periodRows.set(key, row)
+    return row
+  }
+  const keyOfDue = (d: Due) => (dueCycle(d) === "monthly" ? `m-${d.year}-${d.month}` : `p-${duePeriodKey(d)}`)
+  const sortOfDue = (d: Due) => d.dueDate || `${d.year}-${String(d.month).padStart(2, "0")}`
+
+  report.dues.forEach(d => {
+    const cycle = dueCycle(d)
+    const label = cycle === "monthly" ? `${d.month}/${d.year}` : duePeriodLabel(d)
+    ensureRow(keyOfDue(d), label, DUE_CYCLE_LABELS[cycle], sortOfDue(d)).amount += d.amount
+  })
+
+  report.payments.forEach(p => {
+    const linked = p.dueId ? report.dues.find(d => d.id === p.dueId) : undefined
+    if (linked) {
+      const row = ensureRow(
+        keyOfDue(linked),
+        dueCycle(linked) === "monthly" ? `${linked.month}/${linked.year}` : duePeriodLabel(linked),
+        DUE_CYCLE_LABELS[dueCycle(linked)],
+        sortOfDue(linked)
+      )
+      row.paid += p.amount
+      if (!row.lastDate || p.paymentDate > row.lastDate) row.lastDate = p.paymentDate
+      return
+    }
+    const row = ensureRow(`m-${p.year}-${p.month}`, `${p.month}/${p.year}`, DUE_CYCLE_LABELS.monthly,
+      p.paymentDate || `${p.year}-${String(p.month).padStart(2, "0")}`)
+    row.paid += p.amount
+    if (!row.lastDate || p.paymentDate > row.lastDate) row.lastDate = p.paymentDate
+  })
+
+  const monthlyRows = [...periodRows.values()]
+    .sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0))
+    .map(row => {
+      const remaining = Math.round((row.amount - row.paid) * 100) / 100
       const status =
-        remaining <= 0
+        remaining <= 0 && row.amount > 0
           ? `<span style="color:#047857;font-weight:800;">مسدد بالكامل ✓</span>`
-          : paidForMonth > 0
+          : row.paid > 0
           ? `<span style="color:#a16207;font-weight:800;">جزئي — متبقي ${esc(money(remaining))}</span>`
-          : `<span style="color:#b91c1c;font-weight:800;">غير مدفوع</span>`
+          : row.amount > 0
+          ? `<span style="color:#b91c1c;font-weight:800;">غير مدفوع</span>`
+          : `<span style="color:#047857;font-weight:800;">دفعة حرة</span>`
       return `
       <tr>
-        <td style="${TD}">${d.month}/${d.year}</td>
-        <td style="${TD}white-space:nowrap;">${esc(money(d.amount))}</td>
-        <td style="${TD}white-space:nowrap;font-weight:800;color:#047857;">${esc(money(paidForMonth))}</td>
+        <td style="${TD}">${esc(row.label)}${row.cycle !== DUE_CYCLE_LABELS.monthly ? ` <span style="color:#6b7280;font-size:10.5px;">(${esc(row.cycle)})</span>` : ""}</td>
+        <td style="${TD}white-space:nowrap;">${esc(money(row.amount))}</td>
+        <td style="${TD}white-space:nowrap;font-weight:800;color:#047857;">${esc(money(row.paid))}</td>
         <td style="${TD}">${status}</td>
-        <td style="${TD}">${lastDate ? esc(dateLabel(lastDate)) : "—"}</td>
+        <td style="${TD}">${row.lastDate ? esc(dateLabel(row.lastDate)) : "—"}</td>
       </tr>`
     })
 
@@ -351,7 +396,7 @@ function paymentsBlocks(report: StudentReport): Block[] {
     ? `
       <table style="${TABLE}margin-bottom:14px;">
         <tr style="background:#047857;color:#ffffff;">
-          <th style="${TH}">الشهر</th>
+          <th style="${TH}">الفترة</th>
           <th style="${TH}">الاستحقاق</th>
           <th style="${TH}">المدفوع</th>
           <th style="${TH}">الحالة</th>
@@ -363,7 +408,7 @@ function paymentsBlocks(report: StudentReport): Block[] {
 
   const blocks: Block[] = []
   if (duesTable || payRows.length > 0) {
-    blocks.push({ html: sectionTitle("💰 كشف الحساب الشهري") + summary + (duesTable || `<div style="color:#9ca3af;font-size:12.5px;">لا توجد مستحقات مسجلة.</div>`) })
+    blocks.push({ html: sectionTitle("💰 كشف الحساب (حسب فترات الاستحقاق)") + summary + (duesTable || `<div style="color:#9ca3af;font-size:12.5px;">لا توجد مستحقات مسجلة.</div>`) })
   }
 
   const payChunks: string[][] = []

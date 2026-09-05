@@ -172,7 +172,9 @@
 }
 
 @media print {
-  .exam-ornaments { opacity: 0.85; }
+  /* الزخارف تبقى شفافة في الطباعة أيضاً — الشفافية تُضبط من المكوّن نفسه
+     (لا نرفعها هنا حتى لا تغطي كلام الاختبار في الورقة المطبوعة) */
+  .exam-ornaments { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   
   .exam-page {
     box-shadow: none !important;

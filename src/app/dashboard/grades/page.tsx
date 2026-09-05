@@ -58,6 +58,18 @@ import { SchedulePrintDialog } from "@/components/schedule-print-dialog"
 import type { SchedulePrintOptions } from "@/lib/schedule-print"
 import { TimePicker } from "@/components/time-picker"
 import { formatTime12, addDuration } from "@/lib/utils"
+import {
+  normalizeGroupPricing,
+  pricingSummary,
+  pricingShort,
+  sessionsPerMonthFromDays,
+  groupMonthlyFee,
+  groupSessionFee,
+  groupSessionsPerMonth,
+  groupPricingMode,
+  money as moneyLabel,
+  type GroupPricingModeUi,
+} from "@/lib/billing"
 
 // Days of week
 const DAYS = [
@@ -120,7 +132,12 @@ export default function GradesPage() {
     days: [] as string[],
     startTime: "16:00",
     endTime: "18:00",
+    /** طريقة التسعير: سعر شهري أو سعر الحصة × عدد الحصص شهرياً */
+    pricingMode: "monthly" as GroupPricingModeUi,
     monthlyFee: 0,
+    sessionFee: 0,
+    sessionsPerMonth: 0,
+    weeklyFee: 0,
   })
 
   // Load data
@@ -241,7 +258,11 @@ export default function GradesPage() {
         days: group.days,
         startTime: group.startTime,
         endTime: group.endTime,
-        monthlyFee: group.monthlyFee,
+        pricingMode: groupPricingMode(group),
+        monthlyFee: group.monthlyFee || 0,
+        sessionFee: group.sessionFee || groupSessionFee(group) || 0,
+        sessionsPerMonth: group.sessionsPerMonth || groupSessionsPerMonth(group) || 0,
+        weeklyFee: group.weeklyFee || 0,
       })
     } else {
       setEditingGroup(null)
@@ -250,7 +271,11 @@ export default function GradesPage() {
         days: [],
         startTime: "16:00",
         endTime: "18:00",
+        pricingMode: "monthly",
         monthlyFee: 0,
+        sessionFee: 0,
+        sessionsPerMonth: 0,
+        weeklyFee: 0,
       })
     }
     setGroupDialogOpen(true)
@@ -291,14 +316,37 @@ export default function GradesPage() {
       return
     }
 
+    // التسعير: شهري أو بالحصّة — السعر الشهري يُشتق تلقائياً من سعر الحصة × عدد الحصص
+    const pricing = normalizeGroupPricing({
+      pricingMode: groupForm.pricingMode,
+      monthlyFee: groupForm.monthlyFee,
+      sessionFee: groupForm.sessionFee,
+      sessionsPerMonth: groupForm.sessionsPerMonth,
+      weeklyFee: groupForm.weeklyFee,
+      days: groupForm.days,
+    })
+
+    if (groupForm.pricingMode === "session" && !(pricing.sessionFee && pricing.sessionFee > 0)) {
+      toast.error("اكتب سعر الحصة أو اختر التسعير الشهري")
+      return
+    }
+    if (groupForm.pricingMode === "monthly" && !(pricing.monthlyFee > 0)) {
+      toast.error("اكتب السعر الشهري أو اختر التسعير بالحصّة")
+      return
+    }
+
     const groupData: Group = {
       id: editingGroup?.id || Date.now().toString(),
       name: groupForm.name,
       days: groupForm.days,
       startTime: groupForm.startTime,
       endTime: groupForm.endTime,
-      monthlyFee: groupForm.monthlyFee,
+      monthlyFee: pricing.monthlyFee || 0,
       studentsCount: editingGroup?.studentsCount || 0,
+      pricingMode: pricing.pricingMode,
+      sessionFee: pricing.sessionFee,
+      sessionsPerMonth: pricing.sessionsPerMonth,
+      weeklyFee: pricing.weeklyFee,
     }
 
     let updatedGrades = grades.map(grade => {
@@ -529,7 +577,7 @@ export default function GradesPage() {
                               {formatTime12(group.startTime)} - {formatTime12(group.endTime)}
                             </p>
                             <p className="text-gray-500 mt-1">
-                              {group.studentsCount} طالب • {group.monthlyFee} ج.م
+                              {group.studentsCount} طالب • {pricingShort(group) || `${group.monthlyFee} ج.م`}
                             </p>
                           </div>
                         ))
@@ -710,9 +758,16 @@ export default function GradesPage() {
                                       </div>
                                     </TableCell>
                                     <TableCell className="text-gray-900 dark:text-white font-semibold">
-                                      <div className="flex items-center gap-1">
-                                        <DollarSign className="w-4 h-4" />
-                                        {group.monthlyFee} ج.م
+                                      <div className="flex items-start gap-1">
+                                        <DollarSign className="w-4 h-4 mt-0.5 shrink-0" />
+                                        <div className="leading-tight">
+                                          <p>{moneyLabel(groupMonthlyFee(group))}/شهر</p>
+                                          {groupPricingMode(group) === "session" && (
+                                            <p className="text-[11px] font-medium text-gray-500 dark:text-gray-400">
+                                              {moneyLabel(groupSessionFee(group))} × {groupSessionsPerMonth(group)} حصة
+                                            </p>
+                                          )}
+                                        </div>
                                       </div>
                                     </TableCell>
                                     <TableCell>
@@ -966,16 +1021,155 @@ export default function GradesPage() {
               </motion.div>
             )}
 
-            <div>
-              <Label htmlFor="monthlyFee">السعر الشهري (ج.م) *</Label>
-              <Input
-                id="monthlyFee"
-                type="number"
-                placeholder="150"
-                value={groupForm.monthlyFee || ""}
-                onChange={(e) => setGroupForm(prev => ({ ...prev, monthlyFee: parseFloat(e.target.value) || 0 }))}
-                className="mt-1"
-              />
+            {/* ================= التسعير: شهري أو بالحصّة ================= */}
+            <div className="rounded-xl border-2 border-emerald-200 dark:border-emerald-900 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-emerald-800 dark:text-emerald-300 font-extrabold">طريقة حساب السعر *</Label>
+                <span className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80">
+                  اختر ما يناسب نظام مجموعتك
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { id: "monthly", title: "سعر شهري", hint: "مبلغ ثابت كل شهر" },
+                  { id: "session", title: "سعر بالحصّة", hint: "سعر الحصة × عدد الحصص شهرياً" },
+                ] as const).map(mode => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => setGroupForm(prev => ({ ...prev, pricingMode: mode.id }))}
+                    className={`text-right rounded-xl border-2 p-3 transition-all ${
+                      groupForm.pricingMode === mode.id
+                        ? "border-emerald-500 bg-white dark:bg-gray-900 shadow-md"
+                        : "border-gray-200 dark:border-gray-700 bg-white/60 dark:bg-gray-900/40 hover:border-emerald-300"
+                    }`}
+                  >
+                    <p className="text-sm font-extrabold text-gray-900 dark:text-white">{mode.title}</p>
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{mode.hint}</p>
+                  </button>
+                ))}
+              </div>
+
+              {groupForm.pricingMode === "monthly" ? (
+                <div>
+                  <Label htmlFor="monthlyFee">السعر الشهري (ج.م) *</Label>
+                  <Input
+                    id="monthlyFee"
+                    type="number"
+                    min={0}
+                    placeholder="150"
+                    value={groupForm.monthlyFee || ""}
+                    onChange={(e) => setGroupForm(prev => ({ ...prev, monthlyFee: parseFloat(e.target.value) || 0 }))}
+                    className="mt-1 bg-white dark:bg-gray-900"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    سعر استرشادي للحصة:{" "}
+                    <span className="font-bold text-emerald-700 dark:text-emerald-300">
+                      {groupForm.monthlyFee > 0 && (groupForm.sessionsPerMonth || sessionsPerMonthFromDays(groupForm.days)) > 0
+                        ? moneyLabel(
+                            Math.round(
+                              (groupForm.monthlyFee /
+                                (groupForm.sessionsPerMonth || sessionsPerMonthFromDays(groupForm.days))) *
+                                100
+                            ) / 100
+                          )
+                        : "—"}
+                    </span>{" "}
+                    (حسب {groupForm.sessionsPerMonth || sessionsPerMonthFromDays(groupForm.days) || 0} حصة في الشهر)
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="sessionFee">سعر الحصة الواحدة (ج.م) *</Label>
+                    <Input
+                      id="sessionFee"
+                      type="number"
+                      min={0}
+                      placeholder="50"
+                      value={groupForm.sessionFee || ""}
+                      onChange={(e) => setGroupForm(prev => ({ ...prev, sessionFee: parseFloat(e.target.value) || 0 }))}
+                      className="mt-1 bg-white dark:bg-gray-900"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="sessionsPerMonth">كم حصة في الشهر؟ *</Label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Input
+                        id="sessionsPerMonth"
+                        type="number"
+                        min={0}
+                        placeholder="8"
+                        value={groupForm.sessionsPerMonth || ""}
+                        onChange={(e) =>
+                          setGroupForm(prev => ({ ...prev, sessionsPerMonth: parseInt(e.target.value) || 0 }))
+                        }
+                        className="bg-white dark:bg-gray-900"
+                      />
+                      <button
+                        type="button"
+                        title="احسبها تلقائياً من أيام المجموعة المختارة"
+                        onClick={() =>
+                          setGroupForm(prev => ({
+                            ...prev,
+                            sessionsPerMonth: sessionsPerMonthFromDays(prev.days),
+                          }))
+                        }
+                        className="shrink-0 text-[11px] font-bold px-2.5 py-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-gray-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950"
+                      >
+                        من المواعيد
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      أيام المجموعة: {groupForm.days.length || 0} يوم في الأسبوع ≈{" "}
+                      {sessionsPerMonthFromDays(groupForm.days)} حصة شهرياً
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label htmlFor="weeklyFee">سعر الأسبوع (ج.م) — اختياري</Label>
+                    <Input
+                      id="weeklyFee"
+                      type="number"
+                      min={0}
+                      placeholder="يُحسب تلقائياً = سعر الحصة × عدد أيام الأسبوع"
+                      value={groupForm.weeklyFee || ""}
+                      onChange={(e) => setGroupForm(prev => ({ ...prev, weeklyFee: parseFloat(e.target.value) || 0 }))}
+                      className="mt-1 bg-white dark:bg-gray-900"
+                    />
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      يُستخدم عند إنشاء استحقاق أسبوعي من صفحة التحصيل.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* ملخص حي للسعر قبل الحفظ */}
+              <div className="rounded-lg bg-white dark:bg-gray-900 border border-emerald-200 dark:border-emerald-900 p-3">
+                <p className="text-xs font-bold text-gray-700 dark:text-gray-200">
+                  {groupForm.pricingMode === "session"
+                    ? `${moneyLabel(groupForm.sessionFee || 0)} للحصة × ${
+                        groupForm.sessionsPerMonth || sessionsPerMonthFromDays(groupForm.days) || 0
+                      } حصة في الشهر`
+                    : `${moneyLabel(groupForm.monthlyFee || 0)} كل شهر`}
+                </p>
+                <p className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300 mt-1">
+                  السعر الشهري الفعلي:{" "}
+                  {moneyLabel(
+                    groupForm.pricingMode === "session"
+                      ? Math.round(
+                          (groupForm.sessionFee || 0) *
+                            (groupForm.sessionsPerMonth || sessionsPerMonthFromDays(groupForm.days) || 0) *
+                            100
+                        ) / 100
+                      : groupForm.monthlyFee || 0
+                  )}
+                </p>
+                <p className="text-[11px] text-gray-500 mt-1 leading-relaxed">
+                  هذا السعر هو الذي يُستخدم في إنشاء الاستحقاقات (شهرية/أسبوعية/بالحصّة) وفي كشف حساب الطالب
+                  وجدول المواعيد المطبوع.
+                </p>
+              </div>
             </div>
           </div>
           <DialogFooter>
