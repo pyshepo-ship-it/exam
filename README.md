@@ -63,8 +63,22 @@
 > - `supabase/migrations/019_registration_auto_approve_fix.sql` — يصلح `student_login` فيوافق تلقائياً على طلبات التسجيل المعلّقة حين يكون **التفعيل المباشر** مفعلاً: يُنشئ/يُفعّل الطالب وحسابه ويُصدر جلسة الدخول في المحاولة نفسها (كان الطالب يبقى «بانتظار الموافقة» رغم تفعيل الخيار).
 > - `supabase/migrations/020_billing_cycles.sql` — أعمدة التسعير في `groups` (`pricing_mode`, `session_fee`, `sessions_per_month`, `weekly_fee`) وأعمدة دورات الاستحقاق في `dues` (`cycle`, `period_key`, `period_label`, `due_date`, `sessions_count`, `unit_price`, `notes`) مع ترحيل الاستحقاقات القديمة إلى مفاتيح فترات شهرية.
 > - `supabase/migrations/022_survey_once_per_answer.sql` — **ردّ واحد لكل مُجيب في كل نسخة** (يشمل الاستبيانات المجهولة): أعمدة `version` و`response_salt` و`lock_after_submit` على `surveys`، و`version` و`identity_hash` على `survey_responses`، مع بصمة `sha256(الملح | الهوية)` وفهرس فريد على `(survey_id, version, identity_hash)`، ومُشغِّل يرفع النسخة عند تغيّر الأسئلة، ودوال مُحدَّثة (`get_student_surveys`, `get_public_surveys`, `submit_survey_response`) تُعيد `answeredKeys` وتطلب رقم الهاتف من الزائر دائمًا. **لازمة مع 021** (تُصحّح أيضًا مقارنة الأرقام بصيغ 010…/2010…).
-> - `supabase/migrations/021_surveys.sql` — جدولا `surveys` و`survey_responses` مع RLS (الزائر لا يقرأ الردود الخام إطلاقاً) ودوال آمنة: `get_student_surveys`, `get_public_surveys`, `submit_survey_response`. الدوال تتحقق من أن الاستبيان **موجّه فعلاً للمُجيب** قبل حفظ الرد، وأن صلاحية جلسة الطالب تُقارن بنفس صيغة النص `expires_at` المستخدمة في 016/017، وأن هوية الزائر تُستنتج من `students.phone` (جدول `student_accounts` لا يحمل أرقام الهواتف). الملف آمن للتكرار `CREATE OR REPLACE` — من شغّله من قبل يعيده التشغيل لتثبيت الصيغة الحالية.
->
+> - `supabase/migrations/021_surveys.sql` — جدولا `surveys` و`survey_responses` مع RLS (الزائر لا يقرأ الردود الخام إطلاقاً) ودوال آمنة: `get_student_surveys`, `get_public_surveys`, `submit_survey_response`. الدوال تتحقق من أن الاستبيان **موجّه فعلاً للمُجيب** قبل حفظ الرد، وأن صلاحية جلسة الطالب تُقارن بنفس صيغة النص `expires_at` المستخدمة في 016/017، وأن هوية الزائر تُستنتج من `students.phone` (جدول `student_accounts` لا يحمل أرقام الهواتف). الملف آمن للتكرار `CREATE OR REPLACE` — من شغّله من قبل يعيده التشغيل لتثبيت الصيغة الحالية. من هذا الإصدار لم يعد `021` يُنشئ فهارس «ردّ واحد لكل طالب/رقم» القديمة واكتُفي بحذفها، لأن صاحب الحصرية صار `022`.
+> - **pgcrypto و`search_path` (درس من فشل ترحيل فعلي)**: دالة تُثبّت `search_path = public, pg_temp`
+>   وتستدعي `digest(...)` تُنشَأ سليمة ثم تنفجر عند أول استعمال بـ
+>   `42883 function digest(text, unknown) does not exist`، لأن pgcrypto في Supabase تنصبّ في
+>   مخطط `extensions`. لذلك كل دالة تلمس التشفير في `021`/`022` تثبّت
+>   `search_path = public, extensions, pg_temp`، و`scripts/sql-schema-audit.mjs` يرفض أي دالة
+>   تستدعي pgcrypto بلا `extensions` في مسارها، ويفحص توازن خرائط `translate` (الفائض يُتجاهل
+>   بصمت فتُقرأ الأرقام خطأ وتفلت من البصمة).
+> - **الترحيل يفحص نفسه قبل أن يمسّ البيانات**: `022` يتبع تعريف دالاته بكتلة `DO` تختبر أن
+>   البصمة تُرجع ٦٤ خانة سداسية عشرية وأنها `NULL` عند غياب الهوية، وأن `survey_phone_key` تحوّل
+>   `٠١٠١٢٣٤٥٦٧٨` و`+20 101 234 5678` إلى `01012345678` وترفض `12345`. أي فشل يُلغي الترحيل برسالة
+>   عربية واضحة — والتشغيل في SQL Editor معاملة واحدة فلم يتغيّر شيء — بدل أن يظهر الخلل عند أول
+>   ردّ استبيان. وقبل إنشاء الفهرس الفريد تُدمج الردود القديمة المكررة على نفس النسخة بإبقاء
+>   أحدثها (نفس سلوك التطبيق) وإلا فشل الإنشاء برسالة غامضة مثل `could not create unique index`.
+> - **ترتيب التشغيل الآمن**: شغّل `021` ثم `022` (كلاهما آمن للتكرار). لا حاجة لإعادة `022` إن
+>   فشلت مرة: الفشل يُلغي كل شيء، ثم أعد التشغيل بعد تصحيح السبب.>
 > ☁️ لمشروع قائم على Supabase: شغّل `supabase/migrations/015_authoritative_exam_timer.sql` ثم `supabase/portal_fix_and_verify.sql` مرة واحدة قبل نشر هذا الإصدار.
 > - 015 يضيف جلسات المؤقت والتصحيح الخادمي، ويمنع قراءة/إدراج محاولات الاختبار أو مفاتيح التصحيح الخام من الزائر. تُستعاد نتيجة الطالب لاحقاً عبر سر جلسة عشوائي مقيد بالمحاولة نفسها. يحتوي كذلك على توافق عمود هاتف الزائر من 013.
 > - `portal_fix_and_verify.sql` يثبّت/يصلح 016 وميزات 017: جلسة آمنة يصدرها `student_login`، وقراءة مقيّدة عبر `get_student_portal_data` / `get_student_inquiries`، والتسجيل المباشر وتغيير كلمة المرور، ثم يطبع فحص سلامة.

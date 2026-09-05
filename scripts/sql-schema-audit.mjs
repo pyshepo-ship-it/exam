@@ -265,6 +265,51 @@ check(
   /published\s+IS\s+NOT\s+TRUE/.test(sql021) && /deadline\s+IS\s+NOT\s+NULL\s+AND\s+v_survey\.deadline\s*<\s*now\(\)/.test(sql021)
 )
 
+section("2-ج) دوال SQL التي تحتاج pgcrypto (digest / gen_random_bytes)")
+
+// خطأ واقعي حدث في التشغيل: «function digest(text, unknown) does not exist»
+// لأن Supabase ينصب pgcrypto في مخطط extensions، فأي دالة تُثبّت search_path
+// بـ public وحدها لا ترى digest وقت التنفيذ — والتفجير يحدث بعد الترحيل عند
+// أول نداء (الـ SQL لا يُتحقق منه وقت الإنشاء).
+const CRYPTO_FNS = ["digest", "gen_random_bytes", "hmac", "encrypt", "decrypt"]
+const cryptoProblems = []
+
+for (const { file, sql } of sources) {
+  const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w.]+)[\s\S]*?\n\s*AS\s*\$\$([\s\S]*?)\$\$/g
+  let m
+  while ((m = fnRe.exec(sql))) {
+    const name = m[1]
+    const header = m[0].slice(0, m[0].indexOf("AS $$"))
+    const body = m[2]
+    const used = CRYPTO_FNS.filter((f) => new RegExp("\\b" + f + "\\s*\\(").test(body))
+    if (used.length === 0) continue
+    const sp = /SET\s+search_path\s*=\s*([^\n;]*)/i.exec(header)
+    const path = sp ? sp[1].trim() : ""
+    if (!/\bextensions\b/.test(path)) {
+      cryptoProblems.push(
+        `${file}: ${name} — تستخدم ${used.join("/")} لكن search_path لا يشمل extensions (حاليًا: «${path || "غير محدد → مخطط الاتصال"}»)`
+      )
+    }
+  }
+}
+check("كل دالة تستدعي pgcrypto تُضمّن extensions في search_path", cryptoProblems.length === 0, cryptoProblems.join(" | "))
+
+// translate() يتجاهل الفائض بصمت: أطوال مختلفة = أرقام تُقرأ خطأً فتفلت من البصمة
+const translateProblems = []
+for (const { file, sql } of sources) {
+  for (const t of sql.matchAll(/translate\(\s*[^,]+,\s*'([^']*)'\s*,\s*'([^']*)'\s*\)/g)) {
+    if (t[1].length !== t[2].length) {
+      translateProblems.push(`${file}: translate بأطوال مختلفة (${t[1].length} مقابل ${t[2].length})`)
+    }
+  }
+}
+check("خرائط translate موزونة (نفس الطول في المصدر والوجه)", translateProblems.length === 0, translateProblems.join(" | "))
+
+check(
+  "مفتاح الهاتف الموحد: آخر ١١ رقمًا بحد أدنى ١٠ (يشمل 2010… و+20)",
+  /CASE WHEN length\(d\) >= 10 THEN right\(d, 11\) ELSE NULL END/.test(byName("022_survey_once_per_answer.sql"))
+)
+
 section("2-ب) ترحيل 022: ردّ واحد لكل مُجيب في كل نسخة")
 
 const sql022 = byName("022_survey_once_per_answer.sql")
@@ -275,6 +320,16 @@ check(
 check("022: ملح لكل استبيان يمنع توليد البصمات خارج الخادم", /response_salt TEXT NOT NULL DEFAULT ''/.test(sql022) && /gen_random_bytes\(16\)/.test(sql022))
 check("022: القيد الفريد على (survey_id, version, identity_hash)", /CREATE UNIQUE INDEX IF NOT EXISTS uq_survey_response_identity[\s\S]*?ON public\.survey_responses \(survey_id, version, identity_hash\)/.test(sql022))
 check("022: فهارس 021 المسموحة للتكرار أُلغيت", /DROP INDEX IF EXISTS public\.uq_survey_response_student/.test(sql022) && /DROP INDEX IF EXISTS public\.uq_survey_response_phone/.test(sql022))
+
+// لو أعاد 021 إنشاء الفهارس القديمة عند تشغيله مرة ثانية (بعد 022) يعود
+// التكرار ويُمنع الردّ على نسخة جديدة — فيبقى في 021 الحذف فقط بلا إنشاء.
+const m021 = byName("021_surveys.sql")
+const oldUniquenessBack = /CREATE UNIQUE INDEX (IF NOT EXISTS )?uq_survey_response_(student|phone)/.test(m021)
+check(
+  "021 لم يعد يُنشئ فهارس «ردّ واحد» القديمة (ملكية الحصرية لـ 022)",
+  !oldUniquenessBack,
+  oldUniquenessBack ? "021 أعاد إنشاء فهرس فريد قديم — سيطبَّق فوق قاعدة 022 ويكسر الردّ على نسخة جديدة" : ""
+)
 check("022: بصمة المُجيب تُحسب دائمًا قبل الحفظ (ولا مسار بلا بصمة)", /v_hash := public\.survey_response_hash\(v_survey\.response_salt, v_identity\)/.test(sql022) && /IF v_hash IS NULL THEN[\s\S]{0,200}نرفض|لا يمكن ضمان عدم التكرار/.test(sql022))
 const phoneReq =
   /v_phone := public\.survey_phone_key\(p_guest_phone\);[\s\S]{0,600}?IF v_phone IS NULL THEN/.test(sql022) &&

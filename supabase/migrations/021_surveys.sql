@@ -54,15 +54,13 @@ ALTER TABLE public.surveys DROP CONSTRAINT IF EXISTS surveys_audience_chk;
 ALTER TABLE public.surveys
   ADD CONSTRAINT surveys_audience_chk CHECK (audience IN ('all', 'grade', 'group'));
 
--- استجابة واحدة لكل هوية (طالب أو رقم زائر) — الاستبيانات المجهولة تُستثنى
+-- «ردّ واحد لكل هوية» لم يعد يُفرض من هذا الملف إطلاقًا: الفهرسان اللذان كانا
+-- هنا (على student_id وphone معًا) كانا يستثنيان الاستبيانات المجهولة تمامًا،
+-- وهو الثقب الذي سمح بالتكرار. انتقلت القاعدة كلها إلى
+-- 022_survey_once_per_answer.sql (بصمة موقّعة + نسخة + قفل الرد)، وتُحوَّل
+-- الفهارس القديمة إلى DROP فقط حتى لا يعود التكرار لو أُعيد تشغيل 021 بعد الترقية.
 DROP INDEX IF EXISTS public.uq_survey_response_student;
-CREATE UNIQUE INDEX uq_survey_response_student
-  ON public.survey_responses (survey_id, student_id)
-  WHERE student_id IS NOT NULL;
 DROP INDEX IF EXISTS public.uq_survey_response_phone;
-CREATE UNIQUE INDEX uq_survey_response_phone
-  ON public.survey_responses (survey_id, phone)
-  WHERE student_id IS NULL AND phone IS NOT NULL AND phone <> '';
 
 -- ============================================================
 -- RLS
@@ -89,11 +87,16 @@ DROP POLICY IF EXISTS "anon read survey_responses" ON public.survey_responses;
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
-/** توحيد صيغة رقم الهاتف المصري كما في بقية التطبيق (11 أو 12 رقمًا) */
+/** توحيد صيغة رقم الهاتف المصري كما في بقية التطبيق (11 أو 12 رقمًا)
+ *  إرث من هذه النسخة: الدوال التي كانت تستدعيه (get_public_surveys و
+ *  submit_survey_response و survey_response_identity) أعاد 022 تعريفها لتستخدم
+ *  public.survey_phone_key — التي تختزل كل الصيغ إلى آخر ١١ رقمًا فتوحّد
+ *  010…/2010…/+20… على بصمة واحدة. لا تستعمل هذه الدالة في مسار جديد؛ القاعدة
+ *  الموحّدة في survey_phone_key، وبوابة sql-schema-audit تتأكد من ذلك. */
 CREATE OR REPLACE FUNCTION public.survey_norm_phone(p_phone text)
 RETURNS text
 LANGUAGE sql IMMUTABLE
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
   SELECT CASE
     WHEN d IS NULL OR length(d) NOT IN (10, 11, 12) THEN NULL
@@ -110,7 +113,7 @@ $$;
 /** الاستبيانات الموجّهة لطالب معيّن (منشورة وضمن المهلة) */
 CREATE OR REPLACE FUNCTION public.surveys_for_student(p_student_id text)
 RETURNS SETOF public.surveys
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, extensions, pg_temp
 AS $$
   SELECT s.*
   FROM public.surveys s
@@ -132,7 +135,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.get_student_surveys(p_token text)
 RETURNS jsonb
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_sid text;
@@ -168,7 +171,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION public.get_public_surveys(p_phone text DEFAULT NULL)
 RETURNS jsonb
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_norm  text := public.survey_norm_phone(p_phone);
@@ -209,7 +212,7 @@ CREATE OR REPLACE FUNCTION public.submit_survey_response(
   p_guest_group_id text DEFAULT NULL
 )
 RETURNS jsonb
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_survey   public.surveys%ROWTYPE;

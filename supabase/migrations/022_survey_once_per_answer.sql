@@ -37,7 +37,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE OR REPLACE FUNCTION public.survey_response_hash(p_salt TEXT, p_identity TEXT)
 RETURNS TEXT
 LANGUAGE sql IMMUTABLE
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
   SELECT CASE
     WHEN p_identity IS NULL OR p_identity = '' THEN NULL
@@ -56,7 +56,7 @@ REVOKE ALL ON FUNCTION public.survey_response_hash(TEXT, TEXT) FROM PUBLIC;
 CREATE OR REPLACE FUNCTION public.survey_phone_key(p_phone TEXT)
 RETURNS TEXT
 LANGUAGE sql IMMUTABLE
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
   SELECT CASE WHEN length(d) >= 10 THEN right(d, 11) ELSE NULL END
   FROM (
@@ -68,6 +68,32 @@ AS $$
 $$;
 
 REVOKE ALL ON FUNCTION public.survey_phone_key(TEXT) FROM PUBLIC;
+
+-- ------------------------------------------------------------
+-- 1-ج) اختبار ذاتي وقت التثبيت (لا عند أول استعمال):
+--      إن لم تكن pgcrypto مرئية أو كان توحيد الأرقام معطوبًا يتوقف الترحيل
+--      برسالة عربية واضحة — بدل فشل صامت لاحقًا عند أول ردّ استبيان.
+--      التشغيل في SQL Editor داخل معاملة واحدة، فالإلغاء يعني «لم يتغير شيء».
+-- ------------------------------------------------------------
+DO $selftest$
+BEGIN
+  IF coalesce(length(public.survey_response_hash('salt-demo', 'sid:selftest')), 0) <> 64 THEN
+    RAISE EXCEPTION 'فشل survey_response_hash — تأكد من تنصيب pgcrypto (المشروع يعتمد عليها من 016)';
+  END IF;
+  IF coalesce(length(public.survey_response_hash(NULL, NULL)), 0) <> 0 THEN
+    RAISE EXCEPTION 'survey_response_hash يجب أن تُعيد NULL عند غياب الهوية (حتى لا يُحفظ ردّ بلا بصمة)';
+  END IF;
+  IF coalesce(public.survey_phone_key('٠١٠١٢٣٤٥٦٧٨'), '') <> '01012345678' THEN
+    RAISE EXCEPTION 'فشل توحيد أرقام الهاتف (survey_phone_key) — الأرقام العربية-الهندية لا تُحوَّل';
+  END IF;
+  IF coalesce(public.survey_phone_key('+20 101 234 5678'), '') <> '01012345678' THEN
+    RAISE EXCEPTION 'فشل توحيد أرقام الهاتف (survey_phone_key) — الصيغة الدولية لا تُختزل لآخر ١١ رقمًا';
+  END IF;
+  IF public.survey_phone_key('12345') IS NOT NULL THEN
+    RAISE EXCEPTION 'survey_phone_key يجب أن ترفض الأرقام القصيرة';
+  END IF;
+END
+$selftest$;
 
 -- ------------------------------------------------------------
 -- 2) الأعمدة الجديدة
@@ -110,6 +136,31 @@ UPDATE public.survey_responses r
 DROP INDEX IF EXISTS public.uq_survey_response_student;
 DROP INDEX IF EXISTS public.uq_survey_response_phone;
 
+-- قبل الفهرس الفريد: أي ردود مكررة لنفس البصمة على نفس النسخة (كان مسموحًا
+-- في 021) تُدمج بالإبقاء على أحدثها — وهو نفس سلوك التطبيق عند إعادة الإرسال.
+-- بدون هذه الخطوة يفشل إنشاء الفهرس برسالة غامضة «could not create unique index».
+DO $dedupe$
+DECLARE
+  n INT;
+BEGIN
+  DELETE FROM public.survey_responses dup
+  USING (
+    SELECT id,
+           row_number() OVER (
+             PARTITION BY survey_id, version, identity_hash
+             ORDER BY submitted_at DESC, id DESC
+           ) AS rn
+    FROM public.survey_responses
+    WHERE identity_hash IS NOT NULL
+  ) keep
+  WHERE keep.id = dup.id AND keep.rn > 1;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  IF n > 0 THEN
+    RAISE NOTICE 'الاستبيان: حُذفت % ردود مكررة لنفس الهوية على نفس النسخة (أُبقي أحدثها)', n;
+  END IF;
+END
+$dedupe$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS uq_survey_response_identity
   ON public.survey_responses (survey_id, version, identity_hash)
   WHERE identity_hash IS NOT NULL;
@@ -123,7 +174,7 @@ CREATE INDEX IF NOT EXISTS idx_survey_responses_identity
 CREATE OR REPLACE FUNCTION public.survey_touch_version()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
@@ -165,7 +216,7 @@ CREATE TRIGGER trg_surveys_version
 CREATE OR REPLACE FUNCTION public.get_student_surveys(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_sid      TEXT;
@@ -223,7 +274,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.get_public_surveys(p_phone TEXT DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_key TEXT := public.survey_phone_key(p_phone);
@@ -286,7 +337,7 @@ CREATE OR REPLACE FUNCTION public.submit_survey_response(
 )
 RETURNS jsonb
 LANGUAGE plpgsql
-SET search_path = public, pg_temp
+SET search_path = public, extensions, pg_temp
 AS $$
 DECLARE
   v_survey   public.surveys%ROWTYPE;
