@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import toast from "react-hot-toast"
-import { ClipboardList, Send, CalendarClock, CheckCircle2, EyeOff, Search, ListChecks } from "lucide-react"
+import { ClipboardList, Send, CalendarClock, CheckCircle2, EyeOff, Search, ListChecks, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -19,7 +19,16 @@ import {
 import type { Survey, SurveyAnswer } from "@/lib/data-storage"
 import { fetchPublicSurveys, submitSurveyResponse } from "@/lib/supabase/sync"
 import { SurveyFillForm } from "./survey-fill-form"
-import { deadlineLabel, firstUnanswered, isSurveyOpen } from "@/lib/surveys"
+import {
+  canEditAnswer,
+  deadlineLabel,
+  firstUnanswered,
+  hasAnsweredCurrent,
+  hasAnsweredOlderVersion,
+  isSurveyOpen,
+  normalizeSurveyPhone,
+  surveyVersion,
+} from "@/lib/surveys"
 
 /**
  * لوحة الاستبيانات العامة في الصفحة الرئيسية.
@@ -27,11 +36,17 @@ import { deadlineLabel, firstUnanswered, isSurveyOpen } from "@/lib/surveys"
  * تظهر فقط الاستبيانات المنشورة والمفتوحة للزوار، ويجيب الزائر باسمه ورقم
  * هاتفه (بلا تسجيل دخول). إن أُدخل رقم هاتف مطابق لطالب مسجّل تظهر له أيضًا
  * الاستبيانات الموجّهة لصفه أو لمجموعته، وتُربط إجابته بحسابه تلقائيًا في
- * دالة السحابة. الاستبيانات المجهولة لا تطلب اسمًا ولا رقمًا.
+ * دالة السحابة.
+ *
+ * **ردّ واحد فقط لكل شخص في كل نسخة من الاستبيان** — لا يُقبل رد ثانٍ حتى في
+ * الاستبيان المجهول: رقم الهاتف مطلوب دائمًا ويُستخدم لحساب «بصمة» تمنع
+ * التكرار في قاعدة البيانات دون أن يُخزَّن مع الرد. ومن أجاب على نسخة أقدم
+ * (عدّل المعلم الأسئلة) تُفتح له الإجابة من جديد.
  */
 export function PublicSurveysBoard() {
   const [surveys, setSurveys] = useState<Survey[]>([])
-  const [answeredIds, setAnsweredIds] = useState<string[]>([])
+  /** مفاتيح «أجبت»: معرّف الاستبيان + رقم نسخته */
+  const [answeredKeys, setAnsweredKeys] = useState<string[]>([])
   const [available, setAvailable] = useState(false)
 
   const [lookupPhone, setLookupPhone] = useState("")
@@ -49,7 +64,7 @@ export function PublicSurveysBoard() {
     setAvailable(res.available)
     if (!res.available) return
     setSurveys(res.surveys as Survey[])
-    setAnsweredIds(res.answeredSurveyIds || [])
+    setAnsweredKeys(res.answeredKeys || [])
   }, [])
 
   useEffect(() => {
@@ -57,7 +72,7 @@ export function PublicSurveysBoard() {
   }, [load])
 
   const searchByPhone = async () => {
-    const phone = lookupPhone.trim()
+    const phone = normalizeSurveyPhone(lookupPhone)
     setLookupBusy(true)
     await load(phone)
     setLookupBusy(false)
@@ -71,7 +86,8 @@ export function PublicSurveysBoard() {
   const openSurvey = (survey: Survey) => {
     setActive(survey)
     setAnswers({})
-    setGuestPhone(survey.anonymous ? "" : lookupPhone.trim())
+    // الرقم مطلوب في كل الحالات (حتى المجهول): هو ما يمنع الرد المكرر
+    setGuestPhone(lookupPhone.trim())
   }
 
   const send = async () => {
@@ -82,16 +98,21 @@ export function PublicSurveysBoard() {
       return
     }
     const anonymous = active.anonymous === true
-    if (!anonymous) {
-      if (guestName.trim().length < 2) {
-        toast.error("اكتب اسمك كاملًا")
-        return
-      }
-      const digits = guestPhone.replace(/\D/g, "")
-      if (digits.length < 10) {
-        toast.error("اكتب رقم هاتف صحيح (11 رقمًا)")
-        return
-      }
+    // الرقم إلزامي دائمًا — بدونه لا يمكن ضمان عدم تكرار الرد (يرفضه الخادم كذلك)
+    // تُوحَّد الأرقام العربية-الهندية قبل التحقق والإرسال، وإلا ضاعت البصمة
+    // ومنعُ التكرار الذي يعتمد عليها
+    const digits = normalizeSurveyPhone(guestPhone)
+    if (!digits) {
+      toast.error("اكتب رقم هاتف صحيح (11 رقمًا) — يُستخدم لمنع تكرار إجابتك فقط")
+      return
+    }
+    if (!anonymous && guestName.trim().length < 2) {
+      toast.error("اكتب اسمك كاملًا")
+      return
+    }
+    if (hasAnsweredCurrent(active, answeredKeys)) {
+      toast.error("أجبت على هذا الاستبيان بالفعل — لا يمكن إرسال رد آخر على نفس الأسئلة")
+      return
     }
 
     const payload: Record<string, SurveyAnswer> = {}
@@ -105,7 +126,8 @@ export function PublicSurveysBoard() {
       surveyId: active.id,
       answers: payload,
       guestName: anonymous ? "" : guestName.trim(),
-      guestPhone: anonymous ? "" : guestPhone.trim(),
+      // الرقم يُرسل دائمًا: الخادم يحسب منه البصمة ثم يتخلص منه في المجهول
+      guestPhone: digits,
     })
     setBusy(false)
 
@@ -113,8 +135,17 @@ export function PublicSurveysBoard() {
       toast.error(res.error || "تعذر إرسال الاستبيان")
       return
     }
-    toast.success("وصلت إجابتك للمعلم — شكرًا لك 🌟")
-    setAnsweredIds(prev => (prev.includes(active.id) ? prev : [...prev, active.id]))
+    toast.success(
+      res.code === "updated"
+        ? "تم تحديث إجابتك — ردّك ما زال واحدًا ولا يُحسب مرتين"
+        : "وصلت إجابتك للمعلم — شكرًا لك 🌟"
+    )
+    setAnsweredKeys(prev => {
+      const k = `${active.id}:${res.version ?? surveyVersion(active)}`
+      return prev.includes(k) ? prev : [...prev, k]
+    })
+    // الزائر لا يرى ردّه القديم: التحديث يستبدل كل الإجابات، فنعيد تحميل اللوحة
+    load(lookupPhone.trim())
     setActive(null)
     setAnswers({})
     setGuestName("")
@@ -139,7 +170,7 @@ export function PublicSurveysBoard() {
       {/* البحث برقم الهاتف (اختياري) */}
       <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-3 flex flex-col sm:flex-row sm:items-end gap-2">
         <div className="flex-1">
-          <Label className="text-xs text-gray-500">رقم هاتفك (اختياري)</Label>
+          <Label className="text-xs text-gray-500">رقم هاتفك (لاسترجاع إجاباتك)</Label>
           <Input
             inputMode="tel"
             dir="ltr"
@@ -158,7 +189,10 @@ export function PublicSurveysBoard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {surveys.map((survey, index) => {
-          const answered = answeredIds.includes(survey.id)
+          // «تمت الإجابة» مربوط بالنسخة الحالية من الأسئلة لا بالاستبيان نفسه
+          const answered = hasAnsweredCurrent(survey, answeredKeys)
+          const answeredOlder = !answered && hasAnsweredOlderVersion(survey, answeredKeys)
+          const editable = answered && canEditAnswer(survey, true)
           const open = isSurveyOpen(survey)
           return (
             <motion.div
@@ -174,7 +208,7 @@ export function PublicSurveysBoard() {
                   variant={answered ? "default" : "secondary"}
                   className={`text-[10px] shrink-0 ${answered ? "bg-emerald-600 hover:bg-emerald-600" : ""}`}
                 >
-                  {answered ? "تمت الإجابة" : open ? "مفتوح" : "منتهٍ"}
+                  {answered ? "تمت الإجابة — ردّ واحد" : answeredOlder ? "نسخة جديدة من الأسئلة" : open ? "مفتوح" : "منتهٍ"}
                 </Badge>
               </div>
 
@@ -194,28 +228,44 @@ export function PublicSurveysBoard() {
                 {survey.anonymous && (
                   <span className="flex items-center gap-1 text-amber-600">
                     <EyeOff className="h-3.5 w-3.5" />
-                    بلا اسم
+                    بلا اسم — رقمك لمنع التكرار فقط
                   </span>
                 )}
+                <span className="flex items-center gap-1 text-gray-400">
+                  <Lock className="h-3.5 w-3.5" />
+                  رد واحد لكل رقم • نسخة {surveyVersion(survey)}
+                </span>
               </div>
 
-              <div className="mt-auto flex items-center gap-2">
-                {open ? (
+              <div className="mt-auto flex flex-wrap items-center gap-2">
+                {open && !answered && (
                   <Button
                     size="sm"
                     onClick={() => openSurvey(survey)}
                     className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700"
                   >
-                    {answered ? "شكراً — إجابة أخرى" : "الإجابة الآن"}
+                    {answeredOlder ? "الإجابة على الأسئلة الجديدة" : "الإجابة الآن"}
                     <Send className="h-3.5 w-3.5 mr-1" />
                   </Button>
-                ) : (
+                )}
+                {open && answered && editable && !survey.lockAfterSubmit && (
+                  <Button size="sm" variant="outline" onClick={() => openSurvey(survey)}>
+                    تصحيح إجابتي (يبقى ردًّا واحدًا)
+                    <Send className="h-3.5 w-3.5 mr-1" />
+                  </Button>
+                )}
+                {!open && (
                   <p className="text-xs text-gray-500">انتهى موعد هذا الاستبيان</p>
                 )}
-                {answered && open && (
+                {answered && (
                   <span className="text-[11px] text-emerald-600 flex items-center gap-1">
                     <CheckCircle2 className="h-3.5 w-3.5" />
-                    وصلنا ردك بهذا الرقم
+                    وصلنا ردّك بهذا الرقم ولا يُقبل رد آخر
+                  </span>
+                )}
+                {answeredOlder && !answered && (
+                  <span className="text-[11px] text-indigo-600">
+                    تغيّرت أسئلة الاستبيان — إجابتك السابقة محفوظة على النسخة {Math.max(1, surveyVersion(survey) - 1)}
                   </span>
                 )}
               </div>
@@ -236,8 +286,8 @@ export function PublicSurveysBoard() {
                 </DialogDescription>
               </DialogHeader>
 
-              {!active.anonymous && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+              <div className={`grid grid-cols-1 ${active.anonymous ? "sm:grid-cols-1" : "sm:grid-cols-2"} gap-3 rounded-xl border border-gray-200 dark:border-gray-700 p-3`}>
+                {!active.anonymous && (
                   <div>
                     <Label className="text-xs">الاسم *</Label>
                     <Input
@@ -247,22 +297,24 @@ export function PublicSurveysBoard() {
                       className="mt-1"
                     />
                   </div>
-                  <div>
-                    <Label className="text-xs">رقم الهاتف *</Label>
-                    <Input
-                      inputMode="tel"
-                      dir="ltr"
-                      placeholder="01xxxxxxxxx"
-                      value={guestPhone}
-                      onChange={e => setGuestPhone(e.target.value)}
-                      className="mt-1 text-left"
-                    />
-                  </div>
-                  <p className="text-[11px] text-gray-500 sm:col-span-2">
-                    يُستخدم رقمك مرة واحدة لربط إجابتك بحسابك إن كنت مسجلًا، ولمنع الرد المكرر
-                  </p>
+                )}
+                <div>
+                  <Label className="text-xs">رقم الهاتف *</Label>
+                  <Input
+                    inputMode="tel"
+                    dir="ltr"
+                    placeholder="01xxxxxxxxx"
+                    value={guestPhone}
+                    onChange={e => setGuestPhone(e.target.value)}
+                    className="mt-1 text-left"
+                  />
                 </div>
-              )}
+                <p className="text-[11px] text-gray-500 sm:col-span-2">
+                  {active.anonymous
+                    ? "الاستبيان مجهول: لا يُحفظ اسمك ولا رقمك مع الإجابات — يُحسب من رقمك «بصمة» تمنع تكرار ردّك مرة أخرى فقط."
+                    : "يُستخدم رقمك لربط إجابتك بحسابك إن كنت مسجلًا، ولمنع الرد المكرر على نفس الأسئلة."}
+                </p>
+              </div>
 
               <div className="py-2">
                 <SurveyFillForm survey={active} answers={answers} onChange={setAnswers} disabled={busy} />
@@ -271,7 +323,7 @@ export function PublicSurveysBoard() {
               {active.anonymous && (
                 <p className="text-[11px] text-amber-600 flex items-center gap-1">
                   <EyeOff className="h-3.5 w-3.5" />
-                  استبيان مجهول: لا يُطلب اسمك ولا رقمك ولا يُسجَّلان مع الإجابات
+                  استبيان مجهول: رقمك لا يُخزَّن مع الإجابات، ويُستخدم لمنع ردّ ثانٍ باسمك
                 </p>
               )}
 

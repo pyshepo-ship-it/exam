@@ -163,6 +163,52 @@ check(
   typeProblems.join(" | ")
 )
 
+// ------------------------------------------------------------
+// ١-ب) متغيرات INTO غير المعلنة + تطابق أعداد أعمدة INSERT/VALUES
+//      (هذا النوع لا يظهر إلا عند أول نداء فعلي للدالة في Supabase)
+// ------------------------------------------------------------
+const FN_BODY_RE =
+  /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\([\s\S]*?\)\s*RETURNS[\s\S]*?\$\$([\s\S]*?)\$\$/gi
+const varProblems = []
+const arityProblems = []
+
+for (const { file, sql } of sources) {
+  for (const m of sql.matchAll(FN_BODY_RE)) {
+    const fn = m[1]
+    const body = m[2]
+    const declBlock = /\bDECLARE\b([\s\S]*?)\bBEGIN\b/i.exec(body)
+    // كل سطر في DECLARE يبدأ بمعرّف: ذلك المعرّف معلن (يشمل var table%ROWTYPE)
+    const declared = new Set(
+      (declBlock ? declBlock[1] : "")
+        // فاصلة منقوطة أولًا: سطر واحد قد يعلن عدة متغيرات (v_a jsonb; v_b jsonb;)
+        .split(";")
+        .map((seg) => seg.replace(/--[^\n]*/g, "").trim())
+        .map((seg) => /^([a-z_][a-z0-9_]*)\s+\S/i.exec(seg))
+        .filter(Boolean)
+        .map((x) => x[1].toLowerCase())
+    )
+    // SELECT ... INTO v_a, v_b — (INSERT INTO table مُستثنى: ليس متغيرات)
+    for (const im of body.matchAll(/(?<!INSERT\s)\bINTO\s+([a-z_][a-z0-9_]*(?:\s*,\s*[a-z_][a-z0-9_]*)*)/gi)) {
+      for (const raw of im[1].split(",")) {
+        const v = raw.trim().toLowerCase()
+        if (!v) continue
+        if (!declared.has(v)) varProblems.push(`${file}: ${fn} — المتغير «${v}» في INTO غير معلن في DECLARE`)
+      }
+    }
+    // INSERT INTO t (a,b,c) VALUES (x,y) → تطابق العدد
+    for (const im of body.matchAll(/INSERT\s+INTO\s+([a-z_][a-z0-9_]*)\s*\(([^)]*)\)\s*\n?\s*VALUES\s*\(([^)]*)\)/gi)) {
+      const cols = im[2].split(",").map((x) => x.trim()).filter(Boolean)
+      const vals = im[3].split(",").map((x) => x.trim()).filter(Boolean)
+      if (cols.length !== vals.length) {
+        arityProblems.push(`${file}: ${fn} — INSERT INTO ${im[1]}: ${cols.length} عمود مقابل ${vals.length} قيمة`)
+      }
+    }
+  }
+}
+
+check("كل متغير في جمل INTO معلن في كتلة DECLARE", varProblems.length === 0, varProblems.join(" | "))
+check("أعمدة INSERT وقيمها متساوية العدد في دوال SQL", arityProblems.length === 0, arityProblems.join(" | "))
+
 section("2) سلامة ترحيلات هذا الإصدار (019/020/021)")
 
 const byName = (n) => sources.find((s) => s.file.endsWith(n))?.sql || ""
@@ -219,18 +265,61 @@ check(
   /published\s+IS\s+NOT\s+TRUE/.test(sql021) && /deadline\s+IS\s+NOT\s+NULL\s+AND\s+v_survey\.deadline\s*<\s*now\(\)/.test(sql021)
 )
 
+section("2-ب) ترحيل 022: ردّ واحد لكل مُجيب في كل نسخة")
+
+const sql022 = byName("022_survey_once_per_answer.sql")
+check(
+  "022: version على surveys وsurvey_responses (افتراضي 1)",
+  (sql022.match(/ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1/g) || []).length >= 2
+)
+check("022: ملح لكل استبيان يمنع توليد البصمات خارج الخادم", /response_salt TEXT NOT NULL DEFAULT ''/.test(sql022) && /gen_random_bytes\(16\)/.test(sql022))
+check("022: القيد الفريد على (survey_id, version, identity_hash)", /CREATE UNIQUE INDEX IF NOT EXISTS uq_survey_response_identity[\s\S]*?ON public\.survey_responses \(survey_id, version, identity_hash\)/.test(sql022))
+check("022: فهارس 021 المسموحة للتكرار أُلغيت", /DROP INDEX IF EXISTS public\.uq_survey_response_student/.test(sql022) && /DROP INDEX IF EXISTS public\.uq_survey_response_phone/.test(sql022))
+check("022: بصمة المُجيب تُحسب دائمًا قبل الحفظ (ولا مسار بلا بصمة)", /v_hash := public\.survey_response_hash\(v_survey\.response_salt, v_identity\)/.test(sql022) && /IF v_hash IS NULL THEN[\s\S]{0,200}نرفض|لا يمكن ضمان عدم التكرار/.test(sql022))
+const phoneReq =
+  /v_phone := public\.survey_phone_key\(p_guest_phone\);[\s\S]{0,600}?IF v_phone IS NULL THEN/.test(sql022) &&
+  // الأرقام العربية-الهندية تُوحَّد قبل المقارنة، وإلافلت الطالب من البصمة بتغيير صيغة الكتابة
+  /translate\(coalesce\(p_phone, ''\), '٠١٢٣٤٥٦٧٨٩/.test(sql022)
+check("022: رقم الهاتف مطلوب للزائر (بمفتاح موحّد) قبل أي تفريع للـ anonymous", phoneReq)
+check("022: رقم الطالب يُطابق بآخر ١١ رقمًا (المقارنة الحرفية كانت تفشل مع 2010…)",
+  (sql022.match(/public\.survey_phone_key\(st\.phone\) = v_(?:key|phone)/g) || []).length >= 2)
+check("022: الرد المخزَّن يحمل مفتاح الهاتف الموحد لا الصيغة الأصلية", /phone = COALESCE\(public\.survey_phone_key\(r\.phone\), r\.phone\)/.test(sql022))
+check("022: تكرار الرد = تحديث لردّه هو (صف واحد فقط) أو رفض عند القفل", /IF v_existing IS NOT NULL THEN[\s\S]{0,900}UPDATE public\.survey_responses/.test(sql022) && /lock_after_submit IS TRUE/.test(sql022))
+{
+  // الترتيب جوهري: لو حُذفت الهوية قبل حساب البصمة لتعطّل منع التكرار في المجهول
+  const iHash = sql022.indexOf("v_hash := public.survey_response_hash(")
+  const iStrip = sql022.indexOf("v_sid   := NULL;")
+  check("022: حذف الهويات يحدث بعد حساب البصمة (لا قبله)", iHash > -1 && iStrip > -1 && iStrip > iHash, `hash=${iHash} strip=${iStrip}`)
+}
+check("022: مشغّل يرفع النسخة عند تغيّر الأسئلة ولا يقبل التنزيل", /NEW\.questions IS DISTINCT FROM OLD\.questions[\s\S]{0,200}NEW\.version := OLD\.version \+ 1/.test(sql022) && /GREATEST\(coalesce\(NEW\.version, 1\), coalesce\(OLD\.version, 1\)\)/.test(sql022))
+check("022: الملح لا يخرج لأي عميل (يُستبعد من حمولات القراءة)", (sql022.match(/- 'response_salt'/g) || []).length >= 2)
+check("022: بصمة الرد لا تُرسل مع ردود الطالب", /to_jsonb\(r\) - 'identity_hash'/.test(sql022))
+check("022: دالة البصمة داخلية بلا صلاحيات عامة", /REVOKE ALL ON FUNCTION public\.survey_response_hash\(TEXT, TEXT\) FROM PUBLIC/.test(sql022))
+check("022: حماية إغراق للزوار (حد ردود في الساعة)", /identity_hash = v_hash[\s\S]{0,200}1 hour/.test(sql022))
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن
 const syncSrc = readFileSync("src/lib/supabase/sync.ts", "utf8")
+
+section("3-ب) مسار الحفظ المحلي يطابق قواعد الخادم")
+
+const localPath = syncSrc.slice(syncSrc.indexOf("export async function submitSurveyResponse"))
+check("البصمة المحلية تُبنى من رقم الزائر (guestPhone) لا حقل غير موجود",
+  /localIdentityKey\(\{\s*token:\s*input\.token,\s*phone:\s*input\.guestPhone\s*\}\)/.test(localPath))
+check("المسار المحلي يحذف الهوية في الاستبيان المجهول (كما يفعل الخادم)",
+  /localIdentityPayload\(input, survey\?\.anonymous === true\)/.test(localPath) &&
+  /function localIdentityPayload[\s\S]{0,420}studentName: ""/.test(syncSrc))
+check("الرقم المحفوظ محليًا موحَّد بآخر ١١ رقمًا", /phone: normalizeSurveyPhone\(input\.guestPhone/.test(syncSrc))
+check("خطة الرد تُستبدل في الذاكرة ولا تُراكم صفوفًا", /exists \? prev\.map/.test(localPath))
 const mapperOf = {
   surveys: /const toSurveyRow[\s\S]*?\n\}\)/,
   survey_responses: /const toSurveyResponseRow[\s\S]*?\n\}\)/,
 }
 
 const REQUIRED = {
-  surveys: ["id", "title", "audience", "published", "allow_guests", "anonymous"],
-  survey_responses: ["id", "survey_id", "answers"],
+  surveys: ["id", "title", "audience", "published", "allow_guests", "anonymous", "version"],
+  survey_responses: ["id", "survey_id", "answers", "version"],
 }
 
 for (const [table, re] of Object.entries(mapperOf)) {
@@ -245,6 +334,16 @@ for (const [table, re] of Object.entries(mapperOf)) {
   const missing = (REQUIRED[table] || []).filter((k) => !keys.includes(k))
   check(`${table}: الحقول الإلزامية مرسلة دائماً`, missing.length === 0, missing.join(", "))
 }
+
+// ملح الاستبيان سرّ داخلي: لا يُرسل ولا يُخزَّن في ذاكرة الجلسة
+check("sync.ts لا يرسل response_salt إلى قاعدة البيانات إطلاقًا", !/response_salt:\s/.test(syncSrc))
+check("toSurveyResponseRow لا يخلط identity_hash مع الحقول المرسلة", !/identity_hash:/.test(syncSrc))
+// قارئَا الجداول يجب أن يمرّرا رقم النسخة (ولوافتراضياً ١) حتى تُقارن «أجبت» بالنسخة الصحيحة
+const versionReaders = (syncSrc.match(/version:\s*Number\(row\.version\)\s*\|\|\s*1/g) || []).length
+check("fromSurveyRow و fromSurveyResponseRow يمرّران version من الصف", versionReaders >= 2, `عدد المواضع = ${versionReaders}`)
+const versionWriters = (syncSrc.match(/version:\s*Math\.max\(1,\s*Math\.round\(Number\([rv]\.version\)\s*\|\|\s*1\)\)/g) || []).length
+check("خريطةَا الرفع ترسلان version ≥ 1 (بلا نسخة صفرية تكسر الفهرس الفريد)", versionWriters >= 2, `عدد المواضع = ${versionWriters}`)
+check("مدخلات sendSurveys تحمل answeredKeys من الدالتين", (syncSrc.match(/answeredKeys/g) || []).length >= 3)
 
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${failures.length} فاشل\x1b[0m`)

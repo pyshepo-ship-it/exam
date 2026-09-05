@@ -17,6 +17,7 @@ import {
   purgeLegacyLocalStorage,
 } from "../memory-store";
 import { STORAGE_KEYS } from "../storage-keys";
+import { localIdentityKey, normalizeSurveyPhone, planLocalSurveySubmit } from "../surveys";
 
 // ---------- أنواع بنيوية (للتجنب الاستيراد الدائري) ----------
 interface GroupShape {
@@ -980,6 +981,10 @@ export const toSurveyRow = (v: any) => ({
   allow_guests: v.allowGuests === true,
   anonymous: v.anonymous === true,
   deadline: v.deadline || null,
+  // النسخة يرفعها مُشغِّل في قاعدة البيانات عند تغيّر الأسئلة؛ العميل يرسل
+  // رقمه ليبقى عرضُه مطابقاً، ولا يُقبل أي تنزيل للرقم في الخادم (ترحيل 022).
+  version: Math.max(1, Math.round(Number(v.version) || 1)),
+  lock_after_submit: v.lockAfterSubmit === true,
   created_at: v.createdAt || new Date().toISOString(),
   updated_at: v.updatedAt || v.createdAt || new Date().toISOString(),
 });
@@ -996,6 +1001,8 @@ export const fromSurveyRow = (row: any) => ({
   allowGuests: row.allow_guests === true,
   anonymous: row.anonymous === true,
   deadline: nil(row.deadline),
+  version: Number(row.version) || 1,
+  lockAfterSubmit: row.lock_after_submit === true,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -1003,6 +1010,7 @@ export const fromSurveyRow = (row: any) => ({
 export const toSurveyResponseRow = (r: any) => ({
   id: r.id,
   survey_id: r.surveyId,
+  version: Math.max(1, Math.round(Number(r.version) || 1)),
   student_id: r.studentId || null,
   student_name: r.studentName || "",
   phone: r.phone || null,
@@ -1015,6 +1023,7 @@ export const toSurveyResponseRow = (r: any) => ({
 export const fromSurveyResponseRow = (row: any) => ({
   id: row.id,
   surveyId: row.survey_id,
+  version: Number(row.version) || 1,
   studentId: nil(row.student_id),
   studentName: row.student_name || "",
   phone: nil(row.phone),
@@ -1064,7 +1073,7 @@ export function pushSurveyResponses(rows: any[]) {
  */
 export async function fetchStudentSurveys(
   token: string
-): Promise<{ surveys: any[]; responses: any[] } | null> {
+): Promise<{ surveys: any[]; responses: any[]; answeredKeys: string[] } | null> {
   const sb = getSupabase();
   if (!sb || !token) return null;
   try {
@@ -1078,6 +1087,10 @@ export async function fetchStudentSurveys(
     return {
       surveys: (Array.isArray(payload.surveys) ? payload.surveys : []).map(fromSurveyRow),
       responses: (Array.isArray(payload.responses) ? payload.responses : []).map(fromSurveyResponseRow),
+      // مفاتيح «أجبت» لكل نسخة — تشمل الردود المجهولة (تُكتشف بالبصمة وحدها)
+      answeredKeys: Array.isArray(payload.answeredKeys)
+        ? payload.answeredKeys.map((k: unknown) => String(k))
+        : [],
     };
   } catch (e) {
     console.warn("fetchStudentSurveys:", e);
@@ -1097,25 +1110,68 @@ export interface SurveySubmitInput {
   guestGroupId?: string;
 }
 
+/**
+ * الهوية المحفوظة محليًا: في الاستبيان المجهول لا اسم ولا رقم ولا صف —
+ * تُستخدم البصمة (identityKey) لمنع التكرار فقط، تمامًا كما في الخادم.
+ */
+function localIdentityPayload(input: SurveySubmitInput, anonymous: boolean) {
+  if (anonymous) return { studentName: "", phone: undefined, gradeId: undefined, groupId: undefined };
+  return {
+    studentName: input.guestName || "",
+    phone: normalizeSurveyPhone(input.guestPhone || "") || undefined,
+    gradeId: input.guestGradeId,
+    groupId: input.guestGroupId,
+  };
+}
+
+/** نتيجة الإرسال: updated = تعديل ردّه هو (ليس ردًّا ثانيًا) */
+export interface SurveySubmitResult {
+  ok: boolean
+  error?: string
+  responseId?: string
+  /** true حين كان الرد موجودًا فحُدِّت إجاباته (لا يُنشأ صف ثانٍ أبدًا) */
+  updated?: boolean
+  /** locked = المعلم قفل التعديل بعد الإرسال */
+  code?: "ok" | "updated" | "locked"
+  version?: number
+}
+
 /** إرسال رد على استبيان — يُدرج في السحابة أولاً (لا تخزين محلي للبيانات) */
 export async function submitSurveyResponse(
   input: SurveySubmitInput
-): Promise<{ ok: boolean; error?: string; responseId?: string }> {
+): Promise<SurveySubmitResult> {
   const sb = getSupabase();
   if (!sb) {
-    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط
-    const local = {
-      id: `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — بنفس قاعدة الخادم
+    const all = storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES);
+    const survey = storeRows<any>(STORAGE_KEYS.SURVEYS).find((x) => x.id === input.surveyId);
+    // البصمة المحلية من سرّ الجلسة (طالب) أو رقم الزائر — نفس حقول الإدخال
+    const identity = localIdentityKey({ token: input.token, phone: input.guestPhone });
+    const plan = planLocalSurveySubmit(all, survey, identity);
+    if (plan.action === "reject") return { ok: false, error: plan.error, code: "locked" };
+    const nowIso = new Date().toISOString();
+    const payload = {
       surveyId: input.surveyId,
-      studentName: input.guestName || "",
-      phone: input.guestPhone,
-      gradeId: input.guestGradeId,
-      groupId: input.guestGroupId,
+      ...localIdentityPayload(input, survey?.anonymous === true),
       answers: input.answers,
-      createdAt: new Date().toISOString(),
+      version: plan.version,
+      identityKey: identity,
     };
-    setStore(STORAGE_KEYS.SURVEY_RESPONSES, [...storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES), local]);
-    return { ok: true, responseId: local.id };
+    let saved: any;
+    if (plan.action === "update" && plan.id) {
+      saved = { ...all.find((r) => r.id === plan.id), ...payload, updatedAt: nowIso };
+      setStore(STORAGE_KEYS.SURVEY_RESPONSES, all.map((r) => (r.id === plan.id ? saved : r)));
+    } else {
+      saved = { id: `sr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, createdAt: nowIso, ...payload };
+      setStore(STORAGE_KEYS.SURVEY_RESPONSES, [...all, saved]);
+    }
+    return {
+      ok: true,
+      responseId: saved.id,
+      updated: plan.action === "update",
+      code: plan.action === "update" ? "updated" : "ok",
+      version: plan.version,
+    };
   }
   try {
     const { data, error } = await sb.rpc("submit_survey_response", {
@@ -1133,7 +1189,12 @@ export async function submitSurveyResponse(
     }
     const payload = (data || {}) as Record<string, any>;
     if (payload.ok !== true) {
-      return { ok: false, error: payload.error || "تعذر إرسال الاستبيان" };
+      return {
+        ok: false,
+        error: payload.error || "تعذر إرسال الاستبيان",
+        code: payload.code === "locked" ? "locked" : undefined,
+        responseId: typeof payload.responseId === "string" ? payload.responseId : undefined,
+      };
     }
     // بعد نجاح السحابة فقط نُحدِّث ذاكرة الجلسة للعرض الفوري
     const saved = payload.response
@@ -1143,10 +1204,23 @@ export async function submitSurveyResponse(
           surveyId: input.surveyId,
           studentName: input.guestName || "",
           answers: input.answers,
+          version: Number(payload.version) || 1,
           createdAt: new Date().toISOString(),
         };
-    setStore(STORAGE_KEYS.SURVEY_RESPONSES, [...storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES), saved]);
-    return { ok: true, responseId: saved.id };
+    // الاستبدال لا الإضافة: تحديث ردّ قديم لا يصنع نسخة ثانية في الجلسة
+    const prev = storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES);
+    const exists = prev.some((r) => r.id === saved.id);
+    setStore(
+      STORAGE_KEYS.SURVEY_RESPONSES,
+      exists ? prev.map((r) => (r.id === saved.id ? saved : r)) : [...prev, saved]
+    );
+    return {
+      ok: true,
+      responseId: saved.id,
+      updated: payload.updated === true,
+      code: payload.updated === true ? "updated" : "ok",
+      version: Number(payload.version) || saved.version || 1,
+    };
   } catch (e) {
     console.warn("submitSurveyResponse:", e);
     return { ok: false, error: "تعذر الاتصال بقاعدة البيانات — أعد المحاولة" };
@@ -1156,25 +1230,28 @@ export async function submitSurveyResponse(
 /** استبيانات لوحة الإعلانات العامة (المنشورة والمفتوحة للزوار) */
 export async function fetchPublicSurveys(
   guestPhone?: string
-): Promise<{ surveys: any[]; answeredSurveyIds: string[]; available: boolean }> {
+): Promise<{ surveys: any[]; answeredKeys: string[]; available: boolean }> {
   const sb = getSupabase();
-  if (!sb) return { surveys: [], answeredSurveyIds: [], available: false };
+  if (!sb) return { surveys: [], answeredKeys: [], available: false };
   try {
     const { data, error } = await sb.rpc("get_public_surveys", { p_phone: guestPhone || null });
     if (error) {
       console.warn("fetchPublicSurveys:", error);
-      return { surveys: [], answeredSurveyIds: [], available: false };
+      return { surveys: [], answeredKeys: [], available: false };
     }
     const payload = (data || {}) as Record<string, any>;
-    if (payload.ok !== true) return { surveys: [], answeredSurveyIds: [], available: false };
+    if (payload.ok !== true) return { surveys: [], answeredKeys: [], available: false };
     return {
       surveys: (Array.isArray(payload.surveys) ? payload.surveys : []).map(fromSurveyRow),
-      answeredSurveyIds: Array.isArray(payload.answeredSurveyIds) ? payload.answeredSurveyIds : [],
+      // «أجبت» مربوط بالنسخة: من أجاب على نسخة قديمة يُفتح له من جديد
+      answeredKeys: Array.isArray(payload.answeredKeys)
+        ? payload.answeredKeys.map((k: unknown) => String(k))
+        : [],
       available: true,
     };
   } catch (e) {
     console.warn("fetchPublicSurveys:", e);
-    return { surveys: [], answeredSurveyIds: [], available: false };
+    return { surveys: [], answeredKeys: [], available: false };
   }
 }
 

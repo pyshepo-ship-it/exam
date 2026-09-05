@@ -722,6 +722,14 @@ export interface Survey {
   anonymous?: boolean
   /** آخر موعد للإجابة (ISO) — اختياري */
   deadline?: string
+  /**
+   * رقم النسخة — يبدأ من ١ ويرتفع تلقائياً عند تعديل الأسئلة.
+   * الغرض: ردّ واحد لكل شخص في كل نسخة، فمن أجاب على نسخة قديمة يستطيع
+   * الإجابة على الأسئلة الجديدة، ولا يكرر الإجابة على نفس الأسئلة.
+   */
+  version?: number
+  /** قفل الإجابة بعد إرسالها: لا تصحيح ولا تعديل (يبقى ردّ واحد دائماً) */
+  lockAfterSubmit?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -740,6 +748,8 @@ export interface SurveyAnswer {
 export interface SurveyResponse {
   id: string
   surveyId: string
+  /** النسخة التي أُجيب عنها (للمقارنة مع نسخة الاستبيان الحالية) */
+  version?: number
   /** فارغ للإجابات المجهولة أو لزوار لوحة الإعلانات */
   studentId?: string
   studentName: string

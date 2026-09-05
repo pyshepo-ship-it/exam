@@ -140,6 +140,7 @@ const rewrite = (src) =>
   src
     .replace(/from "\.\.\/storage-keys"/g, 'from "../storage-keys.mjs"')
     .replace(/from "\.\.\/memory-store"/g, 'from "../memory-store.mjs"')
+    .replace(/from "\.\.\/surveys"/g, 'from "../surveys.mjs"')
     .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
     .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
@@ -181,6 +182,12 @@ files["utils.mjs"] = rewrite(utils)
 {
   // التسعير ودورات الاستحقاق — تعتمد عليها تقارير الطالب وصفحة التحصيل
   files["billing.mjs"] = rewrite(readFileSync("src/lib/billing.ts", "utf8"))
+}
+{
+  // أدوات الاستبيانات — تستخدمها sync.ts في مسار الحفظ المحلي (بلا Supabase)
+  let sv = stripImportsOf(readFileSync("src/lib/surveys.ts", "utf8"), "data-storage")
+  sv = rewrite(sv)
+  files["surveys.mjs"] = sv
 }
 {
   let sr = readFileSync("src/lib/student-report.ts", "utf8")
@@ -1111,6 +1118,139 @@ const repCycle = SR.collectStudentReport("st-old")
 const stmtCycle = SR.buildStudentReportPagesHtml({ report: repCycle, type: "payments", mode: "teacher" })
 eq("الاستحقاق الأسبوعي يظهر بفترة مستقلة في كشف الحساب", stmtCycle.html.includes("أسبوع 37 (6 – 12 سبتمبر)"))
 eq("الاستحقاق الشهري القديم ما زال يظهر بشهره", stmtCycle.html.includes("سبتمبر"))
+
+// ============================================================
+section("سيناريو 16: الاستبيانات — ردّ واحد لكل هوية في كل نسخة")
+// ============================================================
+// المسار المحلي في sync.ts (بلا Supabase) يطبق نفس قاعدة الخادم:
+// بصمة = الرقم الموحّد، وردّ واحد لكل بصمة في كل نسخة، والمجهول لا يستثني.
+
+const SYNC16 = await import("file://" + join(TMP, "supabase/sync.mjs"))
+const SV16 = await import("file://" + join(TMP, "surveys.mjs"))
+
+const snap16 = snapshotMemory()
+const iso16 = new Date().toISOString()
+const q1 = { id: "q1", type: "text", title: "رأيك في الحصة", required: true }
+const q2 = { id: "q2", type: "rating", title: "تقييم الشرح", maxRating: 5 }
+
+DS.saveSurveys([
+  {
+    id: "sv-once", title: "استبيان منع التكرار", audience: "all", questions: [q1],
+    published: true, allowGuests: true, anonymous: false, version: 1,
+    createdAt: iso16, updatedAt: iso16,
+  },
+  {
+    id: "sv-anon", title: "استبيان مجهول", audience: "all", questions: [q1],
+    published: true, allowGuests: true, anonymous: true, version: 1,
+    createdAt: iso16, updatedAt: iso16,
+  },
+])
+
+const respOf = (id) => DS.getSurveyResponses().filter(r => r.surveyId === id)
+
+const g1 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "أول رد" } },
+  guestName: "زائر أول", guestPhone: "01012345678",
+})
+eq("الزائر يرسل مرة أولى", g1.ok === true && g1.code === "ok", g1.error || "")
+eq("ردّ واحد محفوظ", respOf("sv-once").length === 1)
+
+const g2 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "تصحيح الإجابة" } },
+  guestName: "زائر أول", guestPhone: "01012345678",
+})
+eq("إعادة الإرسال بنفس الرقم = تحديث ردّه لا ردّ ثانٍ", g2.ok === true && g2.code === "updated", g2.error || "")
+eq("العدد ما زال ردًّا واحدًا", respOf("sv-once").length === 1, `عدد = ${respOf("sv-once").length}`)
+eq("الإجابة استُبدلت فعلًا", respOf("sv-once")[0]?.answers?.q1?.text === "تصحيح الإجابة")
+
+const g3 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "نفس الرقم بصيغة أخرى" } },
+  guestName: "زائر أول", guestPhone: "٢٠ ١٠١ ٢٣٤ ٥٦٧٨",
+})
+eq("الرقم بالعربي-هندي وبصيغة دولية = نفس البصمة (لا يفلت بالتعديل الشكلي)",
+  g3.ok === true && g3.code === "updated" && respOf("sv-once").length === 1, g3.error || "")
+
+const g4 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "طالب ثانٍ" } },
+  guestName: "زائر ثانٍ", guestPhone: "01098765432",
+})
+eq("رقم مختلف = ردّ جديد (لا يُلغى حق غيره في الإجابة)", g4.ok === true && g4.code === "ok")
+eq("اللوحة فيها ردّان من شخصين", respOf("sv-once").length === 2)
+
+const g5 = await SYNC16.submitSurveyResponse({ surveyId: "sv-once", answers: { q1: { text: "بلا هوية" } } })
+eq("بلا رقم هاتف → مرفوض (لا يمكن ضمان عدم التكرار)", g5.ok === false)
+eq("ولم يُضف أي صف", respOf("sv-once").length === 2)
+
+// ---- النسخ: تعديل الأسئلة يفتح الإجابة، وتعديل غيره لا يفتحها ----
+const svOnce = DS.getSurveys().find(x => x.id === "sv-once")
+eq("لا تغيير في الأسئلة = نفس النسخة", SV16.nextVersionAfterEdit(svOnce, svOnce.questions) === 1)
+const v2 = SV16.nextVersionAfterEdit(svOnce, [q1, q2])
+eq("سؤال إضافي = نسخة ٢", v2 === 2)
+DS.saveSurveys(DS.getSurveys().map(x => (x.id === "sv-once" ? { ...x, questions: [q1, q2], version: v2, updatedAt: new Date().toISOString() } : x)))
+eq("النسخة محفوظة في السجل", DS.getSurveys().find(x => x.id === "sv-once").version === 2)
+
+const g6 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "رد على الأسئلة الجديدة" }, q2: { rating: 4 } },
+  guestName: "زائر أول", guestPhone: "01012345678",
+})
+eq("من أجاب على نسخة قديمة يستطيع الإجابة على الجديدة", g6.ok === true && g6.code === "ok", g6.error || "")
+eq("ردوده القديمة على النسخة ١ محفوظة (لا تُمسح عند التعديل)",
+  respOf("sv-once").filter(r => (Number(r.version) || 1) === 1).length === 2)
+eq("ردّ واحد فقط على النسخة الحالية", respOf("sv-once").filter(r => (Number(r.version) || 1) === 2).length === 1)
+eq("عدد الردود الكلي = ٣ (ردّان قديمان + واحد جديد)", respOf("sv-once").length === 3)
+
+const g7 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-once", answers: { q1: { text: "محاولة تكرار على النسخة الجديدة" } },
+  guestName: "زائر أول", guestPhone: "01012345678",
+})
+eq("التكرار على نفس النسخة = تحديث فقط", g7.ok === true && g7.code === "updated")
+eq("عدد النسخة الثانية بقي ١", respOf("sv-once").filter(r => (Number(r.version) || 1) === 2).length === 1)
+
+// ---- الاستبيان المجهول: بلا أسماء، ومع ذلك ردّ واحد ----
+const a1_16 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-anon", answers: { q1: { text: "رأي صريح" } },
+  guestName: "فلان الفلاني", guestPhone: "01012345678",
+})
+eq("المجهول يقبل ردًا واحدًا", a1_16.ok === true && respOf("sv-anon").length === 1, a1_16.error || "")
+eq("المجهول لا يخزّن الاسم", (respOf("sv-anon")[0]?.studentName || "") === "")
+const a2_16 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-anon", answers: { q1: { text: "رأي ثانٍ من نفس الرقم" } },
+  guestName: "فلان", guestPhone: "01012345678",
+})
+eq("المجهول: الإعادة تحديث ولا تضيف ردًا ثانيًا", a2_16.ok === true && a2_16.code === "updated")
+eq("المجهول: ما زال ردًّا واحدًا", respOf("sv-anon").length === 1, `عدد = ${respOf("sv-anon").length}`)
+eq("المجهول: لا رقم ولا اسم في الصف المحفوظ",
+  !respOf("sv-anon")[0]?.phone && (respOf("sv-anon")[0]?.studentName || "") === "")
+const anonRow16 = respOf("sv-anon")[0] || {}
+eq("المجهول: البصمة وحدها موجودة (تُستخدم للمنع لا للكشف)",
+  typeof anonRow16.identityKey === "string" && String(anonRow16.identityKey).startsWith("ph:"))
+const a3_16 = await SYNC16.submitSurveyResponse({ surveyId: "sv-anon", answers: { q1: { text: "دخول مجهول تمامًا" } } })
+eq("المجهول بلا رقم → مرفوض (لا بصمة ⇒ لا ضمان)", a3_16.ok === false)
+eq("ولم يُضف رد مجهول بلا حصر", respOf("sv-anon").length === 1)
+
+// ---- قفل الإجابة بعد الإرسال ----
+DS.saveSurveys(DS.getSurveys().map(x => (x.id === "sv-anon" ? { ...x, lockAfterSubmit: true } : x)))
+const a4_16 = await SYNC16.submitSurveyResponse({
+  surveyId: "sv-anon", answers: { q1: { text: "محاولة تعديل بعد القفل" } },
+  guestName: "فلان", guestPhone: "01012345678",
+})
+eq("المقفول: لا تعديل بعد الإرسال", a4_16.ok === false && /لا يمكن تعديلها/.test(a4_16.error || ""), a4_16.error || "")
+eq("المقفول: الإجابة بقيت آخر ما أُرسل (لم تُستبدل بمحاولة مرفوضة)",
+  respOf("sv-anon")[0]?.answers?.q1?.text === "رأي ثانٍ من نفس الرقم")
+
+// ---- أدوات النسخ في الواجهة ----
+eq("hasAnsweredCurrent يفرّق النسخ",
+  SV16.hasAnsweredCurrent({ id: "sv-once", version: 2 }, ["sv-once:1"]) === false &&
+  SV16.hasAnsweredCurrent({ id: "sv-once", version: 2 }, ["sv-once:2"]) === true)
+eq("hasAnsweredOlderVersion يشرح للطالب سبب إعادة الفتح",
+  SV16.hasAnsweredOlderVersion({ id: "sv-once", version: 2 }, ["sv-once:1"]) === true)
+const pub16 = await SYNC16.fetchPublicSurveys("01012345678")
+eq("بلا Supabase: اللوحة لا تعرض استبيانات (وعدم الانهيار مضمون)",
+  pub16.available === false && Array.isArray(pub16.answeredKeys))
+
+// صفر تخزين محلي: كل ما سبق في ذاكرة الجلسة فقط
+eq("ردود الاستبيانات لا تُكتب على الجهاز", localDataKeys().length === 0, localDataKeys().join("، ") || "لا شيء")
+restoreMemory(snap16)
 
 // ============================================================
 console.log(`\n${"=".repeat(56)}`)

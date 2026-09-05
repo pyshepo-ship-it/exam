@@ -111,6 +111,179 @@ export function audienceStudentsCount(survey: Survey, grades: Grade[], students:
   return students.filter(s => s.groupId && ids.includes(s.groupId)).length
 }
 
+// ------------------------------------------------------------
+// النسخة (version) ومنع التكرار
+// ------------------------------------------------------------
+// كل استبيان له رقم نسخة يبدأ من ١. تعديل الأسئلة يرفع النسخة (في قاعدة
+// البيانات وفي الواجهة معًا)، فتُفتح الإجابة لمن سبق أن أجاب — لأن أسئلته
+// صارت مختلفة. الرد المكرر لنفس النسخة يُحدّث ردّه هو ولا يُنشئ صفًّا ثانيًا.
+
+/** رقم نسخة الاستبيان (السجلات القديمة = ١) */
+export function surveyVersion(survey: Pick<Survey, "version">): number {
+  const v = Math.round(Number(survey.version) || 1)
+  return v >= 1 ? v : 1
+}
+
+/** مفتاح «أجبت»: استبيان + نسخة */
+export function answeredKey(surveyId: string, version: number): string {
+  return `${surveyId}:${version}`
+}
+
+/** بصمة أسئلة الاستبيان — أي تغيير فيها يعني نسخة جديدة */
+export function questionsFingerprint(questions: SurveyQuestion[]): string {
+  return (questions || [])
+    .map(q =>
+      [
+        q.id,
+        q.type,
+        (q.title || "").trim(),
+        q.required ? "1" : "0",
+        (q.options || []).map(o => String(o).trim()).join("|"),
+        q.type === "rating" ? String(q.maxRating || 5) : "",
+        q.type === "text" ? (q.placeholder || "").trim() : "",
+      ].join("\u0001")
+    )
+    .join("\u0002")
+}
+
+/**
+ * النسخة التي يجب حفظها بعد تعديل الاستبيان:
+ * تغيّرت الأسئلة ⇒ نسخة أعلى بواحد، وإلا نفس النسخة (حذف استبيان سابق لا يعيد
+ * الترقيم، والسجلات بلا نسخة تُعامل كـ ١).
+ */
+export function nextVersionAfterEdit(
+  prev: Pick<Survey, "version" | "questions"> | undefined,
+  nextQuestions: SurveyQuestion[]
+): number {
+  const prevVersion = surveyVersion(prev || {})
+  if (!prev) return 1
+  return questionsFingerprint(prev.questions || []) === questionsFingerprint(nextQuestions)
+    ? prevVersion
+    : prevVersion + 1
+}
+
+/** هل أجاب هذا الشخص على النسخة الحالية؟ */
+export function hasAnsweredCurrent(
+  survey: Pick<Survey, "id" | "version">,
+  answeredKeys: string[] | undefined
+): boolean {
+  return (answeredKeys || []).includes(answeredKey(survey.id, surveyVersion(survey)))
+}
+
+/** هل أجاب على نسخة أقدم؟ (يُستخدم لشرح سبب إعادة فتح الاستبيان) */
+export function hasAnsweredOlderVersion(
+  survey: Pick<Survey, "id" | "version">,
+  answeredKeys: string[] | undefined
+): boolean {
+  const keys = answeredKeys || []
+  return (
+    !hasAnsweredCurrent(survey, keys) &&
+    keys.some(k => {
+      const i = k.lastIndexOf(":")
+      return i > 0 && k.slice(0, i) === survey.id
+    })
+  )
+}
+
+/** هل يمكنه تعديل إجابته؟ (مفتوح ولم يُقفل بالاستبيان) */
+export function canEditAnswer(
+  survey: Pick<Survey, "published" | "deadline" | "lockAfterSubmit">,
+  answered: boolean
+): boolean {
+  if (!answered) return true
+  if (survey.lockAfterSubmit === true) return false
+  return isSurveyOpen(survey as Survey)
+}
+
+// ------------------------------------------------------------
+// خطة الحفظ المحلي (تطوير/معاينة بلا Supabase) — نفس قاعدة الخادم:
+// ردّ واحد لكل هوية في كل نسخة، بلا صف ثانٍ أبدًا.
+// ------------------------------------------------------------
+
+export interface SurveyResponseLike {
+  id: string
+  surveyId: string
+  version?: number
+  /** بصمة محلية (تطوير فقط): sid:… أو ph:… */
+  identityKey?: string
+}
+
+export interface SurveyLike {
+  id: string
+  version?: number
+  lockAfterSubmit?: boolean
+}
+
+export interface LocalSubmitPlan {
+  action: "insert" | "update" | "reject"
+  /** معرّف الصف الموجود عند التحديث */
+  id?: string
+  version: number
+  error?: string
+}
+
+/**
+ * يقرر: إدراج رد جديد، أم تحديث ردّ هذا الشخص على نفس النسخة، أم رفض.
+ * `identityKey` مطلوب دائمًا — بلا هوية لا يمكن ضمان عدم التكرار (نرفض بدل
+ * تلويث النتائج)، وهو نفس سلوك submit_survey_response في قاعدة البيانات.
+ */
+export function planLocalSurveySubmit(
+  responses: Array<SurveyResponseLike & { version?: number } >,
+  survey: SurveyLike | undefined,
+  identityKey: string
+): LocalSubmitPlan {
+  const key = (identityKey || "").trim()
+  if (!survey) return { action: "reject", version: 1, error: "الاستبيان غير موجود" }
+  const version = surveyVersion(survey)
+  if (!key) {
+    return { action: "reject", version, error: "أدخل رقم هاتفك حتى لا يتكرر ردّك" }
+  }
+  // نفس الشخص + نفس النسخة = ردّه الحالي (يُحدَّث). ردود النسخ الأقدم تُترك
+  // كما هي — وإلا محي تاريخ إجاباتهم السابقة عند كل تعديل للأسئلة.
+  const mine = responses.find(
+    r => r.surveyId === survey.id && r.identityKey === key && surveyVersion(r) === version
+  )
+  if (!mine) return { action: "insert", version }
+  if (survey.lockAfterSubmit === true) {
+    return {
+      action: "reject",
+      version,
+      id: mine.id,
+      error: "أُرسلت إجابتك ولا يمكن تعديلها — إن احتجت تعديلًا تواصل مع المعلم",
+    }
+  }
+  return { action: "update", id: mine.id, version }
+}
+
+/**
+ * توحيد الأرقام العربية-الهندية إلى لاتينية (٠١٠ → 010) قبل أي مقارنة.
+ * نسخة محلية صغيرة عمدًا: الدالة الأصلية `normalizeDigits` في student-accounts،
+ * واستيرادها هنا يُنشئ دورة استيراد (student-accounts ← data-storage ← sync ← surveys).
+ */
+export function normalizeSurveyDigits(value: string): string {
+  return String(value || "")
+    .replace(/[٠-٩]/g, d => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, d => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+}
+
+/**
+ * رقم هاتف نظيف بنفس قاعدة الخادم (`survey_phone_key` في ترحيل 022):
+ * أرقام فقط، ثم آخر ١١ رقمًا — فيكتب الطالب 010… أو 2010… أو ‎+20 101 …
+ * وتُحسب بصمته دائمًا من نفس المفتاح، فلا يفلت من منع التكرار بتغيير الصيغة.
+ * يُعيد "" إن كان الرقم أقصر من ١٠ خانات.
+ */
+export function normalizeSurveyPhone(value: string): string {
+  const d = normalizeSurveyDigits(value).replace(/[^0-9]/g, "")
+  return d.length >= 10 ? d.slice(-11) : ""
+}
+
+/** بصمة محلية لردّ (تُستخدم في التطوير فقط؛ في الإنتاج يحسبها الخادم) */
+export function localIdentityKey(input: { token?: string; phone?: string }): string {
+  if (input.token) return "sid:" + input.token.slice(-16)
+  const key = normalizeSurveyPhone(input.phone || "")
+  return key ? "ph:" + key : ""
+}
+
 export interface QuestionStat {
   question: SurveyQuestion
   /** عدد من أجابوا */
@@ -191,13 +364,15 @@ export function surveyCsv(survey: Survey, responses: SurveyResponse[], grades: G
     const s = v == null ? "" : String(v)
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const head = ["الاسم", "الهاتف", "الصف", "المجموعة", "التاريخ", ...survey.questions.map(q => q.title)]
+  const head = ["الاسم", "الهاتف", "الصف", "المجموعة", "التاريخ", "النسخة", ...survey.questions.map(q => q.title)]
   const rows = responses.map(r => [
     r.studentName || (survey.anonymous ? "مجهول" : ""),
     r.phone || "",
     gradeName(r.gradeId),
     groupName(r.groupId),
     r.createdAt ? new Date(r.createdAt).toLocaleString("ar-EG") : "",
+    // نسخة الاستبيان التي أُجيب عنها — للتمييز عند عرض «كل النسخ»
+    String(Number(r.version) || 1),
     ...survey.questions.map(q => answerToText(q, r.answers?.[q.id])),
   ])
   return [head, ...rows].map(row => row.map(esc).join(",")).join("\n")

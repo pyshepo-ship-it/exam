@@ -21,6 +21,9 @@ import {
   MessageSquareText,
   ToggleLeft,
   CheckSquare,
+  ShieldCheck,
+  History,
+  Lock,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,9 +61,11 @@ import {
   audienceStudentsCount,
   deadlineLabel,
   isSurveyOpen,
+  nextVersionAfterEdit,
   questionTypeLabel,
   surveyCsv,
   surveyStats,
+  surveyVersion,
   answerToText,
 } from "@/lib/surveys"
 
@@ -89,6 +94,8 @@ interface SurveyDraft {
   published: boolean
   allowGuests: boolean
   anonymous: boolean
+  /** قفل الإجابة بعد الإرسال: لا تصحيح ولا تعديل (يبقى ردّ واحد دائمًا) */
+  lockAfterSubmit: boolean
   /** قيمة حقل datetime-local (فارغ = بلا موعد نهائي) */
   deadlineLocal: string
 }
@@ -111,6 +118,7 @@ const emptyDraft = (): SurveyDraft => ({
   published: false,
   allowGuests: false,
   anonymous: false,
+  lockAfterSubmit: false,
   deadlineLocal: "",
 })
 
@@ -172,10 +180,21 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
   )
 
   const resultsSurvey = surveys.find(s => s.id === resultsId) || null
-  const resultsResponses = useMemo(
+  const resultsVersion = resultsSurvey ? surveyVersion(resultsSurvey) : 1
+  /** النتائج افتراضيًا على النسخة الحالية (حتى لا تختلط إجابات أسئلة قديمة جديدة) */
+  const [resultsAllVersions, setResultsAllVersions] = useState(false)
+  const allSurveyResponses = useMemo(
     () => responses.filter(r => r.surveyId === resultsId),
     [responses, resultsId]
   )
+  const resultsResponses = useMemo(
+    () =>
+      resultsAllVersions
+        ? allSurveyResponses
+        : allSurveyResponses.filter(r => (Number(r.version) || 1) === resultsVersion),
+    [allSurveyResponses, resultsAllVersions, resultsVersion]
+  )
+  const resultsOlderCount = allSurveyResponses.length - resultsResponses.length
   const resultsStats = useMemo(
     () => (resultsSurvey ? surveyStats(resultsSurvey, resultsResponses) : []),
     [resultsSurvey, resultsResponses]
@@ -209,6 +228,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
       published: survey.published,
       allowGuests: survey.allowGuests === true,
       anonymous: survey.anonymous === true,
+      lockAfterSubmit: survey.lockAfterSubmit === true,
       deadlineLocal: isoToLocal(survey.deadline),
     })
     setEditorOpen(true)
@@ -273,6 +293,11 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
 
     const now = new Date().toISOString()
     const existing = surveys.find(s => s.id === editingId)
+    // تعديل الأسئلة = نسخة جديدة (نفس قاعدة المُشغِّل في قاعدة البيانات — ترحيل 022):
+    // من أجابوا على الأسئلة القديمة يستطيعون الإجابة على الجديدة، بينما يبقى
+    // «ردّ واحد لكل شخص» ممنوعًا داخل النسخة الواحدة.
+    const nextVersion = nextVersionAfterEdit(existing, questions)
+    const versionBumped = !!existing && nextVersion > surveyVersion(existing)
     const survey: Survey = {
       id: existing?.id || `sv-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
       title,
@@ -284,6 +309,8 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
       published: draft.published,
       allowGuests: draft.allowGuests,
       anonymous: draft.anonymous,
+      lockAfterSubmit: draft.lockAfterSubmit,
+      version: nextVersion,
       ...(localToIso(draft.deadlineLocal) ? { deadline: localToIso(draft.deadlineLocal) } : {}),
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -294,6 +321,12 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
     refresh()
     setEditorOpen(false)
     toast.success(existing ? "تم تحديث الاستبيان" : "تم إنشاء الاستبيان")
+    if (versionBumped) {
+      toast.success(
+        `نسختك صارت رقم ${nextVersion} — من أجابوا على الأسئلة السابقة يستطيعون الإجابة من جديد، والرد المكرر لنفس النسخة يظل ممنوعًا`,
+        { duration: 8000 }
+      )
+    }
     if (survey.published) {
       toast.success(`الاستبيان منشور الآن — يصل إلى ${audienceStudentsCount(survey, grades, students)} طالب`)
     } else {
@@ -361,7 +394,11 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
     toast.success("تم تصدير النتائج CSV")
   }
 
-  const responseCount = (id: string) => responses.filter(r => r.surveyId === id).length
+  /** عدد ردود النسخة الحالية (الردود المكررة غير ممكنة أصلًا في قاعدة البيانات) */
+  const responseCount = (survey: Survey) => {
+    const v = surveyVersion(survey)
+    return responses.filter(r => r.surveyId === survey.id && (Number(r.version) || 1) === v).length
+  }
 
   // ---------------- العرض ----------------
 
@@ -415,7 +452,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
         <div className="grid gap-3 md:grid-cols-2">
           {surveys.map(survey => {
             const open = isSurveyOpen(survey)
-            const count = responseCount(survey.id)
+            const count = responseCount(survey)
             return (
               <div
                 key={survey.id}
@@ -447,8 +484,14 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                   </Badge>
                   <Badge variant="outline" className="text-[10px] gap-1">
                     <BarChart3 className="h-3 w-3" />
-                    {count} رد
+                    {count} رد • نسخة {surveyVersion(survey)}
                   </Badge>
+                  {survey.lockAfterSubmit && (
+                    <Badge variant="outline" className="text-[10px] gap-1 text-rose-600 border-rose-300">
+                      <Lock className="h-3 w-3" />
+                      مقفولة بعد الإرسال
+                    </Badge>
+                  )}
                   {survey.allowGuests && (
                     <Badge variant="outline" className="text-[10px] gap-1 text-emerald-600 border-emerald-300">
                       <Globe2 className="h-3 w-3" />
@@ -793,6 +836,15 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
             <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 space-y-3">
               <Label>إعدادات النشر</Label>
 
+              <div className="rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 p-2 text-[10px] text-indigo-800 dark:text-indigo-200 flex items-start gap-2">
+                <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <span>
+                  يُحفظ **ردّ واحد فقط لكل طالب أو رقم هاتف** في كل نسخة من هذا الاستبيان —
+                  التكرار يُحدِّث ردّه هو ولا يُضيف صفًّا جديدًا، والاستبيان المجهول يُمنع
+                  تكراره ببصمة رقم الحساب (بلا تخزين الاسم أو الرقم).
+                </span>
+              </div>
+
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold text-gray-700 dark:text-gray-200">نشر الاستبيان</p>
@@ -804,11 +856,30 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold text-gray-700 dark:text-gray-200">مفتوح للزوار في الصفحة الرئيسية</p>
-                  <p className="text-[10px] text-gray-500">يجيب الزائر باسمه ورقم هاتفه (بلا تسجيل دخول)</p>
+                  <p className="text-[10px] text-gray-500">
+                    يجيب الزائر برقم هاتفه (بلا تسجيل دخول) — الرقم مطلوب حتى في الاستبيان المجهول
+                    لأنه البصمة التي تمنع الرد المكرر
+                  </p>
                 </div>
                 <Switch
                   checked={draft.allowGuests}
                   onCheckedChange={val => setDraft(prev => ({ ...prev, allowGuests: val }))}
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-gray-700 dark:text-gray-200 flex items-center gap-1">
+                    <Lock className="h-3.5 w-3.5 text-rose-500" />
+                    قفل الإجابة بعد الإرسال
+                  </p>
+                  <p className="text-[10px] text-gray-500">
+                    لا يُسمح حتى بتصحيح الإجابة. في الحالتين لا يُقبل ردّ ثانٍ على نفس الأسئلة.
+                  </p>
+                </div>
+                <Switch
+                  checked={draft.lockAfterSubmit}
+                  onCheckedChange={val => setDraft(prev => ({ ...prev, lockAfterSubmit: val }))}
                 />
               </div>
 
@@ -867,7 +938,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                   نتائج: {resultsSurvey.title}
                 </DialogTitle>
                 <DialogDescription>
-                  {resultsResponses.length} رد • {audienceLabel(resultsSurvey, grades)} •{" "}
+                  {resultsResponses.length} رد على النسخة {resultsVersion} • {audienceLabel(resultsSurvey, grades)} •{" "}
                   {resultsSurvey.anonymous ? "إجابات مجهولة" : "بأسماء الطلاب"}
                 </DialogDescription>
               </DialogHeader>
@@ -881,6 +952,28 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                   {resultsSurvey.questions.length} سؤال
                 </Badge>
                 <Badge variant="outline" className="text-[10px]">{deadlineLabel(resultsSurvey)}</Badge>
+                <Badge variant="outline" className="text-[10px] flex items-center gap-1">
+                  <History className="h-3 w-3" />
+                  نسخة {resultsVersion}
+                </Badge>
+                {resultsOlderCount > 0 && (
+                  <Button
+                    size="sm"
+                    variant={resultsAllVersions ? "default" : "ghost"}
+                    onClick={() => setResultsAllVersions(v => !v)}
+                    className="text-[10px] h-7"
+                  >
+                    {resultsAllVersions
+                      ? `عرض النسخة ${resultsVersion} فقط`
+                      : `إضافة ${resultsOlderCount} ردّ من نسخ أقدم`}
+                  </Button>
+                )}
+                {resultsSurvey.lockAfterSubmit && (
+                  <Badge variant="outline" className="text-[10px] text-rose-600 border-rose-300 flex items-center gap-1">
+                    <Lock className="h-3 w-3" />
+                    الإجابة مقفولة بعد الإرسال
+                  </Badge>
+                )}
               </div>
 
               {resultsResponses.length === 0 ? (
