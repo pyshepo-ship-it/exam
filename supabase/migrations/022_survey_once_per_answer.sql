@@ -148,7 +148,7 @@ BEGIN
     SELECT id,
            row_number() OVER (
              PARTITION BY survey_id, version, identity_hash
-             ORDER BY submitted_at DESC, id DESC
+             ORDER BY created_at DESC, id DESC
            ) AS rn
     FROM public.survey_responses
     WHERE identity_hash IS NOT NULL
