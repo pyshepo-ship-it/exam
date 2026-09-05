@@ -1031,6 +1031,22 @@ export interface TeacherStudentUpdate {
   groupId?: string
 }
 
+/**
+ * هل هذا البريد مملوك لطالب آخر؟ (يفحص جدول الطلاب وحسابات الدخول معاً)
+ * القاعدة تفرض الفريدية بفهرس فريد، وهذه الدالة تمنع وصول الخطأ الخام للمعلم.
+ * تعيد اسم صاحب البريد الحالي، أو null إن كان البريد متاحاً.
+ */
+export function emailOwnerName(email: string, exceptStudentId?: string): string | null {
+  const mail = norm(email)
+  if (!mail) return null
+  const students = getStudents()
+  const clash = students.find(s => norm(s.email || "") === mail && s.id !== exceptStudentId)
+  if (clash) return clash.name || "طالب آخر"
+  const account = getStudentAccounts().find(a => norm(a.email) === mail && a.studentId !== exceptStudentId)
+  if (!account) return null
+  return students.find(s => s.id === account.studentId)?.name || "طالب آخر"
+}
+
 /** المعلم يحدّث بيانات طالب (الاسم/الهاتف/البريد/الصف/المجموعة) ويسجل ما غيّره */
 export function updateStudentByTeacher(
   studentId: string,
@@ -1054,6 +1070,9 @@ export function updateStudentByTeacher(
   if (patch.email !== undefined && patch.email.trim().toLowerCase() !== (student.email || "")) {
     const mail = patch.email.trim().toLowerCase()
     if (!isValidEmail(mail)) return { ok: false, message: "البريد الإلكتروني غير صحيح" }
+    // فريدية البريد على مستوى الطلاب والحسابات معاً (القاعدة تفرضها بفهرس فريد)
+    const owner = emailOwnerName(mail, studentId)
+    if (owner) return { ok: false, message: `هذا البريد مستخدم بالفعل للطالب: ${owner}` }
     // البريد مفتاح الحساب — نحدّث الحساب أيضاً
     const accounts = getStudentAccounts()
     const oldAccount = accounts.find(a => a.studentId === studentId)

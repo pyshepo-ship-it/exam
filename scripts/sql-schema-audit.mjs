@@ -752,6 +752,41 @@ for (const f of files.filter(f => Number(f.slice(0, 3)) >= 25)) {
   )
 }
 
+section("2-ح) ترحيل 026: بريد فريد لكل طالب")
+
+const sql026 = byName("026_unique_student_email.sql")
+check(
+  "026: فهرس فريد جزئي على بريد الطلاب (بلا حساسية لحالة الأحرف)",
+  /CREATE UNIQUE INDEX IF NOT EXISTS uq_students_email\s*\n\s*ON public\.students \(lower\(trim\(email\)\)\)/.test(sql026) &&
+    /WHERE NULLIF\(trim\(COALESCE\(email, ''\)\), ''\) IS NOT NULL;/.test(sql026)
+)
+check(
+  "026: فهرس فريد مماثل على حسابات الدخول",
+  /CREATE UNIQUE INDEX IF NOT EXISTS uq_student_accounts_email\s*\n\s*ON public\.student_accounts \(lower\(trim\(email\)\)\)/.test(sql026)
+)
+check(
+  "026: يكشف التكرار ويسمّيه قبل فرض القيد (لا يفشل برسالة غامضة)",
+  /RAISE EXCEPTION 'بريد مكرر بين طلاب/.test(sql026) &&
+    /RAISE EXCEPTION 'بريد مكرر بين حسابات الدخول/.test(sql026)
+)
+check(
+  "026: فحص تثبيت بعد الإنشاء",
+  /RAISE EXCEPTION 'لم يُنشأ فهرس البريد الفريد'/.test(sql026)
+)
+// الواجهة تمنع التكرار قبل أن يصل الخطأ الخام للمعلم
+const accountsSrc = readFileSync("src/lib/student-accounts.ts", "utf8")
+const studentsPage = readFileSync("src/app/dashboard/students/page.tsx", "utf8")
+check(
+  "الواجهة: emailOwnerName يفحص الطلاب والحسابات معًا",
+  /export function emailOwnerName\(email: string, exceptStudentId\?: string\): string \| null/.test(accountsSrc) &&
+    /getStudentAccounts\(\)\.find\(a => norm\(a\.email\) === mail && a\.studentId !== exceptStudentId\)/.test(accountsSrc)
+)
+check(
+  "الواجهة: إضافة طالب وتعديله يفحصان البريد قبل الحفظ",
+  /emailOwnerName\(mail, editingStudent\?\.id\)/.test(studentsPage) &&
+    /const owner = emailOwnerName\(mail, studentId\)/.test(accountsSrc)
+)
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن
