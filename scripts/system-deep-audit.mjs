@@ -926,6 +926,55 @@ test("صفحة الاختبار: بوابة الأعضاء وبوابة الزو
   assert(page.includes("phone: portalStudent ? undefined : guestIdentity?.phone"), "الهاتف يُحفظ للزائر فقط")
 })
 
+test("محرر الاختبار لا يمسح إعدادات لوحة التحكم (حد المحاولات وفتح المراجعة)", () => {
+  const page = readFileSync("src/app/dashboard/exams/page.tsx", "utf8")
+  assert(/previous\?: Exam/.test(page), "buildExamFromForm يستقبل السجل السابق")
+  assert(
+    /maxAttempts: previous\?\.maxAttempts && previous\.maxAttempts > 0 \? previous\.maxAttempts : undefined/.test(page),
+    "حد المحاولات يُنقل من السجل السابق ولا يُمسح"
+  )
+  assert(/reviewOpen: !!previous\?\.reviewOpen/.test(page), "حالة فتح المراجعة تُنقل من السجل السابق")
+  assert(
+    /buildExamFromForm\(form, id, createdAt, true, previous\)/.test(page),
+    "الحفظ التلقائي للمسودة يمرر السجل السابق"
+  )
+  assert(
+    /buildExamFromForm\(\s*\n\s*examForm,[\s\S]{0,220}?\n\s*previous\s*\n\s*\)/.test(page),
+    "حفظ المحرر اليدوي يمرر السجل السابق أيضاً"
+  )
+  // مواعيد الإتاحة تُعرض وتُحفظ بتوقيت المعلم لا بتوقيت UTC مقصوصاً
+  assert(!/availableFrom: \(exam\.availableFrom \|\| ""\)\.slice\(0, 16\)/.test(page), "لا قصّ خام لنص ISO في حقل التوقيت المحلي")
+  assert(/toLocalInputValue\(exam\.availableFrom\)/.test(page) && /fromLocalInputValue\(/.test(page), "تحويل صريح بين ISO والتوقيت المحلي")
+})
+
+test("فتح المراجعة يُنهي الاختبار: لا محاولات جديدة في الواجهة ولا على الخادم", () => {
+  const pc = readFileSync("src/lib/portal-content.ts", "utf8")
+  assert(/if \(exam\.reviewOpen\)/.test(pc), "examAvailability تغلق الاختبار بعد فتح المراجعة")
+  assert(/reviewPhase: true/.test(pc), "سبب الإغلاق يميز مرحلة المراجعة")
+  const mig = readFileSync("supabase/migrations/024_exam_attempts_and_review_gate.sql", "utf8")
+  assert(/v_meta->>'reviewOpen'/.test(mig), "الخادم يرفض بدء جلسة بعد فتح المراجعة")
+  assert(/SECURITY DEFINER/.test(mig), "الدالة المعاد تعريفها تحتفظ بـ SECURITY DEFINER")
+})
+
+test("بوابة الطالب لا تعرض عدد محاولات سالباً أبداً", () => {
+  const pc = readFileSync("src/lib/portal-content.ts", "utf8")
+  assert(/remaining: max > 0 \? Math\.max\(0, max - used\) : -1/.test(pc), "المتبقي مقصوص عند الصفر")
+  assert(/unlimited: max <= 0/.test(pc), "حالة «بلا حد» صريحة")
+  const student = readFileSync("src/app/student/page.tsx", "utf8")
+  assert(/at\.unlimited/.test(student), "الزر يفرّق بين «بلا حد» وعدد متبقٍ")
+  assert(!/إعادة \(\$\{at\.remaining\} متبقية\)`\}<\/span>/.test(student.replace(/\s+/g, " ")) || /at\.unlimited\s*\n?\s*\? "إعادة المحاولة"/.test(student), "لا يُطبع رقم متبقٍ في حالة بلا حد")
+})
+
+test("مراجعة الطالب: الإجابة الخاطئة حمراء والصحيحة خضراء والمفتاح تحت الخاطئة", () => {
+  const dlg = readFileSync("src/components/exam-review-dialog.tsx", "utf8")
+  assert(/const verdict: "correct" \| "wrong" \| "unknown"/.test(dlg), "حكم صريح على كل إجابة")
+  assert(/showCorrectKey && detail\?\.auto \? \(detail\.correct \? "correct" : "wrong"\) : "unknown"/.test(dlg), "لا حكم بلا مفتاح تصحيح")
+  assert(/verdict === "wrong"[\s\S]{0,200}bg-red-50/.test(dlg), "الخاطئة بخلفية حمراء")
+  assert(/verdict === "correct"[\s\S]{0,200}bg-emerald-50/.test(dlg), "الصحيحة بخلفية خضراء")
+  assert(/showCorrectKey && verdict !== "correct"/.test(dlg), "المفتاح يظهر تحت الخاطئة فقط")
+  assert(!/text-emerald-700 dark:text-emerald-300">\s*\n?\s*\{detail\?\.correct \?/.test(dlg), "لم يبق تلوين أخضر ثابت للجميع")
+})
+
 // ============================================================
 // اختبار 11: خوارزمية تقسيم الامتحان ديناميكياً على الصفحات وعدم قسمة أي سؤال
 // ============================================================

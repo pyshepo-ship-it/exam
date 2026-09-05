@@ -687,6 +687,32 @@ check(
   /IF v_survey\.anonymous IS TRUE THEN[\s\S]{0,300}v_sid\s*:= NULL;[\s\S]{0,200}v_phone := NULL;/.test(sql023)
 )
 
+section("2-و) ترحيل 024: إغلاق الاختبار بعد فتح المراجعة + حد المحاولات")
+
+const sql024 = byName("024_exam_attempts_and_review_gate.sql")
+check(
+  "024: start_online_exam_session أُعيدت كاملة مع SECURITY DEFINER",
+  /CREATE OR REPLACE FUNCTION public\.start_online_exam_session\([\s\S]*?LANGUAGE plpgsql\s*\nSECURITY DEFINER/.test(sql024)
+)
+check(
+  "024: فتح المراجعة يمنع أي محاولة جديدة على الخادم",
+  /IF COALESCE\(v_meta->>'reviewOpen', 'false'\) = 'true' THEN[\s\S]{0,160}RAISE EXCEPTION 'انتهى هذا الاختبار — المراجعة متاحة الآن فقط'/.test(sql024)
+)
+check(
+  "024: حد المحاولات ما زال يُقرأ من غلاف الإعدادات مع قفل التزامن",
+  /v_limit := \(v_meta->>'maxAttempts'\)::integer/.test(sql024) &&
+    /pg_advisory_xact_lock/.test(sql024) &&
+    /RAISE EXCEPTION 'استُنفد الحد الأقصى للمحاولات لهذا الاختبار'/.test(sql024)
+)
+check(
+  "024: محاولات الطالب المسجَّل تشمل ما أداه كزائر بالاسم والمجموعة",
+  /student_id = p_student_id\s*\n\s*OR \(\s*\n\s*student_id IS NULL\s*\n\s*AND lower\(trim\(student_name\)\) = lower\(trim\(p_student_name\)\)/.test(sql024)
+)
+check(
+  "024: الصلاحيات تُعاد بعد إعادة التعريف (وإلا فقدها anon)",
+  /GRANT EXECUTE ON FUNCTION public\.start_online_exam_session\(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) TO anon, authenticated;/.test(sql024)
+)
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن

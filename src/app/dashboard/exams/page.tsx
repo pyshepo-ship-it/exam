@@ -121,6 +121,25 @@ function scheduledAvailabilityIssue(
   return null
 }
 
+/**
+ * ISO (UTC) → قيمة datetime-local بتوقيت المعلم.
+ * قصّ نص ISO مباشرةً كان يعرض توقيت UTC داخل حقل محلي، فتنزاح نافذة الاختبار
+ * بمقدار فارق التوقيت مع كل حفظ (‎+3 ساعات في مصر).
+ */
+function toLocalInputValue(iso?: string): string {
+  if (!iso) return ""
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+
+/** قيمة datetime-local (توقيت المعلم) → ISO للتخزين */
+function fromLocalInputValue(value: string): string | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [exams, setExams] = useState<Exam[]>([])
@@ -231,8 +250,8 @@ export default function ExamsPage() {
       allowOnline: !!exam.allowOnline,
       accessMode: exam.accessMode === "public" ? "public" : "members",
       availabilityMode: exam.availabilityMode || "always",
-      availableFrom: (exam.availableFrom || "").slice(0, 16),
-      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      availableFrom: toLocalInputValue(exam.availableFrom),
+      availableUntil: toLocalInputValue(exam.availableUntil),
       reviewOpen: !!exam.reviewOpen,
       targetGroupIds: exam.targetGroupIds || [],
       maxAttempts: String(exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0),
@@ -273,10 +292,10 @@ export default function ExamsPage() {
             allowOnline: panelForm.allowOnline,
             accessMode: panelForm.accessMode,
             availabilityMode: panelForm.availabilityMode,
-            availableFrom: panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
-              ? new Date(panelForm.availableFrom).toISOString() : undefined,
-            availableUntil: panelForm.availabilityMode === "scheduled" && panelForm.availableUntil
-              ? new Date(panelForm.availableUntil).toISOString() : undefined,
+            availableFrom: panelForm.availabilityMode === "scheduled"
+              ? fromLocalInputValue(panelForm.availableFrom) : undefined,
+            availableUntil: panelForm.availabilityMode === "scheduled"
+              ? fromLocalInputValue(panelForm.availableUntil) : undefined,
             targetGroupIds: panelForm.targetGroupIds,
             maxAttempts: maxN > 0 ? maxN : undefined,
             reviewOpen: panelForm.reviewOpen,
@@ -730,12 +749,18 @@ export default function ExamsPage() {
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
-  /** يحول حالة المحرر إلى سجل قابل للحفظ، مع إبقاء المسودة غير مكتملة مخفية عن الطلاب. */
+  /**
+   * يحول حالة المحرر إلى سجل قابل للحفظ، مع إبقاء المسودة غير مكتملة مخفية عن الطلاب.
+   * إعدادات لوحة التحكم (حد المحاولات وفتح المراجعة) لا يملكها المحرر، فتُنقل
+   * كما هي من السجل السابق. بدون ذلك كان أي حفظ/حفظ تلقائي من المحرر يمسح
+   * maxAttempts فيصير الاختبار بلا حد محاولات على الخادم وفي البوابة معاً.
+   */
   const buildExamFromForm = (
     form: typeof examForm,
     id: string,
     createdAt: string,
-    protectIncompleteDraft = false
+    protectIncompleteDraft = false,
+    previous?: Exam
   ): Exam => {
     const online = form.deliveryMode === "online"
     const readiness = getOnlineExamReadiness({
@@ -774,12 +799,15 @@ export default function ExamsPage() {
       autoHonorBoard: online ? form.autoHonorBoard : false,
       honorMinPercent: online ? form.honorMinPercent : undefined,
       availabilityMode: online ? form.availabilityMode : undefined,
-      availableFrom: online && form.availabilityMode === "scheduled" && form.availableFrom
-        ? new Date(form.availableFrom).toISOString() : undefined,
-      availableUntil: online && form.availabilityMode === "scheduled" && form.availableUntil
-        ? new Date(form.availableUntil).toISOString() : undefined,
+      availableFrom: online && form.availabilityMode === "scheduled"
+        ? fromLocalInputValue(form.availableFrom) : undefined,
+      availableUntil: online && form.availabilityMode === "scheduled"
+        ? fromLocalInputValue(form.availableUntil) : undefined,
       targetGroupIds: online ? form.targetGroupIds : undefined,
       answerVisibility: online ? form.answerVisibility : undefined,
+      // ===== إعدادات لوحة التحكم — يملكها panelForm وحده، ولا يجوز أن يمسحها المحرر =====
+      maxAttempts: previous?.maxAttempts && previous.maxAttempts > 0 ? previous.maxAttempts : undefined,
+      reviewOpen: !!previous?.reviewOpen,
       createdAt,
       updatedAt: new Date().toISOString(),
     }
@@ -793,7 +821,7 @@ export default function ExamsPage() {
     const current = examsRef.current
     const previous = current.find(exam => exam.id === id)
     const createdAt = previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
-    const draft = buildExamFromForm(form, id, createdAt, true)
+    const draft = buildExamFromForm(form, id, createdAt, true, previous)
     const next = previous
       ? current.map(exam => exam.id === id ? draft : exam)
       : [...current, draft]
@@ -871,8 +899,8 @@ export default function ExamsPage() {
       autoHonorBoard: !!exam.autoHonorBoard,
       honorMinPercent: exam.honorMinPercent ?? 100,
       availabilityMode: (exam.availabilityMode || "always") as "always" | "scheduled",
-      availableFrom: (exam.availableFrom || "").slice(0, 16),
-      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      availableFrom: toLocalInputValue(exam.availableFrom),
+      availableUntil: toLocalInputValue(exam.availableUntil),
       targetGroupIds: exam.targetGroupIds || [],
       answerVisibility: (exam.answerVisibility || "never") as "never" | "afterEach" | "atEnd",
     } : emptyForm(mode, onlineMode)
@@ -947,7 +975,9 @@ export default function ExamsPage() {
     const examData = buildExamFromForm(
       examForm,
       id,
-      previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
+      previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString(),
+      false,
+      previous
     )
     const current = examsRef.current
     const updatedExams = current.some(exam => exam.id === id)
@@ -2962,8 +2992,8 @@ export default function ExamsPage() {
                   </p>
                   <p className="text-xs text-gray-500">
                     {panelForm.reviewOpen
-                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم ومفاتيح الأسئلة الموضوعية؛ أما درجات المقال والتعليقات فلا تظهر إلا بعد إطلاق نتيجة كل طالب"
-                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار من دون كشف ملاحظات المقال غير المُطلقة"}
+                      ? "الاختبار انتهى: لا يستطيع أي طالب بدء محاولة جديدة، ويرى الطلاب أسئلة الاختبار وإجاباتهم ومفاتيح الأسئلة الموضوعية؛ أما درجات المقال والتعليقات فلا تظهر إلا بعد إطلاق نتيجة كل طالب"
+                      : "فعّلها بعد امتحان جميع الطلاب — تُغلق المحاولات الجديدة نهائياً وتظهر عين المراجعة بجانب الاختبار من دون كشف ملاحظات المقال غير المُطلقة"}
                   </p>
                 </div>
                 <Switch checked={panelForm.reviewOpen} onCheckedChange={v => setPanelForm(prev => ({ ...prev, reviewOpen: v }))} />
@@ -3171,9 +3201,20 @@ export default function ExamsPage() {
                 </p>
               </div>
 
-              {/* حالة الإتاحة الحالية */}
+              {/* حالة الإتاحة الحالية — تعكس ما سيُحفظ الآن، لا الحالة القديمة */}
               {(() => {
-                const av = examAvailability(panelExam)
+                const preview: Exam = {
+                  ...panelExam,
+                  deliveryMode: "online",
+                  allowOnline: panelForm.allowOnline,
+                  availabilityMode: panelForm.availabilityMode,
+                  availableFrom: panelForm.availabilityMode === "scheduled"
+                    ? fromLocalInputValue(panelForm.availableFrom) : undefined,
+                  availableUntil: panelForm.availabilityMode === "scheduled"
+                    ? fromLocalInputValue(panelForm.availableUntil) : undefined,
+                  reviewOpen: panelForm.reviewOpen,
+                }
+                const av = examAvailability(preview)
                 return (
                   <div className={`rounded-xl border p-3 text-sm font-bold ${
                     panelForm.allowOnline && av.open

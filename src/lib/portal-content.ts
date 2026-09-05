@@ -23,11 +23,18 @@ export interface ExamAvailability {
   reason?: string
   from?: string
   until?: string
+  /** انتهى الاختبار وفُتحت المراجعة — يظل ظاهراً للطالب للمراجعة فقط */
+  reviewPhase?: boolean
 }
 
 /** إتاحة الاختبار الزمنية: دائماً مفتوح أو خلال فترة يحددها المعلم */
 export function examAvailability(exam: Exam, now: Date = new Date()): ExamAvailability {
   if (!isOnlineExam(exam) || !exam.allowOnline) return { open: false, reason: "هذا الاختبار غير منشور للطلاب" }
+  // «تم الامتحان — فتح المراجعة للجميع» يعني انتهاء الاختبار: يبقى ظاهراً
+  // للمراجعة فقط، ولا يُقبل بعده أي دخول أو إعادة محاولة.
+  if (exam.reviewOpen) {
+    return { open: false, reason: "انتهى هذا الاختبار — المراجعة متاحة الآن فقط", reviewPhase: true }
+  }
   if (exam.availabilityMode !== "scheduled") return { open: true }
   const from = exam.availableFrom ? new Date(exam.availableFrom) : null
   const until = exam.availableUntil ? new Date(exam.availableUntil) : null
@@ -174,7 +181,13 @@ export interface AttemptsStatus {
   reason?: string
   used: number
   max: number
+  /**
+   * المتبقي من المحاولات — لا يقل عن صفر أبداً.
+   * مع الحد غير المحدود يكون -1، ولا يُعرض للطالب رقماً إطلاقاً.
+   */
   remaining: number
+  /** الاختبار بلا حد للمحاولات (maxAttempts = 0 أو غير محدد) */
+  unlimited: boolean
 }
 
 /**
@@ -199,9 +212,23 @@ export function attemptsStatus(
   })
   const used = Math.max(mine.length, remoteUsed || 0)
   if (max > 0 && used >= max) {
-    return { allowed: false, reason: `استُنفدت محاولاتك (${used} من ${max}) — راجع المعلم إن كنت تحتاج محاولة أخرى`, used, max, remaining: 0 }
+    return {
+      allowed: false,
+      reason: `استُنفدت محاولاتك (${used} من ${max}) — راجع المعلم إن كنت تحتاج محاولة أخرى`,
+      used,
+      max,
+      remaining: 0,
+      unlimited: false,
+    }
   }
-  return { allowed: true, used, max, remaining: max > 0 ? max - used : -1 }
+  // الرقم المعروض للطالب لا يكون سالباً في أي حال؛ -1 تعني «بلا حد» فقط.
+  return {
+    allowed: true,
+    used,
+    max,
+    remaining: max > 0 ? Math.max(0, max - used) : -1,
+    unlimited: max <= 0,
+  }
 }
 
 /** الدرجة الفعلية للمحاولة (تُراعي التعديل اليدوي من المعلم) */

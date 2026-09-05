@@ -697,6 +697,19 @@ eq("فترة مستقبلية → مغلق الآن", PC.examAvailability(mkExam
 eq("فترة منتهية → مغلق", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 7200e3).toISOString(), availableUntil: new Date(Date.now() - 3600e3).toISOString() })).open === false)
 eq("داخل الفترة → متاح", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 3600e3).toISOString(), availableUntil: new Date(Date.now() + 3600e3).toISOString() })).open === true)
 
+// «تم الامتحان — فتح المراجعة للجميع» = انتهاء الاختبار: يبقى ظاهراً للمراجعة ولا يقبل محاولة جديدة
+const reviewPhaseExam = PC.examAvailability(mkExam({ reviewOpen: true }))
+eq("فتح المراجعة → مغلق أمام المحاولات الجديدة", reviewPhaseExam.open === false, JSON.stringify(reviewPhaseExam))
+eq("فتح المراجعة → السبب مرحلة مراجعة", reviewPhaseExam.reviewPhase === true && /انتهى هذا الاختبار/.test(reviewPhaseExam.reason || ""))
+eq("فتح المراجعة يغلق حتى داخل الفترة المجدولة", PC.examAvailability(mkExam({
+  reviewOpen: true,
+  availabilityMode: "scheduled",
+  availableFrom: new Date(Date.now() - 3600e3).toISOString(),
+  availableUntil: new Date(Date.now() + 3600e3).toISOString(),
+})).open === false)
+eq("فتح المراجعة يُخفي الاختبار من لوحة الإعلانات العامة", PC.publicBoardExams([mkExam({ accessMode: "public", gradeId: "", reviewOpen: true })]).length === 0)
+eq("قبل فتح المراجعة يظهر في لوحة الإعلانات العامة", PC.publicBoardExams([mkExam({ accessMode: "public", gradeId: "" })]).length === 1)
+
 eq("اختبار لصف آخر → لا يظهر للطالب", PC.isExamForStudent(mkExam({ gradeId: "g-2" }), "g-1", "gr-1") === false)
 eq("اختبار الصف بلا استهداف مجموعات → يظهر لكل المجموعات", PC.isExamForStudent(mkExam({}), "g-1", "gr-2") === true)
 eq("اختبار لمجموعة محددة → لا يظهر لمجموعة أخرى", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-2"] }), "g-1", "gr-1") === false)
@@ -862,6 +875,22 @@ const at5 = PC.attemptsStatus(limitExam, [...attemptsAll, { examId: "ex-limit", 
 eq("الزائر بعد محاولتين → ممنوع", at5.allowed === false && at5.used === 2)
 const at6 = PC.attemptsStatus(limitExam, attemptsAll, "طالب-آخر")
 eq("محاولات طالب آخر لا تُحسب عليّ", at6.allowed === true && at6.used === 0)
+
+// المتبقي لا يكون سالباً أبداً — كان يظهر للطالب «إعادة (-1 متبقية)»
+const at7 = PC.attemptsStatus({ ...limitExam, maxAttempts: undefined }, [
+  { examId: "ex-limit", studentId: "st-old" },
+  { examId: "ex-limit", studentId: "st-old" },
+  { examId: "ex-limit", studentId: "st-old" },
+], "st-old")
+eq("بلا حد → unlimited صريح ولا رقم متبقٍ يُعرض", at7.unlimited === true && at7.max === 0 && at7.used === 3, JSON.stringify(at7))
+const at8 = PC.attemptsStatus(limitExam, attemptsAll, "st-old", undefined, undefined, 5)
+eq("محاولات سحابية أكثر من الحد → ممنوع والمتبقي صفر", at8.allowed === false && at8.remaining === 0 && at8.unlimited === false, JSON.stringify(at8))
+eq("داخل الحد → المتبقي موجب", PC.attemptsStatus(limitExam, [], "st-old").remaining === 2)
+const attemptsNeverNegative = [0, 1, 2, 3, 7].every(used => {
+  const status = PC.attemptsStatus(limitExam, [], "st-old", undefined, undefined, used)
+  return status.remaining >= 0
+})
+eq("المتبقي المعروض ≥ 0 مهما بلغ عدد المحاولات", attemptsNeverNegative)
 
 // ============================================================
 section("سيناريو 17: دخول الطالب من جهازه بعد موافقة المدرس من جهاز آخر")

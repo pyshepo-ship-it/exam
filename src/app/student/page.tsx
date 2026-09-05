@@ -593,9 +593,9 @@ export default function StudentPortalPage() {
                             </div>
                             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                               {!av.open ? (
-                                <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                                <span className={`flex items-center gap-1.5 text-xs font-bold ${av.reviewPhase ? "text-indigo-600 dark:text-indigo-300" : "text-amber-600"}`}>
                                   <Lock className="w-4 h-4" />
-                                  مغلق الآن
+                                  {av.reviewPhase ? "انتهى الاختبار" : "مغلق الآن"}
                                 </span>
                               ) : !at.allowed ? (
                                 <span className="flex items-center gap-1.5 text-xs font-bold text-red-600">
@@ -606,7 +606,13 @@ export default function StudentPortalPage() {
                                 <Link href={`/exam/${e.id}`}>
                                   <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white">
                                     <PlayCircle className="w-4 h-4" />
-                                    <span>{myAttempts.length > 0 ? `إعادة (${at.remaining} متبقية)` : "ابدأ الاختبار"}</span>
+                                    <span>
+                                      {myAttempts.length === 0
+                                        ? "ابدأ الاختبار"
+                                        : at.unlimited
+                                        ? "إعادة المحاولة"
+                                        : `إعادة (${at.remaining} متبقية)`}
+                                    </span>
                                   </Button>
                                 </Link>
                               )}

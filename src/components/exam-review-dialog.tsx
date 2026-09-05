@@ -220,6 +220,12 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
                       )
                       const showTeacherFeedback = explicitlyReleased && !!review
                       const showModelAnswer = explicitlyReleased && isManualQuestion && !!(review?.correction || sq.correctAnswer)
+                      const myAnswer = answerLabel(question, sq, answer)
+                      const answered = myAnswer !== "لم تُجب"
+                      // لا نلوّن إجابة إلا حين يكون مفتاح تصحيحها متاحاً فعلاً:
+                      // صحيحة = أخضر، خاطئة = أحمر مع عرض الإجابة الصحيحة تحتها.
+                      const verdict: "correct" | "wrong" | "unknown" =
+                        showCorrectKey && detail?.auto ? (detail.correct ? "correct" : "wrong") : "unknown"
                       return (
                         <article key={sq.id} className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 space-y-2">
                           {(sq.questionText || question.subQuestions.length > 1) && (
@@ -228,15 +234,35 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
                             </p>
                           )}
                           {best && (
-                            <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm">
-                              <span className="font-bold">إجابتك: </span>
-                              <span className="whitespace-pre-wrap">{answerLabel(question, sq, answer)}</span>
+                            <div className={`rounded-lg border px-3 py-2 text-sm ${
+                              verdict === "correct"
+                                ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-100"
+                                : verdict === "wrong"
+                                ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 text-red-900 dark:text-red-100"
+                                : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                            }`}>
+                              <div className="flex items-start gap-2">
+                                {verdict === "correct" && <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />}
+                                {verdict === "wrong" && <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />}
+                                <p className="min-w-0 flex-1">
+                                  <span className="font-bold">إجابتك: </span>
+                                  <span className="whitespace-pre-wrap">{myAnswer}</span>
+                                </p>
+                                {verdict !== "unknown" && (
+                                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-extrabold text-white ${
+                                    verdict === "correct" ? "bg-emerald-600" : "bg-red-600"
+                                  }`}>
+                                    {verdict === "correct" ? "إجابة صحيحة" : answered ? "إجابة خاطئة" : "بدون إجابة"}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           )}
 
-                          {showCorrectKey && (
-                            <div className="flex items-start gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                              {detail?.correct ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+                          {/* المفتاح يظهر تحت الإجابة الخاطئة مباشرة، ولا نكرره حين تكون صحيحة */}
+                          {showCorrectKey && verdict !== "correct" && (
+                            <div className="flex items-start gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-100">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
                               <span><strong>الإجابة الصحيحة:</strong> {correctAnswerLabel(question, sq, feedback)}</span>
                             </div>
                           )}
