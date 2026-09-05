@@ -86,9 +86,12 @@ const check = (title, pass, detail = "") => {
 // 2) لا IndexedDB إطلاقاً
 // ────────────────────────────────────────────────────────────
 {
+  // IndexedDB مسموح في ملف واحد فقط: المخزن الثالث لبطاقة الجهاز العشوائية
+  // (نص عشوائي بلا أي بيانات) — لأن مسح localStorage والكوكي وحدهما شائع.
   const h = hits(/indexedDB|window\.webkitStorageInfo|navigator\.storage/)
-  check("لا استخدام لـ IndexedDB / تخزين المتصفح الدائم", h.length === 0,
-    h.map(x => `${x.file}:${x.line}`).join("، "))
+  const bad = h.filter(x => x.file !== "lib/device-identity.ts")
+  check("IndexedDB محصور في بطاقة الجهاز العشوائية (لا بيانات تطبيق)", bad.length === 0,
+    bad.map(x => `${x.file}:${x.line}`).join("، ") || "المخزن الثالث للبطاقة فقط")
 }
 
 // ────────────────────────────────────────────────────────────
@@ -104,6 +107,11 @@ const LS_WRITE_ALLOW = [
     file: "lib/survey-device.ts",
     has: "localStorage.setItem(name, value)",
     why: "بطاقة استبيان عشوائية (32 حرفًا) تمنع الرد المكرر بلا رقم هاتف — لا بيانات ولا إجابات",
+  },
+  {
+    file: "lib/device-identity.ts",
+    has: "localStorage.setItem(name, value)",
+    why: "بطاقة الجهاز العشوائية (32 حرفًا): تمنع تكرار المحاولة وتُمكّن حظر المسيء — لا بيانات",
   },
 ]
 {
@@ -121,11 +129,12 @@ const LS_READ_ALLOW = [
   { file: "lib/student-accounts.ts", has: "localStorage.getItem(RATE_LIMITS_KEY", why: "قراءة عدّاد الحماية" },
   { file: "lib/memory-store.ts", has: "window.localStorage?.getItem(", why: "إنقاذ لمرة واحدة: نقل أي كاش قديم إلى الذاكرة ثم مسح المتصفح نهائياً" },
   { file: "lib/survey-device.ts", has: "localStorage.getItem(name)", why: "قراءة بطاقة الاستبيان العشوائية" },
+  { file: "lib/device-identity.ts", has: "localStorage.getItem(name)", why: "قراءة بطاقة الجهاز العشوائية" },
 ]
 {
   const h = hits(/localStorage\??\.getItem/)
   const bad = h.filter(x => !LS_READ_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("قراءات localStorage: عدّاد الحماية + إنقاذ قديم + بطاقة الاستبيان", bad.length === 0 && h.length === 4,
+  check("قراءات localStorage: عدّاد الحماية + إنقاذ قديم + بطاقتا الاستبيان والجهاز", bad.length === 0 && h.length === 5,
     bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || LS_READ_ALLOW.map(a => a.why).join(" | "))
 }
 
@@ -152,11 +161,12 @@ const COOKIE_ALLOW = [
   { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=${encodeURIComponent(encode(" },
   { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=; path=/; max-age=0" },
   { file: "lib/survey-device.ts", has: "document.cookie = `${name}=${encodeURIComponent(value)}" },
+  { file: "lib/device-identity.ts", has: "document.cookie = `${name}=${encodeURIComponent(value)}" },
 ]
 {
   const h = hits(/document\.cookie\s*=\s*[^=]/)
   const bad = h.filter(x => !COOKIE_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("الكوكيز = جلسة طالب + قدرة نتيجة + بطاقة استبيان عشوائية (بلا بيانات)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
+  check("الكوكيز = جلسة طالب + قدرة نتيجة + بطاقتا استبيان وجهاز عشوائيتان (بلا بيانات)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
     bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || "لا تحتوي الكوكيز على كلمة مرور أو إجابات أو أسماء أو درجات")
 }
 
@@ -172,6 +182,25 @@ const COOKIE_ALLOW = [
     /getRandomValues|Math\.random/.test(dev)
   check("بطاقة الاستبيان المحلية عشوائية بلا أي بيانات شخصية", clean,
     dev.length === 0 ? "lib/survey-device.ts غير موجود" : "راجع محتوى البطاقة")
+}
+
+// ────────────────────────────────────────────────────────────
+// 6-ج) هوية الجهاز: بطاقة عشوائية + بصمة هاش — بلا أي بيانات شخصية
+// ────────────────────────────────────────────────────────────
+{
+  const dev = CODE.get("lib/device-identity.ts") || ""
+  const body = dev.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")
+  const clean =
+    dev.length > 0 &&
+    /getRandomValues|Math\.random/.test(dev) &&
+    // لا تُخزَّن البصمة ولا أي بيانات شخصية على الجهاز: التخزين للبطاقة وحدها
+    // البصمة تُحسب في كل مرة ولا تُكتب في أي مخزن، والمكتوب هو البطاقة وحدها
+    !/(fingerprint|phone|token|password|answers)/i.test((body.match(/setItem\([^)]*\)/g) || []).join(" ")) &&
+    (body.match(/localStorage\.setItem\(/g) || []).length === 1 &&
+    /writeLocal\(CARD_KEY, id\)/.test(body) &&
+    /SHA-256/.test(dev)
+  check("هوية الجهاز: بطاقة عشوائية مخزَّنة + بصمة تُحسب بلا تخزين", clean,
+    dev.length === 0 ? "lib/device-identity.ts غير موجود" : "راجع محتوى وحدة هوية الجهاز")
 }
 
 // ────────────────────────────────────────────────────────────

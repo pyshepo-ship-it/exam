@@ -91,6 +91,8 @@ import {
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
 import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
+import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
+import { grantDeviceAttempt } from "@/lib/supabase/sync"
 import { marksForReviewVerdict, summarizeAttemptReview } from "@/lib/exam-grade"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { Switch } from "@/components/ui/switch"
@@ -165,6 +167,8 @@ export default function ExamsPage() {
     targetGroupIds: [] as string[],
     maxAttempts: "0",
     reviewOpen: false,
+    listedOnBoard: true,
+    showInPortal: true,
   })
   const [overrideTarget, setOverrideTarget] = useState<{ attemptId: string; name: string; current: number; total: number } | null>(null)
   const [overrideScore, setOverrideScore] = useState("")
@@ -253,6 +257,8 @@ export default function ExamsPage() {
       availableFrom: toLocalInputValue(exam.availableFrom),
       availableUntil: toLocalInputValue(exam.availableUntil),
       reviewOpen: !!exam.reviewOpen,
+      listedOnBoard: exam.listedOnBoard !== false,
+      showInPortal: exam.showInPortal !== false,
       targetGroupIds: exam.targetGroupIds || [],
       maxAttempts: String(exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0),
     })
@@ -299,6 +305,8 @@ export default function ExamsPage() {
             targetGroupIds: panelForm.targetGroupIds,
             maxAttempts: maxN > 0 ? maxN : undefined,
             reviewOpen: panelForm.reviewOpen,
+            listedOnBoard: panelForm.listedOnBoard,
+            showInPortal: panelForm.showInPortal,
             updatedAt: new Date().toISOString(),
           }
         : e
@@ -808,6 +816,8 @@ export default function ExamsPage() {
       // ===== إعدادات لوحة التحكم — يملكها panelForm وحده، ولا يجوز أن يمسحها المحرر =====
       maxAttempts: previous?.maxAttempts && previous.maxAttempts > 0 ? previous.maxAttempts : undefined,
       reviewOpen: !!previous?.reviewOpen,
+      listedOnBoard: previous ? previous.listedOnBoard !== false : true,
+      showInPortal: previous ? previous.showInPortal !== false : true,
       createdAt,
       updatedAt: new Date().toISOString(),
     }
@@ -2748,6 +2758,8 @@ export default function ExamsPage() {
                         {overridden && a.manualOverride?.reason && (
                           <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
                         )}
+                        {/* من هذا الجهاز؟ يظهر حين يخالف الاسم المكتوب صاحبَ الجهاز المعروف */}
+                        <DeviceOwnerBadge card={a.deviceCard} fpHash={a.deviceFp} writtenName={a.studentName} />
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
@@ -2772,6 +2784,27 @@ export default function ExamsPage() {
                         >
                           تعديل الدرجة
                         </Button>
+                        {a.deviceCard && resultsExam && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-emerald-300 text-emerald-700 dark:text-emerald-300"
+                            title="يمنح جهاز هذا الطالب محاولة إضافية في هذا الاختبار فقط"
+                            onClick={async () => {
+                              const res = await grantDeviceAttempt(resultsExam.id, a.deviceCard!, a.studentName)
+                              if (res.ok) toast.success("تم منح محاولة إضافية لهذا الجهاز")
+                              else toast.error(res.error || "تعذر منح المحاولة")
+                            }}
+                          >
+                            محاولة إضافية
+                          </Button>
+                        )}
+                        <BanDeviceButton
+                          card={a.deviceCard}
+                          fpHash={a.deviceFp}
+                          writtenName={a.studentName}
+                          label={`محاولة اختبار: ${resultsExam?.title || ""}`}
+                        />
                       </div>
                     </div>
                   </div>
@@ -3047,8 +3080,48 @@ export default function ExamsPage() {
                         : "لا يفتح الاختبار إلا طالب مسجَّل الدخول من صفه — هويته تلقائية من حسابه"}
                     </p>
 
-                    {/* رابط النشر — للاختبار المفتوح للجميع */}
-                    {panelForm.accessMode === "public" && (
+                    {/* أين يظهر الاختبار — «بالرابط فقط» يخفيه عن الجميع إلا من يملك الرابط */}
+                    <div className="space-y-2 rounded-xl border border-gray-200 dark:border-gray-800 p-3">
+                      <p className="font-bold text-sm text-gray-900 dark:text-white">أين يظهر الاختبار؟</p>
+                      {panelForm.accessMode === "public" && (
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold text-gray-800 dark:text-gray-100">في لوحة الإعلانات (الصفحة الرئيسية)</p>
+                            <p className="text-xs text-gray-500">
+                              {panelForm.listedOnBoard
+                                ? "يراه كل زائر للصفحة الرئيسية"
+                                : "مخفي عن اللوحة — لا يفتحه إلا من أرسلتَ له الرابط"}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={panelForm.listedOnBoard}
+                            onCheckedChange={v => setPanelForm(prev => ({ ...prev, listedOnBoard: v }))}
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800 dark:text-gray-100">في بوابة الطالب المسجَّل («اختباراتي»)</p>
+                          <p className="text-xs text-gray-500">
+                            {panelForm.showInPortal
+                              ? "يظهر لطلاب صفه ومجموعاته المستهدفة"
+                              : "مخفي من البوابة — بالرابط فقط"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={panelForm.showInPortal}
+                          onCheckedChange={v => setPanelForm(prev => ({ ...prev, showInPortal: v }))}
+                        />
+                      </div>
+                      {!panelForm.listedOnBoard && !panelForm.showInPortal && (
+                        <p className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+                          بالرابط فقط: انسخ الرابط وأرسله في قناة الواتساب — لن يظهر الاختبار في أي قائمة.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* رابط النشر — للمفتوح للجميع، ولأي اختبار مخفي يُفتح بالرابط */}
+                    {(panelForm.accessMode === "public" || !panelForm.showInPortal) && (
                       <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-2">
                         <p className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1.5">
                           <Link2 className="w-3.5 h-3.5" />

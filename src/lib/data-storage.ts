@@ -276,6 +276,16 @@ export interface Exam {
   maxAttempts?: number
   /** إظهار الإجابة الصحيحة للطالب: لا أبداً / بعد كل سؤال / في نهاية الاختبار */
   answerVisibility?: 'never' | 'afterEach' | 'atEnd'
+  /**
+   * إظهار الاختبار في لوحة الإعلانات بالصفحة الرئيسية (للاختبار المفتوح للجميع).
+   * false = بالرابط فقط: من يملك الرابط يفتحه، ولا يراه أحد في اللوحة.
+   */
+  listedOnBoard?: boolean
+  /**
+   * إظهار الاختبار داخل بوابة الطالب المسجَّل.
+   * false = لا يظهر في قائمة «اختباراتي» ويُفتح بالرابط فقط.
+   */
+  showInPortal?: boolean
   /** المراجعة مفتوحة للجميع — بعد امتحان جميع الطلاب: يرى الطالب أسئلة الاختبار وأجوبته والأجوبة الصحيحة ودرجته في أي وقت */
   reviewOpen?: boolean
   createdAt: string
@@ -581,6 +591,9 @@ export interface ExamAttempt {
   studentName: string
   /** رقم هاتف الزائر — يُطلب في الاختبارات المفتوحة للجميع (بلا تسجيل دخول) */
   phone?: string
+  /** جهاز المحاولة: بطاقته وبصمته — لزر الحظر وتمييز الطالب المجهول (027) */
+  deviceCard?: string
+  deviceFp?: string
   groupId: string
   gradeId: string
   answers: Record<string, ExamAttemptAnswer>
@@ -639,6 +652,9 @@ export interface InquiryThread {
   groupId?: string
   messages: InquiryMessage[]
   status: 'open' | 'closed'
+  /** جهاز صاحب الاستفسار — لزر الحظر بجانب التعليق (027) */
+  deviceCard?: string
+  deviceFp?: string
   createdAt: string
   updatedAt: string
 }
@@ -782,6 +798,9 @@ export interface SurveyResponse {
    * وحده، ويستطيع المعلم استبعاد هذه الردود من النتائج بضغطة.
    */
   duplicateSuspect?: boolean
+  /** بطاقة جهاز المُجيب وبصمته — لزر الحظر وتمييز صاحب الجهاز (027) */
+  deviceCard?: string
+  deviceFp?: string
   createdAt: string
 }
 

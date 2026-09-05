@@ -60,6 +60,8 @@ export function examAvailability(exam: Exam, now: Date = new Date()): ExamAvaila
 /** هل الاختبار مخصص لهذا الطالب (صفه ومجموعته)؟ — العزل التام حسب الصف */
 export function isExamForStudent(exam: Exam, gradeId: string, groupId: string): boolean {
   if (!isOnlineExam(exam) || !exam.allowOnline) return false
+  // showInPortal = false ⇒ لا يظهر في «اختباراتي»، ويُفتح بالرابط فقط
+  if (exam.showInPortal === false) return false
   if (exam.gradeId && exam.gradeId !== gradeId) return false
   const targets = exam.targetGroupIds || []
   if (targets.length > 0 && groupId && !targets.includes(groupId)) return false
@@ -90,7 +92,10 @@ export function isExamOpenToGuests(exam: Exam): boolean {
  * والمتاحة الآن زمنياً.
  */
 export function publicBoardExams(exams: Exam[], now: Date = new Date()): Exam[] {
-  return (exams || []).filter(e => isExamOpenToGuests(e) && examAvailability(e, now).open)
+  // listedOnBoard = false ⇒ «بالرابط فقط»: يفتحه من يملك الرابط ولا يراه أحد هنا
+  return (exams || []).filter(e =>
+    isExamOpenToGuests(e) && e.listedOnBoard !== false && examAvailability(e, now).open
+  )
 }
 
 /** هل يختار الزائر صفه؟ — فقط إذا كان الاختبار عاماً (بلا صف محدد) */

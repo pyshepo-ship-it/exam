@@ -23,6 +23,7 @@ import {
   ShieldQuestion,
   VolumeX,
   Volume2,
+  ShieldBan,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -68,8 +69,10 @@ import {
   setStudentInquiryChannel,
 } from "@/lib/inquiries"
 import type { InquiryThread } from "@/lib/data-storage"
+import { DevicesPanel } from "@/components/devices/devices-panel"
+import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 
-type TabKey = "registrations" | "transfers" | "inquiries"
+type TabKey = "registrations" | "transfers" | "inquiries" | "devices"
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   pending: { label: "قيد المراجعة", className: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300" },
@@ -330,6 +333,7 @@ export default function RequestsPage() {
           { key: "registrations" as TabKey, label: "طلبات التسجيل", icon: UserPlus, count: pendingRegs, color: "from-indigo-500 to-purple-600" },
           { key: "transfers" as TabKey, label: "طلبات نقل المجموعة", icon: ArrowLeftRight, count: pendingTransfers, color: "from-emerald-500 to-teal-600" },
           { key: "inquiries" as TabKey, label: "الاستفسارات", icon: MessageCircleQuestion, count: awaitingReply, color: "from-sky-500 to-blue-600" },
+          { key: "devices" as TabKey, label: "الأجهزة والحظر", icon: ShieldBan, count: 0, color: "from-rose-500 to-red-600" },
         ]).map(({ key, label, icon: Icon, count, color }) => (
           <button
             key={key}
@@ -661,8 +665,16 @@ export default function RequestsPage() {
                             <Lock className="w-4 h-4" />
                             <span>إغلاق الاستفسار</span>
                           </Button>
+                          {/* حظر جهاز صاحب التعليق المسيء — يعمل حتى لو كان مجهولاً */}
+                          <BanDeviceButton
+                            card={t.deviceCard}
+                            fpHash={t.deviceFp}
+                            writtenName={t.studentName}
+                            label={`استفسار: ${t.studentName}`}
+                          />
                         </div>
                       )}
+                      <DeviceOwnerBadge card={t.deviceCard} fpHash={t.deviceFp} writtenName={t.studentName} />
 
                       {/* قفل قناة الاستفسار لهذا الطالب تماماً — قرار يبقى حتى لو فتح استفسارات جديدة */}
                       <div className="flex items-center justify-between gap-2 pt-1 border-t border-dashed border-gray-200 dark:border-gray-800">
@@ -693,6 +705,11 @@ export default function RequestsPage() {
               })
           )}
         </div>
+      )}
+
+      {/* ============ الأجهزة والحظر ============ */}
+      {tab === "devices" && (
+        <DevicesPanel gradeName={id => grades.find(g => g.id === id)?.name || ""} />
       )}
 
       {/* حوار الرد على الاستفسار */}

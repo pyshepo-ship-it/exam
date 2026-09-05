@@ -18,7 +18,8 @@ import {
 } from "../memory-store";
 import { STORAGE_KEYS } from "../storage-keys";
 import { localIdentityKey, normalizeSurveyPhone, planLocalSurveySubmit } from "../surveys";
-import { getSurveyDeviceId } from "../survey-device";
+import { getSurveyDeviceId } from "../survey-device"
+import { getCachedFingerprint, getDeviceCard, getDeviceFingerprint, getDeviceIdentity, isValidDeviceCard, isValidFingerprint } from "../device-identity";
 
 // ---------- أنواع بنيوية (للتجنب الاستيراد الدائري) ----------
 interface GroupShape {
@@ -291,6 +292,9 @@ export const toExamRow = (e: any) => ({
     answerVisibility: e.answerVisibility || "never",
     maxAttempts: e.maxAttempts && e.maxAttempts > 0 ? e.maxAttempts : null,
     reviewOpen: !!e.reviewOpen,
+    // الظهور: افتراضياً ظاهر في اللوحة وفي بوابة الطالب (توافق السجل القديم)
+    listedOnBoard: e.listedOnBoard !== false,
+    showInPortal: e.showInPortal !== false,
   },
   // created_at / updated_at أعمدة NOT NULL أيضاً
   created_at: e.createdAt || new Date().toISOString(),
@@ -334,6 +338,8 @@ export const fromExamRow = (row: any) => {
     targetGroupIds: wrapped && Array.isArray(q.targetGroupIds) ? q.targetGroupIds : [],
     answerVisibility: wrapped ? (q.answerVisibility || "never") : "never",
     reviewOpen: wrapped ? !!q.reviewOpen : false,
+    listedOnBoard: wrapped ? q.listedOnBoard !== false : true,
+    showInPortal: wrapped ? q.showInPortal !== false : true,
     maxAttempts: wrapped && q.maxAttempts && q.maxAttempts > 0 ? q.maxAttempts : undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -956,17 +962,24 @@ export function pushStudentAccounts(rows: any[]) {
 // ============================================================
 // الاستفسارات — سؤال واحد من الطالب ورد المعلم عليه
 // ============================================================
-export const toInquiryRow = (t: any) => ({
-  id: t.id,
-  student_id: t.studentId,
-  student_name: t.studentName || "",
-  grade_id: t.gradeId || null,
-  group_id: t.groupId || null,
-  messages: Array.isArray(t.messages) ? t.messages : [],
-  status: t.status || "open",
-  created_at: t.createdAt || new Date().toISOString(),
-  updated_at: t.updatedAt || t.createdAt || new Date().toISOString(),
-});
+export const toInquiryRow = (t: any) => {
+  // جهاز صاحب الاستفسار — يظهر به زر الحظر بجانب التعليق المسيء (027)
+  const card = typeof window !== "undefined" ? getDeviceCard() : ""
+  const fp = typeof window !== "undefined" ? getCachedFingerprint() : ""
+  return {
+    id: t.id,
+    student_id: t.studentId,
+    student_name: t.studentName || "",
+    grade_id: t.gradeId || null,
+    group_id: t.groupId || null,
+    messages: Array.isArray(t.messages) ? t.messages : [],
+    status: t.status || "open",
+    device_card: t.deviceCard || (isValidDeviceCard(card) ? card : null),
+    device_fp: t.deviceFp || (isValidFingerprint(fp) ? fp : null),
+    created_at: t.createdAt || new Date().toISOString(),
+    updated_at: t.updatedAt || t.createdAt || new Date().toISOString(),
+  };
+};
 
 export const fromInquiryRow = (row: any) => ({
   id: row.id,
@@ -976,6 +989,8 @@ export const fromInquiryRow = (row: any) => ({
   groupId: nil(row.group_id),
   messages: Array.isArray(row.messages) ? row.messages : [],
   status: row.status || "open",
+  deviceCard: nil(row.device_card),
+  deviceFp: nil(row.device_fp),
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -1065,6 +1080,8 @@ export const fromSurveyResponseRow = (row: any) => ({
   answers: row.answers && typeof row.answers === "object" ? row.answers : {},
   // يحسبه الخادم وحده: ردّ من نفس الشبكة والمتصفح اللذين أجابا من قبل
   duplicateSuspect: row.duplicate_suspect === true,
+  deviceCard: row.device_card || undefined,
+  deviceFp: row.device_fp || undefined,
   createdAt: row.created_at,
 });
 
@@ -1217,6 +1234,8 @@ export async function submitSurveyResponse(
     };
   }
   try {
+    // بصمة العتاد تُرسل مع البطاقة: تصمد أمام مسح التخزين ونافذة التخفي (027)
+    const deviceFp = await getDeviceFingerprint().catch(() => "");
     const args: Record<string, unknown> = {
       p_token: input.token || null,
       p_survey_id: input.surveyId,
@@ -1226,15 +1245,20 @@ export async function submitSurveyResponse(
       p_guest_grade_id: input.guestGradeId || null,
       p_guest_group_id: input.guestGroupId || null,
       p_device_id: deviceId || null,
+      p_device_fp: isValidFingerprint(deviceFp) ? deviceFp : null,
     };
     let { data, error } = await sb.rpc("submit_survey_response", args);
     if (error && isMissingRpcArgError(error)) {
-      // قاعدة لم تُرقَّ إلى 023 بعد: نُرسل بالتوقيع القديم بدل أن يفشل الرد
+      // قاعدة لم تُرقَّ إلى 027 بعد: نُسقط البصمة ثم البطاقة، بدل أن يفشل الرد
       console.warn(
-        "⚠️ دالة submit_survey_response قديمة (بلا p_device_id) — شغّل supabase/migrations/023_survey_identity_fix.sql"
+        "⚠️ دالة submit_survey_response قديمة (بلا p_device_fp) — شغّل supabase/migrations/027_device_identity_and_bans.sql"
       );
-      delete args.p_device_id;
+      delete args.p_device_fp;
       ({ data, error } = await sb.rpc("submit_survey_response", args));
+      if (error && isMissingRpcArgError(error)) {
+        delete args.p_device_id;
+        ({ data, error } = await sb.rpc("submit_survey_response", args));
+      }
     }
     if (error) {
       console.warn("submitSurveyResponse:", error);
@@ -1432,6 +1456,8 @@ const fromAttemptRow = (row: any) => {
     studentId: nil(row.student_id),
     studentName: row.student_name,
     phone: nil(row.phone),
+    deviceCard: nil(row.device_card),
+    deviceFp: nil(row.device_fp),
     groupId: row.group_id,
     gradeId: row.grade_id,
     answers: row.answers || {},
@@ -1758,7 +1784,10 @@ export async function startOnlineExamTimerSession(input: OnlineExamSessionInput)
       ? { configured: true, error: "تعذر الاتصال بخدمة جلسات الاختبار" }
       : { configured: false };
   }
-  const { data, error } = await sb.rpc("start_online_exam_session", {
+  // هوية الجهاز: بها يُحسب حد المحاولات ويُرفض الجهاز المحظور (027)
+  const card = getDeviceCard();
+  const fp = await getDeviceFingerprint().catch(() => "");
+  const args: Record<string, unknown> = {
     p_session_id: input.sessionId,
     p_attempt_id: input.attemptId,
     p_exam_id: input.examId,
@@ -1767,7 +1796,19 @@ export async function startOnlineExamTimerSession(input: OnlineExamSessionInput)
     p_phone: input.phone || null,
     p_grade_id: input.gradeId,
     p_group_id: input.groupId,
-  });
+    p_device_card: isValidDeviceCard(card) ? card : null,
+    p_device_fp: isValidFingerprint(fp) ? fp : null,
+  };
+  let { data, error } = await sb.rpc("start_online_exam_session", args);
+  if (error && isMissingRpcArgError(error)) {
+    // قاعدة لم تُرقَّ إلى 027: نبدأ الجلسة بلا هوية جهاز بدل منع الطالب
+    console.warn(
+      "⚠️ دالة start_online_exam_session قديمة (بلا p_device_card) — شغّل supabase/migrations/027_device_identity_and_bans.sql"
+    );
+    delete args.p_device_card;
+    delete args.p_device_fp;
+    ({ data, error } = await sb.rpc("start_online_exam_session", args));
+  }
   if (error || !data || typeof data !== "object") {
     console.warn("startOnlineExamTimerSession:", error);
     return { configured: true, error: error?.message || "تعذر بدء جلسة الاختبار الآمنة" };
@@ -3091,4 +3132,225 @@ export async function diagnoseSync(): Promise<SyncReport> {
   }
 
   return report
+}
+
+// ============================================================
+// هوية الجهاز والحظر (ترحيل 027)
+//  • نبضة زيارة تسجّل الجهاز وتربطه بالطالب لحظة دخوله بحسابه
+//  • قائمة الأجهزة والمحظورين للمعلم، وحظر/رفع حظر بضغطة
+// ============================================================
+
+export interface DeviceTouchResult {
+  ok: boolean
+  banned: boolean
+  linked: boolean
+}
+
+/**
+ * نبضة الجهاز: تُنادى مرة عند فتح أي صفحة عامة. تسجّل الزيارة، وتربط الجهاز
+ * بحساب الطالب إن كان داخلاً، وتُرجع ما إذا كان الجهاز محظوراً.
+ */
+export async function touchDevice(
+  kind: "visit" | "exam_open" | "survey_open" | "inquiry" = "visit",
+  detail = "",
+  token?: string
+): Promise<DeviceTouchResult> {
+  const sb = getSupabase()
+  if (!sb || typeof window === "undefined") return { ok: false, banned: false, linked: false }
+  try {
+    const { card, fingerprint } = await getDeviceIdentity()
+    if (!card && !fingerprint) return { ok: false, banned: false, linked: false }
+    const { data, error } = await sb.rpc("touch_device", {
+      p_card: card || null,
+      p_fp: fingerprint || null,
+      p_token: token || null,
+      p_kind: kind,
+      p_detail: detail.slice(0, 120),
+    })
+    if (error) {
+      // قاعدة لم تُرقَّ إلى 027 بعد: لا نكسر الصفحة
+      return { ok: false, banned: false, linked: false }
+    }
+    const row = (data || {}) as Record<string, unknown>
+    return { ok: row.ok === true, banned: row.banned === true, linked: row.linked === true }
+  } catch {
+    return { ok: false, banned: false, linked: false }
+  }
+}
+
+export interface DeviceRow {
+  card: string
+  fpHash?: string
+  firstSeen: string
+  lastSeen: string
+  visits: number
+  studentId?: string
+  studentName?: string
+  gradeId?: string
+  groupId?: string
+  phone?: string
+  lastGuestName?: string
+  banned: boolean
+  banReason?: string
+  banId?: string
+}
+
+/** كل الأجهزة التي زارت الموقع (للمعلم) — أحدث ظهوراً أولاً */
+export async function fetchDevices(limit = 300): Promise<DeviceRow[]> {
+  const sb = getSupabase()
+  if (!sb) return []
+  const [devicesRes, bansRes, studentsRes] = await Promise.all([
+    sb.from("devices").select("*").order("last_seen", { ascending: false }).limit(limit),
+    sb.from("device_bans").select("*").eq("active", true),
+    sb.from("students").select("id,name,phone,grade_id,group_id"),
+  ])
+  if (devicesRes.error) return []
+  const bans = (bansRes.data as any[]) || []
+  const students = new Map(((studentsRes.data as any[]) || []).map(s => [s.id, s]))
+  return ((devicesRes.data as any[]) || []).map(d => {
+    const ban = bans.find(b => (b.card && b.card === d.card) || (b.fp_hash && b.fp_hash === d.fp_hash))
+    const student = d.student_id ? students.get(d.student_id) : undefined
+    return {
+      card: d.card,
+      fpHash: d.fp_hash || undefined,
+      firstSeen: d.first_seen,
+      lastSeen: d.last_seen,
+      visits: Number(d.visits) || 0,
+      studentId: d.student_id || undefined,
+      studentName: student?.name,
+      gradeId: student?.grade_id,
+      groupId: student?.group_id,
+      phone: student?.phone,
+      lastGuestName: d.last_guest_name || undefined,
+      banned: !!ban,
+      banReason: ban?.reason || undefined,
+      banId: ban?.id,
+    }
+  })
+}
+
+export interface DeviceBanRow {
+  id: string
+  card?: string
+  fpHash?: string
+  reason: string
+  label: string
+  createdAt: string
+}
+
+/** قائمة المحظورين الحالية */
+export async function fetchDeviceBans(): Promise<DeviceBanRow[]> {
+  const sb = getSupabase()
+  if (!sb) return []
+  const { data, error } = await sb
+    .from("device_bans")
+    .select("*")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+  if (error) return []
+  return ((data as any[]) || []).map(b => ({
+    id: b.id,
+    card: b.card || undefined,
+    fpHash: b.fp_hash || undefined,
+    reason: b.reason || "",
+    label: b.label || "",
+    createdAt: b.created_at,
+  }))
+}
+
+/** حظر جهاز — بالبطاقة والبصمة معاً حتى لا يلتف بمسح تخزينه */
+export async function banDevice(input: {
+  card?: string
+  fpHash?: string
+  reason: string
+  label?: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: "خدمة قاعدة البيانات غير مُعدّة" }
+  if (!input.card && !input.fpHash) return { ok: false, error: "لا توجد بيانات جهاز لهذه المشاركة" }
+  const { error } = await sb.from("device_bans").insert({
+    id: `ban-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    card: input.card || null,
+    fp_hash: input.fpHash || null,
+    reason: (input.reason || "").slice(0, 300),
+    label: (input.label || "").slice(0, 160),
+    active: true,
+  })
+  if (error) return { ok: false, error: explainSupabaseError(error) }
+  return { ok: true }
+}
+
+/** رفع الحظر عن جهاز */
+export async function unbanDevice(banId: string): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: "خدمة قاعدة البيانات غير مُعدّة" }
+  const { error } = await sb
+    .from("device_bans")
+    .update({ active: false, lifted_at: new Date().toISOString() })
+    .eq("id", banId)
+  if (error) return { ok: false, error: explainSupabaseError(error) }
+  return { ok: true }
+}
+
+export interface DeviceOwnerHint {
+  match: "card" | "fingerprint" | "none"
+  confidence?: "high" | "medium"
+  studentId?: string
+  name?: string
+  phone?: string
+  gradeId?: string
+  groupId?: string
+  visits?: number
+  lastSeen?: string
+}
+
+/** من صاحب هذا الجهاز؟ — يُستدعى من لوحة المعلم فقط */
+export async function identifyDevice(card?: string, fpHash?: string): Promise<DeviceOwnerHint> {
+  const sb = getSupabase()
+  if (!sb || (!card && !fpHash)) return { match: "none" }
+  const { data, error } = await sb.rpc("identify_device", { p_card: card || null, p_fp: fpHash || null })
+  if (error || !data || typeof data !== "object") return { match: "none" }
+  const row = data as Record<string, any>
+  if (row.match !== "card" && row.match !== "fingerprint") return { match: "none" }
+  return {
+    match: row.match,
+    confidence: row.confidence,
+    studentId: row.studentId,
+    name: row.name,
+    phone: row.phone,
+    gradeId: row.gradeId,
+    groupId: row.groupId,
+    visits: row.visits,
+    lastSeen: row.lastSeen,
+  }
+}
+
+/** سجل أحداث جهاز واحد (للعرض في بطاقته) */
+export async function fetchDeviceEvents(card: string, limit = 40): Promise<{ kind: string; detail: string; createdAt: string }[]> {
+  const sb = getSupabase()
+  if (!sb || !card) return []
+  const { data, error } = await sb
+    .from("device_events")
+    .select("kind,detail,created_at")
+    .eq("card", card)
+    .order("created_at", { ascending: false })
+    .limit(limit)
+  if (error) return []
+  return ((data as any[]) || []).map(e => ({ kind: e.kind, detail: e.detail || "", createdAt: e.created_at }))
+}
+
+/** منح محاولة إضافية لجهاز في اختبار بعينه (استثناء يدوي من المعلم) */
+export async function grantDeviceAttempt(examId: string, card: string, note = ""): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: "خدمة قاعدة البيانات غير مُعدّة" }
+  if (!examId || !card) return { ok: false, error: "لا توجد بيانات جهاز لهذه المحاولة" }
+  const { error } = await sb.from("device_attempt_grants").insert({
+    id: `grant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    exam_id: examId,
+    card,
+    extra: 1,
+    note: note.slice(0, 200),
+  })
+  if (error) return { ok: false, error: explainSupabaseError(error) }
+  return { ok: true }
 }

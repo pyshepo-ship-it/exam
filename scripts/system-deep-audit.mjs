@@ -911,7 +911,11 @@ test("لوحة الإعلانات تعرض الاختبارات المفتوحة
   assert(home.includes("publicBoardExams("), "الصفحة الرئيسية تستخدم publicBoardExams")
   assert(!/filter\(e => e\.allowOnline\)/.test(home), "لا تُعرض كل الاختبارات المنشورة للعامة")
   const pc = readFileSync("src/lib/portal-content.ts", "utf8")
-  assert(/isExamOpenToGuests\(e\) && examAvailability\(e, now\)\.open/.test(pc), "اللوحة = مفتوح للجميع + متاح الآن")
+  assert(
+    /isExamOpenToGuests\(e\) && e\.listedOnBoard !== false && examAvailability\(e, now\)\.open/.test(pc),
+    "اللوحة = مفتوح للجميع + مسموح إدراجه + متاح الآن"
+  )
+  assert(/if \(exam\.showInPortal === false\) return false/.test(pc), "«بالرابط فقط» يخفيه عن بوابة الطالب أيضاً")
 })
 
 test("صفحة الاختبار: بوابة الأعضاء وبوابة الزوار منفصلتان ولا تُملأ بيانات العضو يدوياً", () => {

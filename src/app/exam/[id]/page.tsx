@@ -989,6 +989,19 @@ export default function TakeExamPage() {
               </div>
             </div>
 
+            {/* عنوان الاختبار وصفه بخط كبير قبل البدء — تأكيد أنه الاختبار الصحيح */}
+            <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 px-4 py-3 text-center">
+              <p className="text-lg sm:text-xl font-extrabold leading-snug text-gray-900 dark:text-white">
+                {exam.title}
+              </p>
+              <p className="mt-1 text-base font-extrabold text-indigo-700 dark:text-indigo-300">
+                {grades.find(g => g.id === (exam.gradeId || guestGradeId))?.name || "بلا صف محدد"}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                تأكد أن هذا اختبار صفك قبل البدء
+              </p>
+            </div>
+
             {memberOtherGrade && (
               <p className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 أنت مسجّل الدخول، لكن هذا الاختبار لصفٍّ غير صفك — لذلك تُسجَّل محاولتك بالبيانات التي تُدخلها هنا.

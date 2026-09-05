@@ -142,6 +142,7 @@ const rewrite = (src) =>
     .replace(/from "\.\.\/memory-store"/g, 'from "../memory-store.mjs"')
     .replace(/from "\.\.\/surveys"/g, 'from "../surveys.mjs"')
     .replace(/from "\.\.\/survey-device"/g, 'from "../survey-device.mjs"')
+    .replace(/from "\.\.\/device-identity"/g, 'from "../device-identity.mjs"')
     .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
     .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
@@ -193,6 +194,7 @@ files["utils.mjs"] = rewrite(utils)
 {
   // بطاقة المتصفح — تستدعيها sync.ts عند كل رد استبيان (بلا window تعيد "")
   files["survey-device.mjs"] = rewrite(readFileSync("src/lib/survey-device.ts", "utf8"))
+  files["device-identity.mjs"] = rewrite(readFileSync("src/lib/device-identity.ts", "utf8"))
 }
 {
   let sr = readFileSync("src/lib/student-report.ts", "utf8")
@@ -1003,9 +1005,14 @@ const localDataKeys = () => localKeyList().filter((k) => DATA_KEYS.includes(k))
 
 eq("بعد كل عمليات الحفظ والدخول والخروج: لا أثر لأي بيان في التخزين المحلي",
   localDataKeys().length === 0, localDataKeys().join("، ") || "لا شيء")
-eq("المسموح على الجهاز: عدّاد حماية الإغراق فقط (رقم بلا أسماء)",
-  localKeyList().every((k) => k === "studentRateLimits"),
+// المسموح: عدّاد الحماية + بطاقتا الاستبيان والجهاز (نصوص عشوائية بلا بيانات)
+const ALLOWED_LOCAL = ["studentRateLimits", "survey_device_id", "device_card_id"]
+eq("المسموح على الجهاز: عدّاد الحماية وبطاقتان عشوائيتان فقط (بلا أي بيانات)",
+  localKeyList().every((k) => ALLOWED_LOCAL.includes(k)),
   localKeyList().join("، ") || "لا شيء")
+eq("بطاقة الجهاز المخزَّنة نص عشوائي فقط (لا اسم ولا رقم ولا بصمة)",
+  localKeyList().filter(k => k === "device_card_id").every(k => /^[a-z0-9-]{16,128}$/.test(globalThis.window.localStorage.getItem(k) || "")),
+  globalThis.window.localStorage.getItem("device_card_id") || "غير موجودة")
 
 // حفظ جديد (طلاب + اختبارات + إعدادات + سنة دراسية) — لا يُكتب على الجهاز
 const snap13 = snapshotMemory()

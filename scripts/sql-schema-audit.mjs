@@ -787,6 +787,77 @@ check(
     /const owner = emailOwnerName\(mail, studentId\)/.test(accountsSrc)
 )
 
+section("2-ط) ترحيل 027: هوية الجهاز والحظر وتتبّع الزوار")
+
+const sql027 = byName("027_device_identity_and_bans.sql")
+check(
+  "027: جداول الأجهزة والحظر والأحداث بـ RLS ومحجوبة عن anon",
+  /CREATE TABLE IF NOT EXISTS public\.devices/.test(sql027) &&
+    /CREATE TABLE IF NOT EXISTS public\.device_bans/.test(sql027) &&
+    /ALTER TABLE public\.devices\s+ENABLE ROW LEVEL SECURITY/.test(sql027) &&
+    /REVOKE ALL ON TABLE public\.devices\s+FROM anon/.test(sql027) &&
+    /REVOKE ALL ON TABLE public\.device_bans\s+FROM anon/.test(sql027)
+)
+check(
+  "027: نبضة الجهاز SECURITY DEFINER وتربطه بالطالب بسرّ جلسته",
+  /CREATE OR REPLACE FUNCTION public\.touch_device\([\s\S]{0,400}SECURITY DEFINER/.test(sql027) &&
+    /FROM public\.student_sessions s\s*\n\s*WHERE s\.token_hash = encode\(digest\(p_token, 'sha256'\), 'hex'\)/.test(sql027)
+)
+check(
+  "027: الحظر يطابق البطاقة أو البصمة (مسح التخزين لا يرفعه)",
+  /CREATE OR REPLACE FUNCTION public\.device_is_banned/.test(sql027) &&
+    /b\.card = p_card[\s\S]{0,120}b\.fp_hash = p_fp/.test(sql027)
+)
+check(
+  "027: بدء الاختبار يرفض الجهاز المحظور",
+  /IF public\.device_is_banned\(v_card, v_fp\) THEN[\s\S]{0,160}RAISE EXCEPTION 'تم إيقاف هذا الجهاز عن المشاركة/.test(sql027)
+)
+check(
+  "027: حد المحاولات يُحسب على الجهاز أيضاً (تغيير الاسم لا يمنح رصيداً)",
+  /\(v_card IS NOT NULL AND os\.device_card = v_card\)/.test(sql027) &&
+    /\(v_fp IS NOT NULL AND os\.device_fp = v_fp\)/.test(sql027) &&
+    /v_used >= v_limit \+ v_extra/.test(sql027)
+)
+check(
+  "027: استثناء يدوي من المعلم يمنح محاولة إضافية لجهاز بعينه",
+  /CREATE TABLE IF NOT EXISTS public\.device_attempt_grants/.test(sql027) &&
+    /SELECT COALESCE\(sum\(extra\), 0\) INTO v_extra/.test(sql027)
+)
+check(
+  "027: الاستبيان يرفض الجهاز المحظور ويسجّل بطاقته مع الرد",
+  /'code', 'banned'/.test(sql027) &&
+    /public\.device_key_ok\(p_device_id\), public\.device_fp_ok\(p_device_fp\), now\(\)\)/.test(sql027)
+)
+check(
+  "027: محاولة الاختبار ترث جهاز جلستها ولا يمحوه رفع لوحة المعلم",
+  /CREATE TRIGGER trg_exam_attempt_device/.test(sql027) &&
+    /NEW\.device_card := COALESCE\(NEW\.device_card, OLD\.device_card\)/.test(sql027)
+)
+check(
+  "027: identify_device للمعلم وحده (تمنع الزائر صراحةً)",
+  /IF auth\.role\(\) IS DISTINCT FROM 'authenticated' THEN[\s\S]{0,120}RAISE EXCEPTION 'هذه البيانات للمعلم فقط'/.test(sql027) &&
+    /GRANT EXECUTE ON FUNCTION public\.identify_device\(TEXT, TEXT\) TO authenticated;/.test(sql027) &&
+    !/GRANT EXECUTE ON FUNCTION public\.identify_device\(TEXT, TEXT\) TO anon/.test(sql027)
+)
+// الواجهة: البصمة تُحسب ولا تُخزَّن، والهوية تُرسل مع كل طلب حسّاس
+const deviceSrc = readFileSync("src/lib/device-identity.ts", "utf8")
+const syncSrcDevices = readFileSync("src/lib/supabase/sync.ts", "utf8")
+check(
+  "الواجهة: بطاقة في ثلاثة مخازن + بصمة عتاد تُحسب بلا تخزين",
+  /localStorage/.test(deviceSrc) && /document\.cookie/.test(deviceSrc) && /indexedDB/.test(deviceSrc) &&
+    /canvasSignal|webglSignal|fontsSignal/.test(deviceSrc) &&
+    /SHA-256/.test(deviceSrc)
+)
+check(
+  "الواجهة: هوية الجهاز تُرسل مع بدء الاختبار ومع رد الاستبيان",
+  /p_device_card: isValidDeviceCard\(card\) \? card : null/.test(syncSrcDevices) &&
+    /p_device_fp: isValidFingerprint\(deviceFp\) \? deviceFp : null/.test(syncSrcDevices)
+)
+check(
+  "الواجهة: تراجع آمن لقاعدة لم تُرقَّ إلى 027 (لا يفشل بدء الاختبار)",
+  /delete args\.p_device_card;\s*\n\s*delete args\.p_device_fp;/.test(syncSrcDevices)
+)
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن

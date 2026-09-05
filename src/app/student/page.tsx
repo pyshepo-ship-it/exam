@@ -482,7 +482,16 @@ export default function StudentPortalPage() {
                         return (
                           <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3">
                             <div className="min-w-0">
-                              <p className="font-bold text-sm text-gray-900 dark:text-white truncate">{e.title}</p>
+                              {/* العنوان والصف بخط واحد واضح — لا يبدأ الطالب اختبار صف آخر بالخطأ */}
+                              <p className="text-base sm:text-lg font-extrabold leading-snug text-gray-900 dark:text-white">
+                                {e.title}
+                                {report?.gradeName && (
+                                  <>
+                                    {" — "}
+                                    <span className="text-indigo-700 dark:text-indigo-300">{report.gradeName}</span>
+                                  </>
+                                )}
+                              </p>
                               <p className="text-xs text-gray-400">
                                 {e.availableFrom && <>يُفتح: {fmtDate(e.availableFrom)}</>}
                                 {e.availableFrom && e.availableUntil && " • "}

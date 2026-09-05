@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
+import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 import {
   Plus,
   Pencil,
@@ -1119,16 +1120,19 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                     )
                   })}
 
-                  {!resultsSurvey.anonymous && (
+                  {(
                     <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                       <p className="text-xs font-bold text-gray-700 dark:text-gray-200 px-3 py-2 bg-gray-50 dark:bg-gray-900">
-                        من أجاب ({resultsResponses.length})
+                        {resultsSurvey.anonymous
+                          ? `الردود (${resultsResponses.length}) — بلا أسماء، ويمكنك حظر جهاز المسيء`
+                          : `من أجاب (${resultsResponses.length})`}
                       </p>
                       <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
                         {resultsResponses.map(r => (
-                          <div key={r.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+                          <div key={r.id} className="px-3 py-2 space-y-1.5 text-[11px]">
+                            <div className="flex flex-wrap items-center gap-2">
                             <span className="font-bold text-gray-700 dark:text-gray-200">
-                              {r.studentName || "بلا اسم"}
+                              {resultsSurvey.anonymous ? "ردّ مجهول" : r.studentName || "بلا اسم"}
                             </span>
                             {r.duplicateSuspect && (
                               <Badge
@@ -1157,6 +1161,15 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                                 {q.title.slice(0, 18)}: {answerToText(q, r.answers?.[q.id])}
                               </span>
                             ))}
+                            <BanDeviceButton
+                              card={r.deviceCard}
+                              fpHash={r.deviceFp}
+                              writtenName={r.studentName}
+                              label={`رد استبيان: ${resultsSurvey.title}`}
+                            />
+                            </div>
+                            {/* من هذا الجهاز؟ — يظهر حين يخالف الاسم المكتوب صاحب الجهاز المعروف */}
+                            <DeviceOwnerBadge card={r.deviceCard} fpHash={r.deviceFp} writtenName={r.studentName} />
                           </div>
                         ))}
                       </div>
