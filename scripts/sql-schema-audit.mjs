@@ -540,7 +540,9 @@ const phoneReq =
   /v_phone := public\.survey_phone_key\(p_guest_phone\);[\s\S]{0,600}?IF v_phone IS NULL THEN/.test(sql022) &&
   // الأرقام العربية-الهندية تُوحَّد قبل المقارنة، وإلافلت الطالب من البصمة بتغيير صيغة الكتابة
   /translate\(coalesce\(p_phone, ''\), '٠١٢٣٤٥٦٧٨٩/.test(sql022)
-check("022: رقم الهاتف مطلوب للزائر (بمفتاح موحّد) قبل أي تفريع للـ anonymous", phoneReq)
+// ملاحظة: قاعدة «الرقم إلزامي» في 022 ألغاها 023 (بلا رقم إجباري). ما يهم هنا
+// أن مسار 022 نفسه يوحّد الأرقام قبل أي مقارنة — والقاعدة السارية تُفحص في 2-هـ.
+check("022: توحيد صيغة الرقم قبل أي مقارنة (إرث ما زال مستعملًا في وضع phone)", phoneReq)
 check("022: رقم الطالب يُطابق بآخر ١١ رقمًا (المقارنة الحرفية كانت تفشل مع 2010…)",
   (sql022.match(/public\.survey_phone_key\(st\.phone\) = v_(?:key|phone)/g) || []).length >= 2)
 check("022: الرد المخزَّن يحمل مفتاح الهاتف الموحد لا الصيغة الأصلية", /phone = COALESCE\(public\.survey_phone_key\(r\.phone\), r\.phone\)/.test(sql022))
@@ -557,6 +559,134 @@ check("022: بصمة الرد لا تُرسل مع ردود الطالب", /to_j
 check("022: دالة البصمة داخلية بلا صلاحيات عامة", /REVOKE ALL ON FUNCTION public\.survey_response_hash\(TEXT, TEXT\) FROM PUBLIC/.test(sql022))
 check("022: حماية إغراق للزوار (حد ردود في الساعة)", /identity_hash = v_hash[\s\S]{0,200}1 hour/.test(sql022))
 
+section("2-د) دوال ممنوحة لـ anon: لا قراءة جدول محمي بلا SECURITY DEFINER")
+
+// العطل الذي أوقف كل ردود الاستبيان (022): أُعيد إنشاء submit_survey_response
+// بـ CREATE OR REPLACE بدون SECURITY DEFINER، وCREATE OR REPLACE لا يرث خاصية
+// الدالة السابقة. الدالة صارت تعمل بدور المنادي (anon) وRLS يمنع anon من قراءة
+// public.surveys ⇒ «الاستبيان غير موجود» لكل مُجيب، بلا أي خطأ في السجلات.
+//
+// القاعدة المفروضة هنا: كل دالة تُمنح لـ anon وتلمس جدولاً في المخطط يجب أن
+// تكون SECURITY DEFINER في **آخر** تعريف لها عبر كل الترحيلات.
+
+/** آخر تعريف لكل دالة عبر الترحيلات بالترتيب: name -> { file, header, body } */
+const lastFunctionDef = new Map()
+for (const { file, sql } of allSqlSources) {
+  const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*\n\s*RETURNS[\s\S]*?\n\s*AS\s*(\$[a-z_]*\$)([\s\S]*?)\3/gi
+  let m
+  while ((m = fnRe.exec(sql))) {
+    const name = m[1].toLowerCase()
+    const header = m[0].slice(0, m[0].indexOf("AS " + m[3]))
+    lastFunctionDef.set(name, { file, header, body: m[4] })
+  }
+}
+
+/** أسماء الدوال الممنوحة لـ anon (من كل ملفات SQL) */
+const anonGranted = new Set()
+for (const { sql } of allSqlSources) {
+  for (const g of sql.matchAll(
+    /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\([^)]*\)\s+TO\s+([^;]+);/gi
+  )) {
+    if (/\banon\b/i.test(g[2])) anonGranted.add(g[1].toLowerCase())
+  }
+}
+
+const definerProblems = []
+for (const name of anonGranted) {
+  const def = lastFunctionDef.get(name)
+  if (!def) continue // دالة معرّفة خارج ملفات المشروع
+  // هل تلمس جدولاً حقيقياً؟ (الدوال الحسابية البحتة لا تحتاج SECURITY DEFINER)
+  const touched = [...def.body.matchAll(/\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+public\.([a-z_][a-z0-9_]*)/gi)]
+    .map((x) => x[1].toLowerCase())
+    .filter((t) => schema.has(t))
+  if (touched.length === 0) continue
+  if (!/SECURITY\s+DEFINER/i.test(def.header)) {
+    definerProblems.push(
+      `${def.file}: ${name} تقرأ ${[...new Set(touched)].slice(0, 3).join("/")} وهي ممنوحة لـ anon بلا SECURITY DEFINER`
+    )
+  }
+}
+check(
+  "كل دالة ممنوحة لـ anon وتلمس جدولاً محمياً معرّفة SECURITY DEFINER (آخر تعريف)",
+  definerProblems.length === 0,
+  definerProblems.join(" | ")
+)
+
+// نفس الفكرة من زاوية أخرى: أي دالة استبيان يجب ألا تفقد SECURITY DEFINER في
+// أي ترحيل لاحق (حتى لو لم تُمنح لـ anon في نفس الملف).
+const surveyRpcs = ["submit_survey_response", "get_public_surveys", "get_student_surveys", "surveys_for_student"]
+const lostDefiner = surveyRpcs.filter((fn) => {
+  const def = lastFunctionDef.get(fn)
+  return def && !/SECURITY\s+DEFINER/i.test(def.header)
+})
+check(
+  "دوال الاستبيان الأربع محتفظة بـ SECURITY DEFINER في آخر تعريف",
+  lostDefiner.length === 0,
+  lostDefiner.join(", ")
+)
+
+section("2-هـ) ترحيل 023: إصلاح «الاستبيان غير موجود» + هوية بلا رقم هاتف")
+
+const sql023 = byName("023_survey_identity_fix.sql")
+check(
+  "023: submit_survey_response أُعيد تعريفها SECURITY DEFINER (أصل العطل)",
+  /CREATE OR REPLACE FUNCTION public\.submit_survey_response\([\s\S]*?RETURNS jsonb\s*\nLANGUAGE plpgsql SECURITY DEFINER/.test(sql023)
+)
+check(
+  "023: التوقيعان القديمان يُحذفان قبل إنشاء الجديدين (لا التباس في PostgREST)",
+  /DROP FUNCTION IF EXISTS public\.submit_survey_response\(TEXT, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT\);/.test(sql023) &&
+    /DROP FUNCTION IF EXISTS public\.get_public_surveys\(TEXT\);/.test(sql023)
+)
+check(
+  "023: فحص تثبيت يرفض الترحيل إن بقيت دالة استبيان بلا SECURITY DEFINER",
+  /prosecdef IS FALSE/.test(sql023) && /RAISE EXCEPTION/.test(sql023.slice(sql023.indexOf("prosecdef IS FALSE")))
+)
+check(
+  "023: طرق تعريف الزائر الأربع محصورة بقيد CHECK",
+  /CHECK \(guest_identity IN \('device', 'strict', 'phone', 'open'\)\)/.test(sql023) &&
+    /CHECK \(name_mode IN \('off', 'optional', 'required'\)\)/.test(sql023)
+)
+check(
+  "023: الرقم مطلوب فقط في طريقة phone (لا رقم إجباري بعد الآن)",
+  /IF v_mode = 'phone' AND v_phone IS NULL THEN/.test(sql023) &&
+    !/IF v_phone IS NULL THEN\s*\n\s*RETURN jsonb_build_object\('ok', false, 'error',\s*\n?\s*'اكتب رقم هاتف صحيح \(11 رقمًا\) — يُستخدم/.test(sql023)
+)
+check(
+  "023: ترتيب الهوية = حساب الطالب ← الرقم إن وُجد ← بطاقة الجهاز ← الشبكة",
+  /WHEN v_phone IS NOT NULL THEN 'ph:'\s*\|\| v_phone[\s\S]{0,200}WHEN v_dev\s+IS NOT NULL THEN 'dev:' \|\| v_dev[\s\S]{0,200}WHEN v_fp\s+IS NOT NULL THEN 'net:' \|\| v_fp/.test(sql023)
+)
+check(
+  "023: بطاقة الجهاز تُنظَّف قبل الاستعمال (طول وحروف مسموحة)",
+  /survey_device_key/.test(sql023) && /length\(d\) BETWEEN 16 AND 128/.test(sql023)
+)
+check(
+  "023: عنوان الشبكة لا يُخزَّن خامًا أبدًا (يُهشَّر بملح الاستبيان)",
+  /v_net := public\.survey_response_hash\(v_survey\.response_salt, 'net:' \|\| v_fp\)/.test(sql023) &&
+    !/net_ip|raw_ip|ip_address/i.test(sql023)
+)
+check(
+  "023: أولوية cf-connecting-ip ثم x-real-ip ثم آخر عنصر في x-forwarded-for",
+  /cf-connecting-ip[\s\S]{0,400}x-real-ip[\s\S]{0,400}x-forwarded-for/.test(sql023) &&
+    /v_parts\[array_length\(v_parts, 1\)\]/.test(sql023)
+)
+check(
+  "023: الوضع المشدَّد يمنع نافذة التخفي (مطابقة بصمة الشبكة)",
+  /v_mode = 'strict' AND v_sid IS NULL AND v_net IS NOT NULL AND r\.net_hash = v_net/.test(sql023)
+)
+check(
+  "023: الوضع الافتراضي يعلّم التكرار المُرجَّح ولا يمنعه",
+  /duplicate_suspect/.test(sql023) && /v_mode IN \('device', 'phone'\)/.test(sql023)
+)
+check(
+  "023: مُشغِّل يحمي أعمدة الخادم من upsert لوحة المعلم (البصمات لا تُمحى)",
+  /CREATE TRIGGER trg_survey_response_protect[\s\S]{0,120}BEFORE UPDATE ON public\.survey_responses/.test(sql023) &&
+    /NEW\.identity_hash\s*:= COALESCE\(NEW\.identity_hash, OLD\.identity_hash\)/.test(sql023)
+)
+check(
+  "023: الاستبيان المجهول ما زال لا يحفظ أي هوية",
+  /IF v_survey\.anonymous IS TRUE THEN[\s\S]{0,300}v_sid\s*:= NULL;[\s\S]{0,200}v_phone := NULL;/.test(sql023)
+)
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن
@@ -565,8 +695,12 @@ const syncSrc = readFileSync("src/lib/supabase/sync.ts", "utf8")
 section("3-ب) مسار الحفظ المحلي يطابق قواعد الخادم")
 
 const localPath = syncSrc.slice(syncSrc.indexOf("export async function submitSurveyResponse"))
-check("البصمة المحلية تُبنى من رقم الزائر (guestPhone) لا حقل غير موجود",
-  /localIdentityKey\(\{\s*token:\s*input\.token,\s*phone:\s*input\.guestPhone\s*\}\)/.test(localPath))
+check("البصمة المحلية تُبنى من الجلسة أو الرقم أو بطاقة المتصفح (نفس ترتيب الخادم)",
+  /localIdentityKey\(\{\s*token:\s*input\.token,\s*phone:\s*input\.guestPhone,\s*deviceId\s*\}\)/.test(localPath))
+check("بطاقة المتصفح تُرسل مع كل رد وكل قراءة عامة (p_device_id)",
+  /p_device_id:\s*deviceId \|\| null/.test(syncSrc) && /p_device_id:\s*getSurveyDeviceId\(\) \|\| null/.test(syncSrc))
+check("تراجع آمن لقاعدة لم تُرقَّ إلى 023 (توقيع RPC قديم لا يُضيع إجابة)",
+  /isMissingRpcArgError/.test(syncSrc) && /PGRST202/.test(syncSrc))
 check("المسار المحلي يحذف الهوية في الاستبيان المجهول (كما يفعل الخادم)",
   /localIdentityPayload\(input, survey\?\.anonymous === true\)/.test(localPath) &&
   /function localIdentityPayload[\s\S]{0,420}studentName: ""/.test(syncSrc))

@@ -100,12 +100,18 @@ const LS_WRITE_ALLOW = [
     has: "localStorage.setItem(RATE_LIMITS_KEY",
     why: "عدّاد حماية الإغراق — رقمي فقط، لا أسماء ولا هواتف ولا بيانات",
   },
+  {
+    file: "lib/survey-device.ts",
+    has: "localStorage.setItem(name, value)",
+    why: "بطاقة استبيان عشوائية (32 حرفًا) تمنع الرد المكرر بلا رقم هاتف — لا بيانات ولا إجابات",
+  },
 ]
 {
   const h = hits(/localStorage\.setItem/)
   const bad = h.filter(x => !LS_WRITE_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("كتابات localStorage = نقطة واحدة فقط (عدّاد الحماية)", bad.length === 0 && h.length === 1,
-    bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || (h.length === 1 ? LS_WRITE_ALLOW[0].why : `عدد النقاط: ${h.length}`))
+  check("كتابات localStorage = المصرح به فقط (عدّاد الحماية + بطاقة الاستبيان)",
+    bad.length === 0 && h.length === LS_WRITE_ALLOW.length,
+    bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || LS_WRITE_ALLOW.map(a => a.why).join(" | "))
 }
 
 // ────────────────────────────────────────────────────────────
@@ -114,11 +120,12 @@ const LS_WRITE_ALLOW = [
 const LS_READ_ALLOW = [
   { file: "lib/student-accounts.ts", has: "localStorage.getItem(RATE_LIMITS_KEY", why: "قراءة عدّاد الحماية" },
   { file: "lib/memory-store.ts", has: "window.localStorage?.getItem(", why: "إنقاذ لمرة واحدة: نقل أي كاش قديم إلى الذاكرة ثم مسح المتصفح نهائياً" },
+  { file: "lib/survey-device.ts", has: "localStorage.getItem(name)", why: "قراءة بطاقة الاستبيان العشوائية" },
 ]
 {
   const h = hits(/localStorage\??\.getItem/)
   const bad = h.filter(x => !LS_READ_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("قراءات localStorage: عدّاد الحماية + إنقاذ قديم لمرة واحدة فقط", bad.length === 0 && h.length === 3,
+  check("قراءات localStorage: عدّاد الحماية + إنقاذ قديم + بطاقة الاستبيان", bad.length === 0 && h.length === 4,
     bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || LS_READ_ALLOW.map(a => a.why).join(" | "))
 }
 
@@ -144,12 +151,27 @@ const COOKIE_ALLOW = [
   { file: "lib/student-accounts.ts", has: "document.cookie = `${PORTAL_SESSION_COOKIE}=; path=/; max-age=0" },
   { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=${encodeURIComponent(encode(" },
   { file: "lib/online-exam-result-session.ts", has: "document.cookie = `${COOKIE_NAME}=; path=/; max-age=0" },
+  { file: "lib/survey-device.ts", has: "document.cookie = `${name}=${encodeURIComponent(value)}" },
 ]
 {
   const h = hits(/document\.cookie\s*=\s*[^=]/)
   const bad = h.filter(x => !COOKIE_ALLOW.some(a => a.file === x.file && x.snippet.includes(a.has)))
-  check("الكوكيز = جلسة طالب + قدرة نتيجة عشوائية فقط (إغلاق/مسح)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
+  check("الكوكيز = جلسة طالب + قدرة نتيجة + بطاقة استبيان عشوائية (بلا بيانات)", bad.length === 0 && h.length === COOKIE_ALLOW.length,
     bad.map(x => `${x.file}:${x.line} ${x.snippet}`).join(" | ") || "لا تحتوي الكوكيز على كلمة مرور أو إجابات أو أسماء أو درجات")
+}
+
+// ────────────────────────────────────────────────────────────
+// 6-ب) بطاقة الاستبيان: رقم عشوائي فقط — لا اسم ولا هاتف ولا إجابات
+// ────────────────────────────────────────────────────────────
+{
+  const dev = CODE.get("lib/survey-device.ts") || ""
+  const clean =
+    dev.length > 0 &&
+    !/\bname\b\s*[:=]\s*(input|guest|student)/i.test(dev) &&
+    !/phone|answers|token|password|إجاب/i.test(dev.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")) &&
+    /getRandomValues|Math\.random/.test(dev)
+  check("بطاقة الاستبيان المحلية عشوائية بلا أي بيانات شخصية", clean,
+    dev.length === 0 ? "lib/survey-device.ts غير موجود" : "راجع محتوى البطاقة")
 }
 
 // ────────────────────────────────────────────────────────────

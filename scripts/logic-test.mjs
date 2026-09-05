@@ -776,10 +776,72 @@ t("لا يرجع الاقتصاص القديم: الرد المكرر لا يُ�
   const board = readFileSync("src/components/surveys/public-surveys-board.tsx", "utf8")
   eq(board.includes("إجابة أخرى"), false, "اللوحة العامة ما زالت تعرض «إجابة أخرى»")
   eq(board.includes("hasAnsweredCurrent"), true, "اللوحة لا تستخدم حالة الإجابة المرتبطة بالنسخة")
-  eq(/اكتب رقم هاتف صحيح[\s\S]{0,400}يُستخدم لمنع تكرار/.test(board), true, "الرقم غير مطلوب صراحةً للزائر")
   const panel = readFileSync("src/components/surveys/student-surveys-panel.tsx", "utf8")
   eq(panel.includes("answeredKeys"), true, "لوحة الطالب لا تقرأ مفاتيح الإجابة (الردود المجهولة تفلت)")
   eq(panel.includes("hasAnsweredCurrent") && panel.includes("canEditAnswer"), true)
+})
+
+t("لوحة الزائر: لا رقم هاتف إجباري ولا شرح تقني للطالب", () => {
+  const stripBoard = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+  const boardRaw = readFileSync("src/components/surveys/public-surveys-board.tsx", "utf8")
+  const board = stripBoard(boardRaw)
+  // الحقول تُشتق من إعداد المعلم لا من ثوابت في الواجهة
+  eq(boardRaw.includes("guestFields") && boardRaw.includes("validateGuestInput"), true,
+    "الواجهة لا تستعمل مصدر الحقول الموحّد")
+  // لا حقل هاتف مفروض ولا نص عن البصمات/التخزين في وجه الطالب
+  eq(/رقم الهاتف \*/.test(board), false, "ما زال حقل الهاتف إجباريًا بعلامة نجمة")
+  eq(/بصمة|بصمتك|لا يُخزَّن مع الإجابات|لمنع ردّ ثانٍ باسمك/.test(board), false,
+    "نص تقني/مقلق ما زال معروضًا للطالب")
+  // النص المعروض للطالب فقط (تعليقات المطوّرين مسموح فيها الشرح التقني)
+  const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")
+  const panel = stripComments(readFileSync("src/components/surveys/student-surveys-panel.tsx", "utf8"))
+  eq(/بصمة|رقمك لا يُخزَّن|ردّ واحد لكل رقم/.test(panel), false, "لوحة الطالب ما زالت تشرح الآلية الداخلية")
+})
+
+t("حقول الزائر تتبع إعداد المعلم (بلا رقم افتراضيًا — مثل استبيانات Google)", () => {
+  const def = SV.guestFields({})
+  eq(def.showPhone, false, "الافتراضي بلا رقم هاتف")
+  eq(def.showName && !def.requireName, true, "الاسم اختياري افتراضيًا")
+  eq(SV.guestFields({ guestIdentity: "phone" }).requirePhone, true)
+  eq(SV.guestFields({ nameMode: "required" }).requireName, true)
+  eq(SV.guestFields({ nameMode: "off" }).showName, false)
+  eq(SV.guestFields({ anonymous: true }).showName, false, "المجهول لا يسأل عن الاسم")
+  eq(SV.guestFields({ anonymous: true, nameMode: "required" }).requireName, false)
+  // التحقق: لا نطلب ما لم يُطلب
+  eq(SV.validateGuestInput({}, {}), null, "الإجابة بلا أي بيانات مسموحة")
+  eq(SV.validateGuestInput({ guestIdentity: "phone" }, {}) !== null, true, "وضع الهاتف يطلب رقمًا")
+  eq(SV.validateGuestInput({ guestIdentity: "phone" }, { phone: "01012345678" }), null)
+  eq(SV.validateGuestInput({ nameMode: "required" }, { name: "أ" }) !== null, true, "اسم قصير مرفوض")
+  eq(SV.validateGuestInput({ nameMode: "required" }, { name: "أحمد" }), null)
+  eq(SV.guestIdentityOf({}), "device", "الافتراضي بطاقة الجهاز")
+  eq(SV.guestIdentityOf({ guestIdentity: "خطأ" }), "device", "قيمة غير معروفة ترجع للافتراضي")
+})
+
+t("بطاقة المتصفح تمنع الرد المكرر بلا رقم، والتصويت الحر لا يمنع", () => {
+  // الزائر بلا رقم: بصمته من بطاقة متصفحه
+  eq(SV.localIdentityKey({ deviceId: "abc123abc123abc1" }), "dev:abc123abc123abc1")
+  // الرقم — إن طُلب — أولى من البطاقة (ليُربط بحساب الطالب)
+  eq(SV.localIdentityKey({ phone: "01012345678", deviceId: "abc123abc123abc1" }), "ph:01012345678")
+  eq(SV.localIdentityKey({ token: "abcdefghijklmnop", deviceId: "abc123abc123abc1" }), "sid:abcdefghijklmnop")
+
+  const survey = mkSurvey({ version: 1 })
+  const rows = [{ id: "sr-1", surveyId: "sv-1", version: 1, identityKey: "dev:abc123abc123abc1" }]
+  eq(SV.planLocalSurveySubmit(rows, survey, "dev:abc123abc123abc1").action, "update", "نفس المتصفح = ردّه هو")
+  eq(SV.planLocalSurveySubmit(rows, survey, "dev:zzz999zzz999zzz9").action, "insert", "متصفح آخر = شخص آخر")
+  // تصويت حر: كل إرسال ردّ مستقل (اختيار صريح من المعلم)
+  const open = { ...survey, guestIdentity: "open" }
+  eq(SV.planLocalSurveySubmit(rows, open, "dev:abc123abc123abc1").action, "insert")
+  eq(SV.planLocalSurveySubmit(rows, open, "").action, "insert", "التصويت الحر لا يحتاج هوية")
+  // وفي غير الحر: بلا أي هوية لا نحفظ (لا نلوّث النتائج)
+  eq(SV.planLocalSurveySubmit(rows, survey, "").action, "reject")
+})
+
+t("بطاقة المتصفح: توليد صالح ومطابق لقاعدة الخادم (16..128)", () => {
+  const dev = readFileSync("src/lib/survey-device.ts", "utf8")
+  eq(/\^\[a-z0-9-\]\{16,128\}\$/.test(dev), true, "شرط الطول لا يطابق survey_device_key في 023")
+  eq(dev.includes("SameSite=Lax"), true, "الكوكي بلا SameSite")
+  eq(/localStorage[\s\S]*document\.cookie|document\.cookie[\s\S]*localStorage/.test(dev), true,
+    "لا نسخة احتياطية للبطاقة (مسح أحد المخزنين يفقدها)")
 })
 
 t("sync.ts يستبدل ردّ الطالب في الذاكرة ولا يكرره", () => {

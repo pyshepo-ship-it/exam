@@ -87,8 +87,8 @@ export function StudentSurveysPanel({ token }: { token: string }) {
     if (answeredNow(survey) && !canEditAnswer(survey, true)) {
       toast.error(
         survey.lockAfterSubmit === true
-          ? "أجبت على هذا الاستبيان وأغلق المعلم التعديل بعده"
-          : "أجبت على هذا الاستبيان — لا يُقبل ردّ ثانٍ على نفس الأسئلة"
+          ? "أجبت على هذا الاستبيان ولا يمكن تعديل الإجابة"
+          : "أجبت على هذا الاستبيان من قبل"
       )
       return
     }
@@ -112,7 +112,7 @@ export function StudentSurveysPanel({ token }: { token: string }) {
     }
 
     if (answeredNow(activeSurvey)) {
-      toast.error("أجبت على هذا الاستبيان بالفعل — لا يمكن إرسال رد آخر")
+      toast.error("أجبت على هذا الاستبيان من قبل")
       return
     }
 
@@ -124,11 +124,7 @@ export function StudentSurveysPanel({ token }: { token: string }) {
       toast.error(res.error || "تعذر إرسال الاستبيان")
       return
     }
-    toast.success(
-      res.code === "updated"
-        ? "تم تحديث إجابتك — ردّك ما زال واحدًا"
-        : "وصلت إجابتك للمعلم — شكرًا لك 🌟"
-    )
+    toast.success(res.code === "updated" ? "تم تحديث إجابتك" : "وصلت إجابتك للمعلم — شكرًا لك 🌟")
     // منع إعادة الفتح قبل انتهاء التحديث: نُحدِّث المفتاح محليًا فورًا
     setAnsweredKeys(prev => {
       const k = answeredKey(activeSurvey.id, res.version ?? surveyVersion(activeSurvey))
@@ -178,7 +174,7 @@ export function StudentSurveysPanel({ token }: { token: string }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-gray-500">
-          رأيك يهمنا — الإجابات تصل المعلم مباشرة {surveys.some(s => s.anonymous) && "(بعضها مجهول الاسم)"}
+          رأيك يهمنا — إجاباتك تصل المعلم مباشرة
         </p>
         <Button size="sm" variant="ghost" onClick={load} className="text-gray-500">
           <RefreshCw className="h-3.5 w-3.5" />
@@ -186,7 +182,6 @@ export function StudentSurveysPanel({ token }: { token: string }) {
       </div>
 
       {surveys.map(survey => {
-        const mine = myResponse(survey)
         const open = isSurveyOpen(survey)
         const answered = answeredNow(survey)
         const answeredOlder = !answered && hasAnsweredOlderVersion(survey, answeredKeys)
@@ -212,8 +207,8 @@ export function StudentSurveysPanel({ token }: { token: string }) {
               >
                 {answered
                   ? editable
-                    ? "تمت الإجابة — قابلة للتصحيح"
-                    : "تمت الإجابة — ردّ واحد"
+                    ? "تمت الإجابة — يمكن التعديل"
+                    : "تمت الإجابة"
                   : answeredOlder
                     ? "أسئلة جديدة"
                     : open
@@ -234,7 +229,7 @@ export function StudentSurveysPanel({ token }: { token: string }) {
                   <span>•</span>
                   <span className="flex items-center gap-1 text-amber-600">
                     <EyeOff className="h-3 w-3" />
-                    إجابات مجهولة
+                    بلا اسم
                   </span>
                 </>
               )}
@@ -251,7 +246,7 @@ export function StudentSurveysPanel({ token }: { token: string }) {
                   className="bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700"
                 >
                   {answered && editable
-                    ? "تصحيح إجابتي (يبقى ردًّا واحدًا)"
+                    ? "تعديل إجابتي"
                     : answeredOlder
                       ? "الإجابة على الأسئلة الجديدة"
                       : "الإجابة الآن"}
@@ -261,19 +256,14 @@ export function StudentSurveysPanel({ token }: { token: string }) {
               {answered && (
                 <span className="text-[11px] text-emerald-600 flex items-center gap-1">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  {survey.anonymous
-                    ? "وصلنا ردّك (مجهول الاسم)"
-                    : mine
-                      ? "وصلت إجابتك"
-                      : "وصلنا ردّك"}
+                  وصلت إجابتك
                 </span>
               )}
               {answeredOlder && (
                 <span className="text-[11px] text-indigo-600">
-                  تغيّرت الأسئلة — ردّك السابق محفوظ على النسخة {Math.max(1, surveyVersion(survey) - 1)}
+                  تغيّرت أسئلة الاستبيان — أجب عليها من جديد
                 </span>
               )}
-              <span className="text-[10px] text-gray-400">نسخة {surveyVersion(survey)}</span>
             </div>
           </div>
         )
@@ -297,15 +287,13 @@ export function StudentSurveysPanel({ token }: { token: string }) {
               </div>
 
               {activeSurvey.anonymous && (
-                <p className="text-[11px] text-amber-600 flex items-center gap-1">
+                <p className="text-[11px] text-gray-500 flex items-center gap-1">
                   <EyeOff className="h-3.5 w-3.5" />
-                  استبيان مجهول: لا يُسجَّل اسمك مع الإجابات، ورّدّك يُحسب مرة واحدة فقط
+                  إجاباتك بلا اسم
                 </p>
               )}
               {myResponse(activeSurvey) && (
-                <p className="text-[11px] text-gray-500">
-                  هذه إجاباتك السابقة على النسخة الحالية — الإرسال يستبدلها ولا يضيف ردًّا ثانيًا.
-                </p>
+                <p className="text-[11px] text-gray-500">هذه إجاباتك السابقة — الإرسال يستبدلها.</p>
               )}
 
               <DialogFooter>

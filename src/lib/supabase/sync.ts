@@ -18,6 +18,7 @@ import {
 } from "../memory-store";
 import { STORAGE_KEYS } from "../storage-keys";
 import { localIdentityKey, normalizeSurveyPhone, planLocalSurveySubmit } from "../surveys";
+import { getSurveyDeviceId } from "../survey-device";
 
 // ---------- أنواع بنيوية (للتجنب الاستيراد الدائري) ----------
 interface GroupShape {
@@ -653,7 +654,8 @@ function warnSyncError(err: unknown) {
 async function pushRowsOptionalColumns(
   dbTable: string,
   remoteRows: any[],
-  optionalColumns: string[]
+  optionalColumns: string[],
+  migrationHint = "supabase/migrations/020_billing_cycles.sql"
 ): Promise<void> {
   try {
     await pushRows(dbTable, remoteRows);
@@ -665,7 +667,7 @@ async function pushRowsOptionalColumns(
       return copy;
     });
     console.warn(
-      `⚠️ جدول ${dbTable} لا يحتوي أعمدة جديدة بعد — حُفظت السجلات بدونها. شغّل supabase/migrations/020_billing_cycles.sql`
+      `⚠️ جدول ${dbTable} لا يحتوي أعمدة جديدة بعد — حُفظت السجلات بدونها. شغّل ${migrationHint}`
     );
     await pushRows(dbTable, stripped);
   }
@@ -743,6 +745,23 @@ function isMissingColumnError(err: any, column: string): boolean {
   }
 
   return false
+}
+
+/**
+ * هل فشل نداء RPC لأن الدالة في قاعدة البيانات بتوقيع أقدم (وسيط غير موجود)؟
+ *
+ * PostgREST يبحث عن الدالة بأسماء الوسائط المرسلة، فإن أُضيف وسيط جديد في
+ * ترحيل لم يُشغَّل بعد يعود الخطأ PGRST202 «Could not find the function ...».
+ * نكتشفه لنعيد المحاولة بالتوقيع القديم بدل أن تضيع إجابة الطالب.
+ */
+function isMissingRpcArgError(err: any): boolean {
+  const code = String(err?.code || "")
+  const msg = String(err?.message || "")
+  return (
+    code === "PGRST202" ||
+    /Could not find the function/i.test(msg) ||
+    /function .* does not exist/i.test(msg)
+  )
 }
 
 /**
@@ -980,6 +999,16 @@ export const toSurveyRow = (v: any) => ({
   published: v.published === true,
   allow_guests: v.allowGuests === true,
   anonymous: v.anonymous === true,
+  // كيف يُعرَّف الزائر بلا تسجيل (023): الافتراضي بطاقة المتصفح — بلا رقم هاتف
+  guest_identity: ["device", "strict", "phone", "open"].includes(v.guestIdentity)
+    ? v.guestIdentity
+    : "device",
+  name_mode:
+    v.anonymous === true
+      ? "off"
+      : ["off", "optional", "required"].includes(v.nameMode)
+        ? v.nameMode
+        : "optional",
   deadline: v.deadline || null,
   // النسخة يرفعها مُشغِّل في قاعدة البيانات عند تغيّر الأسئلة؛ العميل يرسل
   // رقمه ليبقى عرضُه مطابقاً، ولا يُقبل أي تنزيل للرقم في الخادم (ترحيل 022).
@@ -1000,6 +1029,10 @@ export const fromSurveyRow = (row: any) => ({
   published: row.published === true,
   allowGuests: row.allow_guests === true,
   anonymous: row.anonymous === true,
+  guestIdentity: ["device", "strict", "phone", "open"].includes(row.guest_identity)
+    ? row.guest_identity
+    : "device",
+  nameMode: ["off", "optional", "required"].includes(row.name_mode) ? row.name_mode : "optional",
   deadline: nil(row.deadline),
   version: Number(row.version) || 1,
   lockAfterSubmit: row.lock_after_submit === true,
@@ -1030,6 +1063,8 @@ export const fromSurveyResponseRow = (row: any) => ({
   gradeId: nil(row.grade_id),
   groupId: nil(row.group_id),
   answers: row.answers && typeof row.answers === "object" ? row.answers : {},
+  // يحسبه الخادم وحده: ردّ من نفس الشبكة والمتصفح اللذين أجابا من قبل
+  duplicateSuspect: row.duplicate_suspect === true,
   createdAt: row.created_at,
 });
 
@@ -1046,7 +1081,14 @@ export function pushSurveys(rows: any[]) {
     }
     return row;
   });
-  return pushRows("surveys", cleaned);
+  // قاعدة لم تُرقَّ بعد إلى 022/023: يُحفظ الاستبيان بدون الأعمدة الجديدة بدل
+  // أن يفشل الحفظ كله ويظن المعلم أن الاستبيان محفوظ وهو ليس في السحابة.
+  return pushRowsOptionalColumns(
+    "surveys",
+    cleaned,
+    ["guest_identity", "name_mode", "version", "lock_after_submit"],
+    "supabase/migrations/023_survey_identity_fix.sql"
+  );
 }
 
 export function pushSurveyResponses(rows: any[]) {
@@ -1123,7 +1165,6 @@ function localIdentityPayload(input: SurveySubmitInput, anonymous: boolean) {
     groupId: input.guestGroupId,
   };
 }
-
 /** نتيجة الإرسال: updated = تعديل ردّه هو (ليس ردًّا ثانيًا) */
 export interface SurveySubmitResult {
   ok: boolean
@@ -1141,12 +1182,14 @@ export async function submitSurveyResponse(
   input: SurveySubmitInput
 ): Promise<SurveySubmitResult> {
   const sb = getSupabase();
+  // بطاقة المتصفح: هي ما يمنع الرد المكرر بلا رقم هاتف (ترحيل 023)
+  const deviceId = getSurveyDeviceId();
   if (!sb) {
     // بلا Supabase (تطوير/معاينة): ذاكرة الجلسة فقط — بنفس قاعدة الخادم
     const all = storeRows<any>(STORAGE_KEYS.SURVEY_RESPONSES);
     const survey = storeRows<any>(STORAGE_KEYS.SURVEYS).find((x) => x.id === input.surveyId);
-    // البصمة المحلية من سرّ الجلسة (طالب) أو رقم الزائر — نفس حقول الإدخال
-    const identity = localIdentityKey({ token: input.token, phone: input.guestPhone });
+    // البصمة المحلية: جلسة الطالب، أو رقمه إن طُلب، أو بطاقة متصفحه
+    const identity = localIdentityKey({ token: input.token, phone: input.guestPhone, deviceId });
     const plan = planLocalSurveySubmit(all, survey, identity);
     if (plan.action === "reject") return { ok: false, error: plan.error, code: "locked" };
     const nowIso = new Date().toISOString();
@@ -1174,7 +1217,7 @@ export async function submitSurveyResponse(
     };
   }
   try {
-    const { data, error } = await sb.rpc("submit_survey_response", {
+    const args: Record<string, unknown> = {
       p_token: input.token || null,
       p_survey_id: input.surveyId,
       p_answers: input.answers || {},
@@ -1182,16 +1225,37 @@ export async function submitSurveyResponse(
       p_guest_phone: input.guestPhone || null,
       p_guest_grade_id: input.guestGradeId || null,
       p_guest_group_id: input.guestGroupId || null,
-    });
+      p_device_id: deviceId || null,
+    };
+    let { data, error } = await sb.rpc("submit_survey_response", args);
+    if (error && isMissingRpcArgError(error)) {
+      // قاعدة لم تُرقَّ إلى 023 بعد: نُرسل بالتوقيع القديم بدل أن يفشل الرد
+      console.warn(
+        "⚠️ دالة submit_survey_response قديمة (بلا p_device_id) — شغّل supabase/migrations/023_survey_identity_fix.sql"
+      );
+      delete args.p_device_id;
+      ({ data, error } = await sb.rpc("submit_survey_response", args));
+    }
     if (error) {
       console.warn("submitSurveyResponse:", error);
       return { ok: false, error: explainSupabaseError(error) };
     }
     const payload = (data || {}) as Record<string, any>;
     if (payload.ok !== true) {
+      // رسالة الدالة القديمة (قبل 023) حين تعمل بدور anon فلا ترى جدول
+      // surveys بسبب RLS: نحوّلها إلى رسالة قابلة للتصرف بدل تحيير الطالب.
+      const legacyMissing = payload.error === "الاستبيان غير موجود";
+      if (legacyMissing) {
+        console.error(
+          "❌ submit_survey_response تعمل بلا SECURITY DEFINER (نسخة ما قبل 023) — " +
+            "شغّل supabase/migrations/023_survey_identity_fix.sql في SQL Editor."
+        );
+      }
       return {
         ok: false,
-        error: payload.error || "تعذر إرسال الاستبيان",
+        error: legacyMissing
+          ? "تعذّر حفظ إجابتك — يحتاج الموقع تحديثًا بسيطًا من المعلم. أبلغه من فضلك."
+          : payload.error || "تعذر إرسال الاستبيان",
         code: payload.code === "locked" ? "locked" : undefined,
         responseId: typeof payload.responseId === "string" ? payload.responseId : undefined,
       };
@@ -1234,7 +1298,16 @@ export async function fetchPublicSurveys(
   const sb = getSupabase();
   if (!sb) return { surveys: [], answeredKeys: [], available: false };
   try {
-    const { data, error } = await sb.rpc("get_public_surveys", { p_phone: guestPhone || null });
+    const args: Record<string, unknown> = {
+      p_phone: guestPhone || null,
+      p_device_id: getSurveyDeviceId() || null,
+    };
+    let { data, error } = await sb.rpc("get_public_surveys", args);
+    if (error && isMissingRpcArgError(error)) {
+      // قاعدة لم تُرقَّ إلى 023 بعد
+      delete args.p_device_id;
+      ({ data, error } = await sb.rpc("get_public_surveys", args));
+    }
     if (error) {
       console.warn("fetchPublicSurveys:", error);
       return { surveys: [], answeredKeys: [], available: false };

@@ -689,6 +689,18 @@ export type SurveyAudience = "all" | "grade" | "group"
 /** أنواع أسئلة الاستبيان */
 export type SurveyQuestionType = "single" | "multi" | "rating" | "yesno" | "text"
 
+/**
+ * كيف يُعرَّف من يجيب بلا تسجيل دخول (لمنع الرد المكرر)؟
+ *  - device : بلا أي بيانات — بطاقة عشوائية للمتصفح + كشف تكرار من نفس الشبكة (الافتراضي)
+ *  - strict : ردّ واحد لكل شبكة ومتصفح (يمنع وضع التخفي، وقد يمنع زميلًا على نفس الواي-فاي)
+ *  - phone  : رقم الهاتف مطلوب (يربط الرد بحساب الطالب إن كان مسجلًا)
+ *  - open   : تصويت حر بلا منع تكرار
+ */
+export type SurveyGuestIdentity = "device" | "strict" | "phone" | "open"
+
+/** حقل الاسم للزائر: مخفي / اختياري (الافتراضي) / مطلوب */
+export type SurveyNameMode = "off" | "optional" | "required"
+
 export interface SurveyQuestion {
   id: string
   type: SurveyQuestionType
@@ -716,8 +728,15 @@ export interface Survey {
   questions: SurveyQuestion[]
   /** منشور للطلاب (غير المنشور لا يظهر لأحد) */
   published: boolean
-  /** يظهر في لوحة الإعلانات العامة ويقبل إجابات الزوار (بالاسم ورقم الهاتف) */
+  /** يظهر في لوحة الإعلانات العامة ويقبل إجابات الزوار (بلا تسجيل دخول) */
   allowGuests?: boolean
+  /**
+   * كيف نمنع الزائر من الرد مرتين (بلا رقم هاتف إجباري) — راجع SurveyGuestIdentity.
+   * الافتراضي "device": بطاقة متصفح + كشف تكرار من نفس الشبكة.
+   */
+  guestIdentity?: SurveyGuestIdentity
+  /** حقل الاسم في نموذج الزائر: مخفي / اختياري (الافتراضي) / مطلوب */
+  nameMode?: SurveyNameMode
   /** إجابات مجهولة: لا يُسجَّل اسم الطالب مع إجابته */
   anonymous?: boolean
   /** آخر موعد للإجابة (ISO) — اختياري */
@@ -757,6 +776,12 @@ export interface SurveyResponse {
   gradeId?: string
   groupId?: string
   answers: Record<string, SurveyAnswer>
+  /**
+   * ردّ يُرجَّح أنه مكرر: جاء من نفس الشبكة والمتصفح اللذين أرسلا ردًّا سابقًا
+   * على النسخة نفسها (وضع تخفٍّ أو متصفح آخر على الجهاز ذاته). يحسبه الخادم
+   * وحده، ويستطيع المعلم استبعاد هذه الردود من النتائج بضغطة.
+   */
+  duplicateSuspect?: boolean
   createdAt: string
 }
 
