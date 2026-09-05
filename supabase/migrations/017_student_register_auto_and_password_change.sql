@@ -19,7 +19,7 @@ CREATE OR REPLACE FUNCTION public.student_register(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_mail TEXT := lower(trim(p_email));
@@ -87,7 +87,7 @@ CREATE OR REPLACE FUNCTION public.change_student_password(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_hash TEXT := encode(digest(p_token, 'sha256'), 'hex');

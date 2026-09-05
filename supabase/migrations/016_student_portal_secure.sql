@@ -159,8 +159,12 @@ DROP POLICY IF EXISTS "public read" ON student_accounts;
 DROP POLICY IF EXISTS "public read" ON inquiries;
 DROP POLICY IF EXISTS "public insert" ON inquiries;
 
+-- (DROP قبل CREATE لأن Postgres لا يدعم IF NOT EXISTS للسياسات — آمن لإعادة التشغيل)
+DROP POLICY IF EXISTS "anon insert registration_requests" ON registration_requests;
 CREATE POLICY "anon insert registration_requests" ON registration_requests FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon insert group_transfer_requests" ON group_transfer_requests;
 CREATE POLICY "anon insert group_transfer_requests" ON group_transfer_requests FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon insert inquiries" ON inquiries;
 CREATE POLICY "anon insert inquiries" ON inquiries FOR INSERT TO anon WITH CHECK (true);
 
 -- لا قراءة REST لـ anon على بيانات الطلاب/الدرجات/السجل/الاستفسارات/الحسابات
@@ -183,7 +187,7 @@ CREATE OR REPLACE FUNCTION public.student_login(p_email TEXT, p_password TEXT, p
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_mail TEXT := lower(trim(p_email));
@@ -267,7 +271,7 @@ CREATE OR REPLACE FUNCTION public.student_logout(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE v_hash TEXT;
 BEGIN
@@ -286,7 +290,7 @@ CREATE OR REPLACE FUNCTION public.get_student_portal_data(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_hash TEXT := encode(digest(p_token, 'sha256'), 'hex');
@@ -336,7 +340,7 @@ CREATE OR REPLACE FUNCTION public.get_student_inquiries(p_token TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_hash TEXT := encode(digest(p_token, 'sha256'), 'hex');
