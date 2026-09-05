@@ -19,3 +19,6 @@ CREATE POLICY "anon insert group_transfer_requests" ON public.group_transfer_req
 
 DROP POLICY IF EXISTS "anon insert inquiries" ON public.inquiries;
 CREATE POLICY "anon insert inquiries" ON public.inquiries FOR INSERT TO anon WITH CHECK (true);
+
+-- إجبار PostgREST على تحديث كاش المخطط حتى لا تعيد RPC الجديدة 404 (PGRST202)
+NOTIFY pgrst, 'reload schema';
