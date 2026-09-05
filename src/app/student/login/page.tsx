@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import Link from "next/link"
 import { motion } from "framer-motion"
 import { GraduationCap, LogIn, Loader2, Mail, Lock, Home, Hourglass, ShieldX, KeyRound, LifeBuoy, ArrowRight } from "lucide-react"
@@ -19,6 +19,9 @@ export default function StudentLoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [busy, setBusy] = useState(false)
+  // قفل فوري (قبل إعادة رسم React) لمنع طلبي دخول متزامنين؛ الطلب الثاني
+  // كان يستطيع استبدال token الأول في قاعدة البيانات ثم فتح البوابة بجلسة ملغاة.
+  const submittingRef = useRef(false)
   const [error, setError] = useState("")
   const [errorStatus, setErrorStatus] = useState<string>("")
   // استرجاع الحساب: "" = دخول عادي | "password" = نسيت كلمة المروري | "email" = نسيت بريدي
@@ -33,27 +36,38 @@ export default function StudentLoginPage() {
   const [nextUrl, setNextUrl] = useState("")
   useEffect(() => {
     const { getPortalSession } = require("@/lib/student-accounts") as typeof import("@/lib/student-accounts")
+    let destination = ""
     try {
-      const n = new URLSearchParams(window.location.search).get("next") || ""
-      setNextUrl(n.startsWith("/") && !n.startsWith("//") ? n : "")
+      const params = new URLSearchParams(window.location.search)
+      const n = params.get("next") || ""
+      destination = n.startsWith("/") && !n.startsWith("//") ? n : ""
+      setNextUrl(destination)
+      if (params.get("reason") === "session-expired") {
+        setError("انتهت جلسة الدخول أو تم تسجيل الدخول من جهاز آخر — سجّل الدخول من جديد")
+      }
     } catch { /* تجاهل */ }
     if (getPortalSession()) {
-      window.location.href = nextUrl || "/student"
+      window.location.href = destination || "/student"
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const submit = async () => {
+    if (submittingRef.current) return
+    submittingRef.current = true
     setBusy(true)
     setError("")
     setErrorStatus("")
-    const res: LoginResult = await portalLogin(email, password)
-    setBusy(false)
-    if (res.ok) {
-      window.location.href = nextUrl || "/student"
-    } else {
-      setError(res.error)
-      setErrorStatus(res.status || "")
+    try {
+      const res: LoginResult = await portalLogin(email, password)
+      if (res.ok) {
+        window.location.href = nextUrl || "/student"
+      } else {
+        setError(res.error)
+        setErrorStatus(res.status || "")
+      }
+    } finally {
+      submittingRef.current = false
+      setBusy(false)
     }
   }
 

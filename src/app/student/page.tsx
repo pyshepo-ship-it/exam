@@ -62,7 +62,7 @@ import {
   lastAnnouncementsSeenAt,
 } from "@/lib/portal-content"
 import {
-  fetchStudentPortalData,
+  fetchStudentPortalDataResult,
   fetchStudentInquiries,
   getOnlineExamTimerResult,
   type OnlineExamTimerResultAttempt,
@@ -139,12 +139,19 @@ export default function StudentPortalPage() {
     setReportsEnabled(areStudentReportsEnabled())
     setLoadError("")
 
-    const portalData = await fetchStudentPortalData(s.token || "")
-    if (!portalData) {
-      setLoadError("تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك بالإنترنت ثم أعد المحاولة")
+    const portalResult = await fetchStudentPortalDataResult(s.token || "")
+    if (!portalResult.ok) {
+      // الجلسة المنتهية ليست مشكلة إنترنت: نمسحها ونطلب دخولاً جديداً مباشرة.
+      if (portalResult.code === "invalid_session") {
+        portalLogout()
+        router.replace("/student/login?reason=session-expired")
+        return
+      }
+      setLoadError(portalResult.error)
       setMounted(true)
       return
     }
+    const portalData = portalResult.data
 
     // جدول المحاولات مغلق أمام anon بعد ترحيل 015. نستعيد فقط المحاولات التي
     // يملك هذا المتصفح أسرار جلساتها العشوائية؛ لا تُسحب أي نتائج خام عامة.

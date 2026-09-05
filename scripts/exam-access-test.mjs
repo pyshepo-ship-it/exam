@@ -249,7 +249,7 @@ const student = {
 }
 const session = {
   email: "sara@test.com", studentId: "st-1", name: "سارة أحمد محمود",
-  iat: Date.now(), exp: Date.now() + 3600_000,
+  iat: Date.now(), exp: Date.now() + 3600_000, token: "test-secure-portal-token",
 }
 
 const text = (root) => (root.textContent || "").replace(/\s+/g, " ")

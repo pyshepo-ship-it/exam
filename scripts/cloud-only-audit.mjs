@@ -258,9 +258,11 @@ const DATA_FILES_FORBIDDEN = [
   const sa = RAW.get("lib/student-accounts.ts") || ""
   const readsCookieOnly = !/localStorage\.getItem\(PORTAL_SESSION_KEY/.test(sa) &&
     /const session = readSessionCookie\(\)/.test(sa)
-  const fetchesAccount = /fetchStudentAccountByEmail/.test(sa)
-  check("بوابة الطالب: جلسة بالكوكي فقط + جلب الحساب من Supabase عند الدخول",
-    readsCookieOnly && fetchesAccount, "الدخول يعمل من أي جهاز لأن الحساب يُجلب من السحابة")
+  const usesSecureLogin = /await studentLogin\(/.test(sa) &&
+    !/خطة احتياطية[^]*قراءة anon/.test(sa) &&
+    /!session\.token/.test(sa)
+  check("بوابة الطالب: جلسة بالكوكي فقط + دخول RPC آمن بتوكين إلزامي",
+    readsCookieOnly && usesSecureLogin, "لا تُنشأ جلسة ناقصة ولا تُقرأ حسابات الطلاب خاماً عبر anon")
 }
 
 // ────────────────────────────────────────────────────────────

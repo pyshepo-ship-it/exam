@@ -1532,6 +1532,17 @@ export async function fetchPublicData(): Promise<PublicData | null> {
 // بوابة الطلاب — إدخال عام (بدون تسجيل دخول) وقراءة بيانات الطالب
 // ============================================================
 
+const supabaseFailureText = (error: any): string =>
+  [error?.message, error?.details, error?.hint, error?.code]
+    .filter(Boolean)
+    .join(" | ") || String(error || "")
+
+/** خطأ يدل على أن ترحيل بوابة الطالب الآمنة غير مثبّت/غير مكتمل، لا على انقطاع الإنترنت. */
+const isSecurePortalSchemaError = (error: any): boolean => {
+  const raw = supabaseFailureText(error)
+  return /could not find the function|function .* does not exist|permission denied for function|schema cache|PGRST202|PGRST204|42883|42P01|42703|42501/i.test(raw)
+}
+
 /** إرسال طلب تسجيل جديد من بوابة الطالب (يعمل مع وبدون Supabase) */
 export async function submitRegistrationRequest(request: any): Promise<{ ok: boolean; error?: string }> {
   const sb = getSupabase()
@@ -1595,6 +1606,10 @@ export interface StudentPortalData {
   gradeGroups: { id: string; name: string; days: string[]; startTime: string; endTime: string }[]
 }
 
+export type StudentPortalDataResult =
+  | { ok: true; data: StudentPortalData }
+  | { ok: false; code: StudentPortalLoadFailureCode; error: string }
+
 export interface StudentLoginResult {
   ok: boolean
   status?: 'pending' | 'rejected' | 'blocked'
@@ -1619,7 +1634,6 @@ export async function studentLogin(
   const sb = getSupabase()
   if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
   let data: Record<string, any>
-  const msg = (e: any) => String(e?.message || e || "")
   try {
     const res = await sb.rpc("student_login", {
       p_email: email,
@@ -1628,14 +1642,12 @@ export async function studentLogin(
     })
     if (res.error) {
       console.warn("studentLogin:", res.error)
-      // دالة غير موجودة/مخطط قديم → ننزل للخطة المحلية كي يبقى الدخول عاملاً
-      // حتى تشغيل سكربت الإصلاح (REVOKE + دوال SECURITY DEFINER).
-      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      const schemaError = isSecurePortalSchemaError(res.error)
       return {
         ok: false,
         code: "unavailable",
-        error: missing
-          ? "خدمة الدخول غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+        error: schemaError
+          ? "خدمة بوابة الطالب تحتاج تحديثاً في قاعدة البيانات — يرجى إبلاغ المعلم"
           : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
       }
     }
@@ -1689,7 +1701,6 @@ export async function studentRegisterAuto(input: {
 }): Promise<StudentRegisterResult> {
   const sb = getSupabase()
   if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
-  const msg = (e: any) => String(e?.message || e || "")
   try {
     const res = await sb.rpc("student_register", {
       p_name: input.name,
@@ -1702,12 +1713,12 @@ export async function studentRegisterAuto(input: {
     })
     if (res.error) {
       console.warn("studentRegisterAuto:", res.error)
-      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      const schemaError = isSecurePortalSchemaError(res.error)
       return {
         ok: false,
         code: "unavailable",
-        error: missing
-          ? "خدمة التسجيل المباشر غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+        error: schemaError
+          ? "خدمة التسجيل المباشر تحتاج تحديثاً في قاعدة البيانات — يرجى إبلاغ المعلم"
           : "تعذر الاتصال بقاعدة البيانات — تحقق من اتصالك وأعد المحاولة",
       }
     }
@@ -1739,7 +1750,6 @@ export async function changeStudentPassword(
 ): Promise<ChangePasswordResult> {
   const sb = getSupabase()
   if (!sb) return { ok: false, code: "unavailable", error: "Supabase غير متصل" }
-  const msg = (e: any) => String(e?.message || e || "")
   try {
     const res = await sb.rpc("change_student_password", {
       p_token: token,
@@ -1749,12 +1759,12 @@ export async function changeStudentPassword(
     })
     if (res.error) {
       console.warn("changeStudentPassword:", res.error)
-      const missing = /could not find the function|function .* does not exist|PGRST204/i.test(msg(res.error))
+      const schemaError = isSecurePortalSchemaError(res.error)
       return {
         ok: false,
         code: "unavailable",
-        error: missing
-          ? "خدمة تغيير كلمة المرور غير مفعّلة بعد — اطلب من المعلم تشغيل سكربت الإصلاح"
+        error: schemaError
+          ? "خدمة تغيير كلمة المرور تحتاج تحديثاً في قاعدة البيانات — يرجى إبلاغ المعلم"
           : "تعذر الاتصال بقاعدة البيانات — أعد المحاولة",
       }
     }
@@ -1766,8 +1776,7 @@ export async function changeStudentPassword(
   }
 }
 
-/** نص خام لقراءة بيانات الطالب عبر الدالة الآمنة (لا تعرض بيانات غيره) */
-export async function getStudentPortalRecord(token: string): Promise<{
+export interface StudentPortalRecord {
   student: any
   manualGrades: any[]
   dues: any[]
@@ -1775,31 +1784,92 @@ export async function getStudentPortalRecord(token: string): Promise<{
   attendance: any[]
   history: any[]
   transferRequests: any[]
-} | null> {
+}
+
+export type StudentPortalLoadFailureCode =
+  | "invalid_session"
+  | "service_not_ready"
+  | "unavailable"
+
+export type StudentPortalRecordResult =
+  | { ok: true; data: StudentPortalRecord }
+  | { ok: false; code: StudentPortalLoadFailureCode; error: string }
+
+/**
+ * قراءة مفصّلة عبر الدالة الآمنة. نحافظ على سبب الفشل حتى لا نعرض كل أخطاء
+ * المخطط/الجلسة للطالب على أنها انقطاع إنترنت.
+ */
+async function getStudentPortalRecordResult(token: string): Promise<StudentPortalRecordResult> {
   const sb = getSupabase()
-  if (!sb || !token) return null
+  if (!token) {
+    return { ok: false, code: "invalid_session", error: "جلسة الدخول غير صالحة — سجّل الدخول من جديد" }
+  }
+  if (!sb) {
+    return { ok: false, code: "service_not_ready", error: "خدمة قاعدة البيانات غير مُعدّة على الموقع — يرجى إبلاغ المعلم" }
+  }
+
   let data: Record<string, any>
   try {
     const res = await sb.rpc("get_student_portal_data", { p_token: token })
-    if (res.error || !res.data || typeof res.data !== "object") {
+    if (res.error) {
       console.warn("getStudentPortalRecord:", res.error)
-      return null
+      return isSecurePortalSchemaError(res.error)
+        ? {
+            ok: false,
+            code: "service_not_ready",
+            error: "خدمة بوابة الطالب تحتاج تحديثاً في قاعدة البيانات — يرجى إبلاغ المعلم",
+          }
+        : {
+            ok: false,
+            code: "unavailable",
+            error: "تعذر الوصول إلى قاعدة البيانات — تحقق من اتصالك ثم أعد المحاولة",
+          }
+    }
+    if (!res.data || typeof res.data !== "object") {
+      return {
+        ok: false,
+        code: "service_not_ready",
+        error: "استجابة خدمة بوابة الطالب غير صالحة — يرجى إبلاغ المعلم",
+      }
     }
     data = res.data as Record<string, any>
   } catch (e) {
     console.warn("getStudentPortalRecord:", e)
-    return null
+    return {
+      ok: false,
+      code: "unavailable",
+      error: "تعذر الوصول إلى قاعدة البيانات — تحقق من اتصالك ثم أعد المحاولة",
+    }
   }
-  if (data.ok !== true || !data.student) return null
+
+  if (data.ok !== true) {
+    const invalid = data.code === "invalid" || /جلسة.*(?:غير صالحة|منتهية)/.test(String(data.error || ""))
+    return invalid
+      ? { ok: false, code: "invalid_session", error: data.error || "انتهت جلسة الدخول — سجّل الدخول من جديد" }
+      : { ok: false, code: "service_not_ready", error: data.error || "تعذر قراءة بيانات الطالب من قاعدة البيانات" }
+  }
+  if (!data.student || typeof data.student !== "object") {
+    return { ok: false, code: "service_not_ready", error: "بيانات الطالب غير مكتملة — يرجى التواصل مع المعلم" }
+  }
+
   return {
-    student: data.student,
-    manualGrades: Array.isArray(data.manualGrades) ? data.manualGrades : [],
-    dues: Array.isArray(data.dues) ? data.dues : [],
-    payments: Array.isArray(data.payments) ? data.payments : [],
-    attendance: Array.isArray(data.attendance) ? data.attendance : [],
-    history: Array.isArray(data.history) ? data.history : [],
-    transferRequests: Array.isArray(data.transferRequests) ? data.transferRequests : [],
+    ok: true,
+    data: {
+      student: data.student,
+      manualGrades: Array.isArray(data.manualGrades) ? data.manualGrades : [],
+      dues: Array.isArray(data.dues) ? data.dues : [],
+      payments: Array.isArray(data.payments) ? data.payments : [],
+      attendance: Array.isArray(data.attendance) ? data.attendance : [],
+      history: Array.isArray(data.history) ? data.history : [],
+      transferRequests: Array.isArray(data.transferRequests) ? data.transferRequests : [],
+    },
   }
+}
+
+/** نص خام لقراءة بيانات الطالب عبر الدالة الآمنة (لا تعرض بيانات غيره). */
+export async function getStudentPortalRecord(token: string): Promise<StudentPortalRecord | null> {
+  const result = await getStudentPortalRecordResult(token)
+  return result.ok ? result.data : null
 }
 
 /**
@@ -1807,13 +1877,18 @@ export async function getStudentPortalRecord(token: string): Promise<{
  * بيانات الطالب نفسه تأتي من get_student_portal_data بسرّ جلسته، أما
  * الفئات العامة (الصفوف/المجموعات/الشرّاف/الإعلانات) فتُقرأ كمثلها العام.
  */
-export async function fetchStudentPortalData(token: string): Promise<StudentPortalData | null> {
+export async function fetchStudentPortalDataResult(token: string): Promise<StudentPortalDataResult> {
   const sb = getSupabase()
-  if (!sb || !token) return null
+  if (!token) {
+    return { ok: false, code: "invalid_session", error: "جلسة الدخول غير صالحة — سجّل الدخول من جديد" }
+  }
+  if (!sb) {
+    return { ok: false, code: "service_not_ready", error: "خدمة قاعدة البيانات غير مُعدّة على الموقع — يرجى إبلاغ المعلم" }
+  }
 
   try {
-    const [raw, groupsRes, gradesRes, honRes, annRes, examsRes] = await Promise.all([
-      getStudentPortalRecord(token),
+    const [recordResult, groupsRes, gradesRes, honRes, annRes, examsRes] = await Promise.all([
+      getStudentPortalRecordResult(token),
       sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
       sb.from("grades").select("id,name"),
       sb.from("honorees").select("*"),
@@ -1822,7 +1897,8 @@ export async function fetchStudentPortalData(token: string): Promise<StudentPort
       sb.rpc("get_public_online_exams"),
     ])
 
-    if (!raw || !raw.student) return null
+    if (!recordResult.ok) return recordResult
+    const raw = recordResult.data
     const student = fromStudentRow(raw.student)
 
     const group = (groupsRes.data as any[] || []).find((g) => g.id === student.groupId)
@@ -1837,51 +1913,64 @@ export async function fetchStudentPortalData(token: string): Promise<StudentPort
     const gradeGroupIds = new Set(gradeGroupsAll.map((g) => g.id))
 
     return {
-      student,
-      gradeName: grade?.name || "",
-      groupName: group?.name || "",
-      groupStartTime: group?.start_time || "",
-      groupEndTime: group?.end_time || "",
-      groupDays: Array.isArray(group?.days) ? group.days : [],
-      manualGrades: (raw.manualGrades || []).map(fromManualGradeRow),
-      // تعاد محاولات الاختبار من RPC get_online_exam_result بسر الجلسة في
-      // صفحة الطالب؛ لا نقرأ جدول exam_attempts الخام من بوابة anon.
-      examAttempts: [],
-      dues: (raw.dues || []).map(fromDueRow),
-      payments: (raw.payments || []).map(fromPaymentRow),
-      attendance: (raw.attendance || []).map(fromAttendanceRow),
-      honorees: hon.filter((h) => h.student_id === student.id).map(fromHonoreeRow),
-      // لوحة شرف صفه: متفوقو مجموعات صفه فقط
-      gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
-      history: (raw.history || []).map(fromStudentHistoryRow),
-      transferRequests: (raw.transferRequests || []).map(fromGroupTransferRequestRow),
-      // إعلانات صفه فقط (المستهدف فارغ = عام)
-      announcements: anns
-        .map(fromAnnouncementRow)
-        .filter((a: any) => {
-          const targets = a.targetGradeIds || []
-          return targets.length === 0 || targets.includes(student.gradeId)
-        }),
-      // اختبارات صفه/مجموعته فقط
-      exams: examRows
-        .map(fromExamRow)
-        .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.gradeId))
-        .filter((e: any) => {
-          const targets = e.targetGroupIds || []
-          return targets.length === 0 || targets.includes(student.groupId)
-        }),
-      gradeGroups: gradeGroupsAll.map((g) => ({
-        id: g.id,
-        name: g.name,
-        days: Array.isArray(g.days) ? g.days : [],
-        startTime: g.start_time || "",
-        endTime: g.end_time || "",
-      })),
+      ok: true,
+      data: {
+        student,
+        gradeName: grade?.name || "",
+        groupName: group?.name || "",
+        groupStartTime: group?.start_time || "",
+        groupEndTime: group?.end_time || "",
+        groupDays: Array.isArray(group?.days) ? group.days : [],
+        manualGrades: (raw.manualGrades || []).map(fromManualGradeRow),
+        // تعاد محاولات الاختبار من RPC get_online_exam_result بسر الجلسة في
+        // صفحة الطالب؛ لا نقرأ جدول exam_attempts الخام من بوابة anon.
+        examAttempts: [],
+        dues: (raw.dues || []).map(fromDueRow),
+        payments: (raw.payments || []).map(fromPaymentRow),
+        attendance: (raw.attendance || []).map(fromAttendanceRow),
+        honorees: hon.filter((h) => h.student_id === student.id).map(fromHonoreeRow),
+        // لوحة شرف صفه: متفوقو مجموعات صفه فقط
+        gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
+        history: (raw.history || []).map(fromStudentHistoryRow),
+        transferRequests: (raw.transferRequests || []).map(fromGroupTransferRequestRow),
+        // إعلانات صفه فقط (المستهدف فارغ = عام)
+        announcements: anns
+          .map(fromAnnouncementRow)
+          .filter((a: any) => {
+            const targets = a.targetGradeIds || []
+            return targets.length === 0 || targets.includes(student.gradeId)
+          }),
+        // اختبارات صفه/مجموعته فقط
+        exams: examRows
+          .map(fromExamRow)
+          .filter((e: any) => e.deliveryMode === "online" && !!e.allowOnline && (!e.gradeId || e.gradeId === student.gradeId))
+          .filter((e: any) => {
+            const targets = e.targetGroupIds || []
+            return targets.length === 0 || targets.includes(student.groupId)
+          }),
+        gradeGroups: gradeGroupsAll.map((g) => ({
+          id: g.id,
+          name: g.name,
+          days: Array.isArray(g.days) ? g.days : [],
+          startTime: g.start_time || "",
+          endTime: g.end_time || "",
+        })),
+      },
     }
   } catch (e) {
     console.warn("fetchStudentPortalData:", e)
-    return null
+    return {
+      ok: false,
+      code: "unavailable",
+      error: "تعذر الوصول إلى قاعدة البيانات — تحقق من اتصالك ثم أعد المحاولة",
+    }
   }
+}
+
+/** واجهة توافقية للمستدعين الذين لا يحتاجون سبب الفشل. */
+export async function fetchStudentPortalData(token: string): Promise<StudentPortalData | null> {
+  const result = await fetchStudentPortalDataResult(token)
+  return result.ok ? result.data : null
 }
 
 // ============================================================

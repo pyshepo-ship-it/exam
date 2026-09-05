@@ -28,9 +28,14 @@ import {
   saveSetting,
 } from "./data-storage"
 import {
-  fetchStudentById, submitRegistrationRequest, submitGroupTransferRequest,
-  fetchRegistrationRequestByEmail, fetchStudentAccountByEmail,
-  studentLogin, studentLogout, studentRegisterAuto, changeStudentPassword } from "./supabase/sync"
+  fetchStudentById,
+  submitRegistrationRequest,
+  submitGroupTransferRequest,
+  studentLogin,
+  studentLogout,
+  studentRegisterAuto,
+  changeStudentPassword,
+} from "./supabase/sync"
 import { clearStore } from "./memory-store"
 import { clearRememberedOnlineExamResultSessions } from "./online-exam-result-session"
 
@@ -422,8 +427,9 @@ export function getPortalSession(): PortalSession | null {
   if (typeof window === "undefined") return null
   const session = readSessionCookie()
   if (!session) return null
-  // جلسة قديمة الشكل (قبل إضافة الصلاحية) أو منتهية → تُلغى
-  if (!session.exp || Date.now() >= session.exp) {
+  // جلسة قديمة الشكل (قبل التوكين الآمن/إضافة الصلاحية) أو منتهية → تُلغى.
+  // لا نسمح لكوكي قديم بلا token بفتح البوابة ثم الفشل في شاشة التحميل.
+  if (!session.token || typeof session.token !== "string" || !session.exp || Date.now() >= session.exp) {
     portalLogout()
     return null
   }
@@ -496,210 +502,83 @@ export async function portalLogin(email: string, password: string): Promise<Logi
   // المسار الأساسي: دالة student_login (SECURITY DEFINER) تتحقق من كلمة
   // المرور وحالة الحساب داخل قاعدة البيانات وتُصدر توكين الجلسة. لا نعتمد على
   // أي قراءة خام من anon لحسابات/طلبات الطلاب — أصلحنا REVOKE لذلك.
-  // (قد يُصل إلى هنا في بيئات قديمة أو المعاينة دون الدالة فيسقط للخطة أدناه).
+  // إذا كانت الدالة غير مثبّتة نرفض الدخول برسالة واضحة بدلاً من إنشاء جلسة ناقصة.
   // ============================================================
   const mint = await studentLogin(mail, password, legacyFnvHex(password)).catch((e) => ({
     ok: false, code: "unavailable" as const,
     error: (e as Error)?.message || "تعذر الاتصال بقاعدة البيانات",
   }))
 
-  if (mint.code !== "unavailable") {
-    // الأفضل رصد الطالب المعني (يُستخدم فقط إذا لم يُرجع الخادم studentId).
-    const resolveLocalStudentId = (): string | undefined => {
-      const byAccount = getStudentAccounts().find(a => norm(a.email) === norm(mail))?.studentId
-      const byReq = getRegistrationRequests()
-        .filter(r => norm(r.email) === norm(mail))
-        .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
-        .pop()?.linkedStudentId
-      return byAccount || byReq
-    }
-
-    // نجاح — نبني الجلسة بإعادة جلب بيانات الطالب فقط (لا قائمة لبقية الطلاب).
-    if (mint.ok) {
-      const studentId = mint.studentId || resolveLocalStudentId()
-      if (!studentId) {
-        return { ok: false, error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
-      }
-      let student = getStudents().find(s => s.id === studentId)
-      if (!student) {
-        const remote = await fetchStudentById(studentId).catch(() => null)
-        if (remote) student = remote
-      }
-      if (!student && mint.name) student = { id: studentId, name: mint.name } as any
-      if (!student) {
-        return {
-          ok: false,
-          error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — أعد المحاولة، وإن استمر راجع المعلم",
-        }
-      }
-      // نحفظ بيانات الطالب في ذاكرة الجلسة للعرض الفوري فقط — الأصل في السحابة.
-      try { if (!getStudents().some(s => s.id === student.id)) saveStudents([...getStudents(), student]) } catch { /* تجاهل */ }
-      if (student.status === "inactive") {
-        return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
-      }
-      const now = Date.now()
-      const session: PortalSession = {
-        email: mail,
-        studentId,
-        name: student.name,
-        iat: now,
-        exp: now + PORTAL_SESSION_TTL_MS,
-        token: mint.token,
-      }
-      if (typeof window !== "undefined") writeSessionCookie(session)
-      return { ok: true, session }
-    }
-
-    // نتائج سياسة موثوقة من قاعدة البيانات.
-    if (mint.code === "pending") return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
-    if (mint.code === "rejected") return { ok: false, error: mint.error || "تم رفض طلب التسجيل", status: "rejected" }
-    if (mint.code === "blocked") return { ok: false, error: mint.error || "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
-    if (mint.code === "no_account") return { ok: false, error: mint.error || "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
-    if (mint.code === "not_linked") return { ok: false, error: mint.error || "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
-    if (mint.code === "wrong_password") {
-      const failBucket = `login-fail:${norm(mail)}`
-      if (!consumeRate(failBucket, 5, 15 * 60 * 1000)) {
-        return { ok: false, error: `محاولات كثيرة بخطأ — انتظر ${minutesLeftInWindow(failBucket, 15 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
-      }
-      return { ok: false, error: mint.error || "كلمة المرور غير صحيحة" }
-    }
-    return { ok: false, error: mint.error || "تعذر تسجيل الدخول" }
-  }
-
-  // ============================================================
-  // خطة احتياطية (لا دالة في البيئة): المنطق المحلي + قراءة anon كما كان.
-  // ============================================================
-
-  // حساب البوابة مرجع الهوية الأساسي (يتابع تغيّر البريد وكلمة المرور من المدرس).
-  // لا نسخة محلية دائمة: إن لم يكن في ذاكرة الجلسة يُجلب من Supabase مباشرة،
-  // فيدخل الطالب من أي جهاز في العالم بأحدث حالة لحسابه (تفعيل/كلمة المرور).
-  let account = getStudentAccounts().find(a => norm(a.email) === norm(mail))
-  if (!account) {
-    const remoteAccount = await fetchStudentAccountByEmail(mail).catch(() => null)
-    if (remoteAccount) {
-      const accounts = getStudentAccounts()
-      saveStudentAccounts([...accounts.filter(a => norm(a.email) !== norm(mail)), remoteAccount])
-      account = remoteAccount
+  // لا نسقط إلى القراءة الخام القديمة عند غياب الدالة: ذلك المسار لا يستطيع
+  // إصدار token، فيبدو الدخول ناجحاً ثم تفشل صفحة الطالب، كما أنه يعيد فتح
+  // قراءة بيانات حساسة لـ anon. الترحيل الآمن جزء لازم من تشغيل البوابة.
+  if (mint.code === "unavailable") {
+    return {
+      ok: false,
+      error: mint.error || "خدمة بوابة الطالب غير متاحة الآن — يرجى إبلاغ المعلم",
     }
   }
 
-  // أحدث طلب لنفس البريد هو المعتمد (إعادة التقديم بعد الرفض تلغي القديم)
-  let request = getRegistrationRequests()
-    .filter(r => norm(r.email) === norm(mail))
-    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
-    .pop()
-  // طلب بحكم الربط: البريد تغيّر من المدرس فلم يجد الطلب بالبريد الجديد
-  let requestIsAuthoritative = true
-  if (!request && account && account.active !== false) {
-    request = getRegistrationRequests()
-      .filter(r => r.linkedStudentId === account.studentId && r.status === "approved")
-      .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""))
-      .pop()
-    requestIsAuthoritative = !!request
-  }
-  if (!request) {
-    // جهاز جديد تماماً — ربما سجّل من جهاز آخر
-    const remote = await fetchRegistrationRequestByEmail(mail)
-    if (remote) {
-      saveRegistrationRequests([...getRegistrationRequests(), remote])
-      return portalLogin(mail, password)
+  // نجاح موثوق من قاعدة البيانات — لا تُنشأ جلسة عميل بلا معرف وتوكين خادم.
+  if (mint.ok) {
+    const studentId = mint.studentId
+    const token = mint.token
+    if (!studentId || !token) {
+      return {
+        ok: false,
+        error: "إعداد خدمة بوابة الطالب غير مكتمل — يرجى إبلاغ المعلم لتحديث قاعدة البيانات",
+      }
     }
-    return { ok: false, error: "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+
+    let student = getStudents().find(s => s.id === studentId)
+    if (!student) {
+      const remote = await fetchStudentById(studentId).catch(() => null)
+      if (remote) student = remote
+    }
+    // في المخطط الآمن تكون قراءة students الخام مغلقة عن anon؛ لذلك يعيد
+    // student_login الاسم اللازم لبناء الكوكي، ثم تجلب الصفحة السجل الكامل بالـ token.
+    if (!student && mint.name) student = { id: studentId, name: mint.name } as Student
+    if (!student) {
+      return {
+        ok: false,
+        error: "تم التحقق من الحساب، لكن تعذر جلب بياناتك الآن — أعد المحاولة، وإن استمر راجع المعلم",
+      }
+    }
+    try {
+      if (!getStudents().some(s => s.id === student.id)) saveStudents([...getStudents(), student])
+    } catch { /* ذاكرة العرض فقط — لا تعطل الدخول */ }
+
+    if (student.status === "inactive") {
+      return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
+    }
+
+    const now = Date.now()
+    const session: PortalSession = {
+      email: mail,
+      studentId,
+      name: student.name,
+      iat: now,
+      exp: now + PORTAL_SESSION_TTL_MS,
+      token,
+    }
+    if (typeof window !== "undefined") writeSessionCookie(session)
+    return { ok: true, session }
   }
 
-  // مقارنة آمنة: SHA-256 حديثاً + قراءة FNV القديم فقط (بلا كتابة جديدة)
-  let matchesRequest = false
-  let matchesAccount = false
-  try {
-    matchesRequest = requestIsAuthoritative && (await passwordMatches(password, request.passwordHash))
-    matchesAccount = !!(account && account.active !== false && (await passwordMatches(password, account.passwordHash)))
-  } catch (e) {
-    return { ok: false, error: (e as Error)?.message || "تعذر التحقق من كلمة المرور على هذا الجهاز" }
-  }
-  if (!matchesRequest && !matchesAccount) {
-    // حد محاولات التخمين: 5 فشل/15 دقيقة لكل بريد
+  // نتائج سياسة موثوقة من قاعدة البيانات.
+  if (mint.code === "pending") return { ok: false, error: mint.error || "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
+  if (mint.code === "rejected") return { ok: false, error: mint.error || "تم رفض طلب التسجيل", status: "rejected" }
+  if (mint.code === "blocked") return { ok: false, error: mint.error || "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
+  if (mint.code === "no_account") return { ok: false, error: mint.error || "لا يوجد حساب بهذا البريد — سجَّل أولاً من صفحة التسجيل" }
+  if (mint.code === "not_linked") return { ok: false, error: mint.error || "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
+  if (mint.code === "wrong_password") {
     const failBucket = `login-fail:${norm(mail)}`
     if (!consumeRate(failBucket, 5, 15 * 60 * 1000)) {
       return { ok: false, error: `محاولات كثيرة بخطأ — انتظر ${minutesLeftInWindow(failBucket, 15 * 60 * 1000)} دقيقة ثم حاول مجدداً` }
     }
-    return { ok: false, error: "كلمة المرور غير صحيحة" }
+    return { ok: false, error: mint.error || "كلمة المرور غير صحيحة" }
   }
-
-  if (request.status === "pending") {
-    // موافقة المعلم قد حدثت من جهاز آخر (موقع منشور) — نستشير Supabase قبل الرفض
-    const remote = await fetchRegistrationRequestByEmail(mail)
-    if (remote && remote.status === "approved") {
-      const updated = getRegistrationRequests().map(r => (r.id === request.id ? { ...r, ...remote } : r))
-      saveRegistrationRequests(updated)
-      return portalLogin(mail, password)
-    }
-    return { ok: false, error: "طلبك لا يزال قيد المراجعة — انتظر موافقة المعلم ثم حاول مجدداً", status: "pending" }
-  }
-  if (request.status === "rejected") {
-    return { ok: false, error: `تم رفض طلب التسجيل${request.reviewNote ? `: ${request.reviewNote}` : ""}`, status: "rejected" }
-  }
-
-  if (account && !account.active) {
-    return { ok: false, error: "تم إيقاف حسابك من تسجيل الدخول — يرجى التواصل مع المعلم", status: "blocked" }
-  }
-
-  const studentId = account?.studentId || request.linkedStudentId
-  if (!studentId) {
-    return { ok: false, error: "حسابك غير مربوط ببيانات طالب — يرجى التواصل مع المعلم" }
-  }
-
-  // جهاز الطالب لا يحمل قائمة الطلاب — إن لم يوجد محلياً نجيبه من السحابة ونحفظه
-  let student = getStudents().find(s => s.id === studentId)
-  if (!student) {
-    const remote = await fetchStudentById(studentId).catch(() => null)
-    if (remote) {
-      try { saveStudents([...getStudents(), remote]) } catch { /* تجاهل */ }
-      student = remote
-    }
-  }
-  if (!student) {
-    return {
-      ok: false,
-      error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
-    }
-  }
-  // جلسة آمنة: إنشاء توكين جلوس عبر student_login (التحقق من كلمة المرور في قاعدة
-  // البيانات + إصدار السر). يوفّر أيضاً الاسم من الخادم إن تعذر جلبه محلياً.
-  let sessionToken = ""
-  try {
-    const mint = await studentLogin(mail, password, legacyFnvHex(password))
-    if (mint.ok) {
-      sessionToken = mint.token || ""
-      if (!student && mint.name && !mint.status) {
-        student = { id: studentId, name: mint.name } as any
-      }
-    }
-  } catch { /* بدون Supabase — نكمل بجلسة غير موقعة في وضع العرض فقط */ }
-
-  if (student && student.status === "inactive") {
-    return { ok: false, error: "حسابك موقوف حالياً — يرجى التواصل مع المعلم", status: "blocked" }
-  }
-  if (!student) {
-    return {
-      ok: false,
-      error: "تمت الموافقة على طلبك، لكن تعذر جلب بياناتك الآن — تأكد من اتصال الإنترنت وأعد المحاولة، وإن استمر راجع المعلم",
-    }
-  }
-
-  const now = Date.now()
-  const session: PortalSession = {
-    email: mail,
-    studentId,
-    name: student.name,
-    iat: now,
-    exp: now + PORTAL_SESSION_TTL_MS,
-    token: sessionToken || undefined,
-  }
-  // الجلسة كوكي فقط — لا تُكتب أي بيانات للطالب على جهازه
-  if (typeof window !== "undefined") {
-    writeSessionCookie(session)
-  }
-  return { ok: true, session }
+  return { ok: false, error: mint.error || "تعذر تسجيل الدخول" }
 }
 
 // ------------------------------------------------------------
