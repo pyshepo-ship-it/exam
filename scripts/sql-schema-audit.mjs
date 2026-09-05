@@ -17,7 +17,7 @@
  * تُتجاهل بدل إصدار إنذار كاذب.
  */
 
-import { readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const MIGRATIONS_DIR = "supabase/migrations"
@@ -274,7 +274,18 @@ section("2-ج) دوال SQL التي تحتاج pgcrypto (digest / gen_random_by
 const CRYPTO_FNS = ["digest", "gen_random_bytes", "hmac", "encrypt", "decrypt"]
 const cryptoProblems = []
 
-for (const { file, sql } of sources) {
+// نفس الخطأ واردة في supabase/schema.sql وملفات patches التي تُشغَّل يدويًا،
+// فلا نقتصر على migrations: نجمع كل ملفات SQL المعروفة ونفحصها كلها.
+const extraSources = []
+for (const dir of ["supabase", "supabase/patches"]) {
+  if (!existsSync(dir)) continue
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".sql"))) {
+    extraSources.push({ file: `${dir}/${f}`, sql: readFileSync(`${dir}/${f}`, "utf8") })
+  }
+}
+const cryptoSources = [...sources, ...extraSources]
+
+for (const { file, sql } of cryptoSources) {
   const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w.]+)[\s\S]*?\n\s*AS\s*\$\$([\s\S]*?)\$\$/g
   let m
   while ((m = fnRe.exec(sql))) {
