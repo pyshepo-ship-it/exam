@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { ToastProvider } from "@/components/providers/toast-provider";
+import { APP_FONTS_URL } from "@/lib/exam-templates";
 
 export const metadata: Metadata = {
   title: "أ/ ضحى العربي",
@@ -16,14 +17,9 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl" suppressHydrationWarning>
       <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap"
-          rel="stylesheet"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Scheherazade+New:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=El+Messiri:wght@400;600;700&family=Marhey:wght@400;600;700&family=Almarai:wght@300;400;700;800&family=Markazi+Text:wght@400;500;600;700&family=Noto+Kufi+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700;800&display=swap"
-          rel="stylesheet"
-        />
+        {/* الخطوط المستخدمة فعلياً فقط: Cairo للواجهة + Noto Kufi Arabic/Tajawal
+            لورقة الاختبار (الخط الموحّد لكل القوالب بقرار المالك) */}
+        <link href={APP_FONTS_URL} rel="stylesheet" />
       </head>
       <body className="font-arabic antialiased">
         <ThemeProvider

@@ -1,5 +1,6 @@
 import jsPDF from "jspdf"
 import { toPng } from "html-to-image"
+import { APP_FONTS_URL } from "./exam-templates"
 
 const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: number }> => {
   return new Promise((resolve, reject) => {
@@ -237,8 +238,7 @@ export const printElement = (elementId: string) => {
     <head>
       <meta charset="UTF-8">
       <title>طباعة ورقة الاختبار</title>
-      <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-      <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&family=Scheherazade+New:wght@400;600;700&family=Reem+Kufi:wght@400;600;700&family=El+Messiri:wght@400;600;700&family=Marhey:wght@400;600;700&family=Almarai:wght@300;400;700;800&family=Markazi+Text:wght@400;500;600;700&family=Noto+Kufi+Arabic:wght@400;500;600;700&family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+      <link href="${APP_FONTS_URL}" rel="stylesheet">
       ${stylesHtml}
       <style>
         @page {
@@ -296,14 +296,38 @@ export const printElement = (elementId: string) => {
   `)
   doc.close()
 
-  setTimeout(() => {
+  const doPrint = () => {
     try {
       printIframe?.contentWindow?.focus()
       printIframe?.contentWindow?.print()
     } catch {
       window.print()
     }
-  }, 350)
+  }
+
+  // ننتظر تحميل خط الورقة الموحّد (Noto Kufi Arabic) فعلياً قبل الطباعة،
+  // وإلا خرجت الورقة بخط بديل غير واضح. حد أدنى 350ms وحد أقصى 2.5s
+  // حتى لا تتعطّل الطباعة إن تعذّر تحميل الخط (انترنت بطيء/محجوب).
+  let printed = false
+  const printOnce = () => {
+    if (printed) return
+    printed = true
+    doPrint()
+  }
+  try {
+    // نحسب التخطيط مرة ليبدأ المتصفح جلب الخط فعلاً قبل فحص جاهزيته
+    void doc.body?.offsetHeight
+  } catch {
+    /* تجاهل */
+  }
+  const minWait = new Promise(resolve => setTimeout(resolve, 350))
+  const fontsReady = (doc as Document & { fonts?: { ready: Promise<unknown> } }).fonts?.ready
+  const capped = new Promise(resolve => setTimeout(resolve, 2500))
+  const ready = fontsReady && typeof fontsReady.then === "function" ? fontsReady : Promise.resolve()
+  void Promise.race([
+    Promise.all([minWait, ready.catch(() => undefined)]),
+    capped,
+  ]).then(printOnce)
 }
 
 /** طباعة A4 من الصفحة الحالية */

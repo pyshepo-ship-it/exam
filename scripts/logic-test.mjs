@@ -546,6 +546,81 @@ t("اختبار أونلاين مكتمل يميّز التصحيح الآلي �
   eq(ready.manualMarks, 3)
 })
 
+
+console.log("\n\x1b[1mسيناريو 14: توحيد خط ورقة الاختبار على خط «النقاء الأنيق»\x1b[0m")
+
+// مصادر الخط في المشروع: تعريف القوالب، وإطار الطباعة، وCSS الورقة
+const tplRaw = readFileSync("src/lib/exam-templates.ts", "utf8")
+const cssRaw = readFileSync("src/app/globals.css", "utf8")
+const pdfRaw = readFileSync("src/lib/pdf-utils.ts", "utf8")
+const layoutRaw = readFileSync("src/app/layout.tsx", "utf8")
+
+// خطوط الورقة المزخرفة الملغاة — يجب ألا يبقى أيٌّ منها في أي مكان
+const BANNED_FONTS = [
+  "Amiri", "Noto Naskh Arabic", "Scheherazade New", "Reem Kufi",
+  "El Messiri", "Marhey", "Almarai", "Markazi Text",
+]
+
+t("كل القوالب التسعة تستخدم خطاً واحداً هو خط قالب «النقاء الأنيق»", () => {
+  const fonts = tplMod.EXAM_TEMPLATES.map(t2 => t2.fontFamily)
+  eq(fonts.length, 9)
+  const uniq = Array.from(new Set(fonts))
+  eq(uniq.length, 1, "عدد الخطوط المختلفة")
+  eq(uniq[0], tplMod.EXAM_PAPER_FONT)
+  eq(tplMod.EXAM_TEMPLATES.find(t2 => t2.id === "modern").fontFamily, tplMod.EXAM_PAPER_FONT)
+})
+
+t("الخط الموحّد هو Noto Kufi Arabic (خط النقاء الأنيق الأصلي)", () => {
+  eq(/^'Noto Kufi Arabic'/.test(tplMod.EXAM_PAPER_FONT), true, `الخط الفعلي: ${tplMod.EXAM_PAPER_FONT}`)
+})
+
+t("getTemplateFont يُرجع الخط نفسه لكل القوالب ولقالب غير معروف", () => {
+  const perId = tplMod.EXAM_TEMPLATES.map(t2 => tplMod.getTemplateFont(t2.id))
+  eq(Array.from(new Set(perId)).length, 1)
+  eq(perId[0], tplMod.EXAM_PAPER_FONT)
+  eq(tplMod.getTemplateFont(undefined), tplMod.EXAM_PAPER_FONT)
+  eq(tplMod.getTemplateFont("nonexistent"), tplMod.EXAM_PAPER_FONT)
+})
+
+t("لا يبقى أي خط عربي مزخرف قديم في تعريفات القوالب", () => {
+  BANNED_FONTS.forEach(f => {
+    eq(tplRaw.includes(f), false, `بقي خط ${f} في exam-templates.ts`)
+  })
+})
+
+t("ورقة الاختبار في CSS (.exam-paper) تستخدم الخط الموحّد نفسه", () => {
+  const m = cssRaw.match(/\.exam-paper\s*\{[^}]*font-family:\s*([^;]+);/)
+  eq(!!m, true, "لم يُعثر على font-family في .exam-paper")
+  const cssFont = m[1].trim()
+  eq(cssFont, tplMod.EXAM_PAPER_FONT)
+})
+
+t("إطار الطباعة/التصدير يحمّل رابط الخطوط الموحّد ولا يحمّل الخطوط القديمة", () => {
+  eq(pdfRaw.includes("APP_FONTS_URL"), true)
+  BANNED_FONTS.forEach(f => {
+    eq(pdfRaw.includes(f), false, `بقي خط ${f} في pdf-utils.ts`)
+  })
+})
+
+t("layout.tsx يحمّل رابط الخطوط الموحّد فقط", () => {
+  eq(layoutRaw.includes("APP_FONTS_URL"), true)
+  BANNED_FONTS.forEach(f => {
+    eq(layoutRaw.includes(f), false, `بقي خط ${f} في layout.tsx`)
+  })
+})
+
+t("رابط الخطوط الوحيد يحتوي Cairo و Noto Kufi Arabic و Tajawal", () => {
+  eq(/family=Cairo:/.test(tplMod.APP_FONTS_URL), true)
+  eq(/Noto\+Kufi\+Arabic/.test(tplMod.APP_FONTS_URL), true)
+  eq(/Tajawal/.test(tplMod.APP_FONTS_URL), true)
+})
+
+t("ورقة الاختبار تُطبّق الخط عبر getTemplateFont فعلياً", () => {
+  const paper = readFileSync("src/components/exam/exam-paper.tsx", "utf8")
+  eq(paper.includes("getTemplateFont"), true)
+  eq(paper.includes("fontFamily"), true)
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {

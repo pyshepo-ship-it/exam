@@ -152,9 +152,11 @@
   letter-spacing: 0;
 }
 
-/* ورقة الامتحان — طباعة ومعاينة A4 */
+/* ورقة الامتحان — طباعة ومعاينة A4
+   الخط موحّد لكل القوالب (خط «النقاء الأنيق») بقرار المالك لأنه الأوضح للطلاب.
+   يجب أن يطابق EXAM_PAPER_FONT في src/lib/exam-templates.ts — يفحصه الاختبار. */
 .exam-paper {
-  font-family: 'Cairo', 'Tajawal', 'Segoe UI', Tahoma, Arial, sans-serif;
+  font-family: 'Noto Kufi Arabic', 'Tajawal', 'Cairo', sans-serif;
   width: 100%;
   max-width: 190mm;
   margin-inline: auto;
