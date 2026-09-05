@@ -18,6 +18,7 @@
 import {
   Student,
   ManualGrade,
+  Exam,
   ExamAttempt,
   Due,
   Payment,
@@ -27,6 +28,7 @@ import {
   getStudents,
   getGrades,
   getManualGrades,
+  getExams,
   getExamAttempts,
   getDues,
   getPayments,
@@ -60,7 +62,12 @@ export interface StudentReport {
   groupTime: string
   academicYear: string
   manualGrades: ManualGrade[]
-  examAttempts: (ExamAttempt & { examTitle: string })[]
+  examAttempts: (ExamAttempt & {
+    /** عنوان الاختبار من سجل الاختبارات — لا يُعرض للطالب معرّف داخلي */
+    examTitle: string
+    examMonth?: number
+    examYear?: number
+  })[]
   dues: Due[]
   payments: Payment[]
   balance: number
@@ -85,11 +92,12 @@ export function collectStudentReport(studentId: string): StudentReport | null {
     .filter(m => m.studentId === studentId)
     .sort((a, b) => (a.year - b.year) || (a.month - b.month))
 
+  const allExams = getExams()
   const examAttempts = getExamAttempts()
     .filter(a => a.studentId === studentId || (a.studentName === student.name && a.groupId === student.groupId))
     .map(a => ({
       ...a,
-      examTitle: a.examId || "اختبار إلكتروني",
+      ...examAttemptLabel(allExams, a),
     }))
     .sort((a, b) => (a.submittedAt || "").localeCompare(b.submittedAt || ""))
 
@@ -169,6 +177,80 @@ function esc(s: unknown): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
+}
+
+/**
+ * عنوان الاختبار وشهره وسنته من سجل الاختبارات.
+ * بلا سجل (أو اختبار محذوف) نرجع إلى تاريخ التسليم حتى لا يظهر للطالب فراغ.
+ */
+function examAttemptLabel(
+  exams: Pick<Exam, "id" | "title" | "month" | "academicYear">[] | undefined,
+  attempt: ExamAttempt
+): { examTitle: string; examMonth?: number; examYear?: number } {
+  const exam = (exams || []).find(item => item.id === attempt.examId)
+  const submitted = attempt.submittedAt ? new Date(attempt.submittedAt) : null
+  const hasSubmitted = !!submitted && !isNaN(submitted.getTime())
+  const month = exam?.month || (hasSubmitted ? submitted!.getMonth() + 1 : undefined)
+  const [startYear, endYear] = String(exam?.academicYear || "").split("-").map(Number)
+  // أشهر العام الدراسي الأولى (سبتمبر–ديسمبر) تتبع سنة البداية
+  const examYear = month && startYear && endYear
+    ? (month >= 9 ? startYear : endYear)
+    : (hasSubmitted ? submitted!.getFullYear() : undefined)
+  return {
+    examTitle: exam?.title?.trim() || "اختبار إلكتروني",
+    examMonth: month,
+    examYear: examYear,
+  }
+}
+
+/** «سبتمبر 2026» — شهر الاختبار كما يُعرض للطالب */
+export function examAttemptMonthLabel(item: { examMonth?: number; examYear?: number }): string {
+  if (!item.examMonth) return ""
+  const name = AR_MONTHS[item.examMonth - 1] || ""
+  return item.examYear ? `${name} ${item.examYear}` : name
+}
+
+export interface StudentGradeRow {
+  /** اسم الاختبار أو عنوان التقييم اليدوي */
+  title: string
+  /** السطر الثاني: الشهر والتاريخ، أو حالة الانتظار مع الشهر */
+  subtitle: string
+  score: number
+  max: number
+  /** نتيجة لم تُطلق بعد — لا تُعرض درجة للطالب */
+  pending: boolean
+}
+
+/**
+ * صفوف «درجاتي وتقييماتي»: تقييمات المعلم ثم محاولات الاختبارات.
+ * الاسم والشهر يأتيان من سجل الاختبارات حتى لا يظهر للطالب «اختبار إلكتروني» عامة.
+ */
+export function buildStudentGradeRows(
+  report: Pick<StudentReport, "manualGrades" | "examAttempts">
+): StudentGradeRow[] {
+  return [
+    ...report.manualGrades.map(m => ({
+      title: m.title,
+      subtitle: `${AR_MONTHS[(m.month || 1) - 1]} ${m.year} — تقييم من المعلم`,
+      score: m.score,
+      max: m.maxScore,
+      pending: false,
+    })),
+    ...report.examAttempts.map(a => {
+      const pending = attemptNeedsResultRelease(a)
+      const monthLabel = examAttemptMonthLabel(a)
+      const submitted = (a.submittedAt || "").slice(0, 10)
+      return {
+        title: a.examTitle || "اختبار إلكتروني",
+        subtitle: pending
+          ? `نتيجة بانتظار مراجعة وإطلاق المعلم${monthLabel ? ` — ${monthLabel}` : ""}`
+          : [monthLabel, submitted].filter(Boolean).join(" — "),
+        score: pending ? 0 : effectiveAttemptScore(a),
+        max: a.totalMarks,
+        pending,
+      }
+    }),
+  ]
 }
 
 function dateLabel(iso: string): string {
@@ -251,8 +333,8 @@ function gradesBlocks(report: StudentReport): Block[] {
       rows.push(`
         <tr>
           <td style="${TD}">${esc(dateLabel(a.submittedAt))}</td>
-          <td style="${TD}text-align:right;font-weight:700;">اختبار إلكتروني</td>
-          <td style="${TD}">اختبار إلكتروني</td>
+          <td style="${TD}text-align:right;font-weight:700;">${esc(a.examTitle || "اختبار إلكتروني")}</td>
+          <td style="${TD}">اختبار إلكتروني${examAttemptMonthLabel(a) ? ` — ${esc(examAttemptMonthLabel(a))}` : ""}</td>
           <td colspan="2" style="${TD}font-weight:800;color:#a16207;">قيد مراجعة المعلم — تُعلن النتيجة بعد الإطلاق</td>
         </tr>
       `)
@@ -265,8 +347,8 @@ function gradesBlocks(report: StudentReport): Block[] {
     rows.push(`
       <tr>
         <td style="${TD}">${esc(dateLabel(a.submittedAt))}</td>
-        <td style="${TD}text-align:right;font-weight:700;">اختبار إلكتروني${a.manualOverride ? " <span style=\"background:#f3e8ff;color:#7e22ce;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">درجة معدلة يدوياً</span>" : ""}</td>
-        <td style="${TD}">اختبار إلكتروني</td>
+        <td style="${TD}text-align:right;font-weight:700;">${esc(a.examTitle || "اختبار إلكتروني")}${a.manualOverride ? " <span style=\"background:#f3e8ff;color:#7e22ce;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">درجة معدلة يدوياً</span>" : ""}</td>
+        <td style="${TD}">اختبار إلكتروني${examAttemptMonthLabel(a) ? ` — ${esc(examAttemptMonthLabel(a))}` : ""}</td>
         <td style="${TD}white-space:nowrap;font-weight:800;">${finalScore} / ${a.totalMarks}${a.manualOverride ? ` <span style=\"color:#9ca3af;font-size:10.5px;font-weight:600;\">(الآلي: ${a.score})</span>` : ""}</td>
         <td style="${TD}font-weight:800;color:${pct >= 85 ? "#047857" : pct >= 50 ? "#a16207" : "#b91c1c"};">${pct}%</td>
       </tr>
@@ -556,6 +638,8 @@ export function reportFromPortalData(d: {
   attendance: Attendance[]
   honorees: Honoree[]
   history: StudentHistoryEvent[]
+  /** اختبارات البوابة — منها يُؤخذ عنوان الاختبار وشهره */
+  exams?: Exam[]
 }): StudentReport {
   const student = d.student
   const totalDue = d.dues.reduce((s, x) => s + x.amount, 0)
@@ -580,7 +664,7 @@ export function reportFromPortalData(d: {
     academicYear: getStoredAcademicYear(),
     manualGrades: [...d.manualGrades].sort((a, b) => (a.year - b.year) || (a.month - b.month)),
     examAttempts: [...d.examAttempts]
-      .map(a => ({ ...a, examTitle: a.examId || "اختبار إلكتروني" }))
+      .map(a => ({ ...a, ...examAttemptLabel(d.exams, a) }))
       .sort((a, b) => (a.submittedAt || "").localeCompare(b.submittedAt || "")),
     dues: d.dues,
     payments: [...d.payments].sort((a, b) => (a.paymentDate || "").localeCompare(b.paymentDate || "")),
