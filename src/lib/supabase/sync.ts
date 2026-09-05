@@ -1921,13 +1921,31 @@ export async function submitPublicHonoree(h: any): Promise<void> {
   }
 }
 
-/** جلب صف طالب واحد بالمعرف — مسار دخول الطالب من جهازه (لا يحمل قائمة الطلاب) */
+/**
+ * جلب صف طالب واحد بالمعرف — مسار قديم يقرأ جدول students مباشرة.
+ * في المخطط المحصَّن تكون قراءة anon مغلقة فيعود null بلا ضجيج، ولذلك يجب
+ * تفضيل fetchStudentSelfRecord(token) دائماً في مسارات بوابة الطالب.
+ */
 export async function fetchStudentById(studentId: string): Promise<any | null> {
   const sb = getSupabase()
   if (!sb || !studentId) return null
   const { data, error } = await sb.from("students").select("*").eq("id", studentId).maybeSingle()
   if (error || !data) return null
   return fromStudentRow(data)
+}
+
+/**
+ * بيانات الطالب نفسه بسرّ جلسته — الطريق الآمن الوحيد بعد إغلاق قراءة
+ * جدول students عن الزائر. لا تعيد أبداً بيانات طالب آخر.
+ */
+export async function fetchStudentSelfRecord(token: string): Promise<any | null> {
+  if (!token) return null
+  try {
+    const result = await getStudentPortalRecordResult(token)
+    return result.ok && result.data?.student ? fromStudentRow(result.data.student) : null
+  } catch {
+    return null
+  }
 }
 
 /**

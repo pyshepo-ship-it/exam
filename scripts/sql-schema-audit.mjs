@@ -713,6 +713,45 @@ check(
   /GRANT EXECUTE ON FUNCTION public\.start_online_exam_session\(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) TO anon, authenticated;/.test(sql024)
 )
 
+section("2-ز) ترحيل 025: إغلاق القراءة العامة عن الجداول الخاصة")
+
+const sql025 = byName("025_lock_private_tables_and_harden_functions.sql")
+for (const t of ["students", "attendance", "dues", "payments"]) {
+  check(
+    `025: ${t} — تُسقط سياسة القراءة العامة ويُسحب SELECT من anon`,
+    new RegExp(`DROP POLICY IF EXISTS "public read" ON public\\.${t};`).test(sql025) &&
+      new RegExp(`REVOKE SELECT ON TABLE public\\.${t}\\s+FROM anon;`).test(sql025) &&
+      new RegExp(`REVOKE SELECT ON TABLE public\\.${t}\\s+FROM PUBLIC;`).test(sql025)
+  )
+}
+check(
+  "025: سياسة exams الميتة تُسقط نهائيًا (015 لم يطابق اسمها)",
+  /DROP POLICY IF EXISTS "public read" ON public\.exams;/.test(sql025)
+)
+check(
+  "025: كل دالة يثبَّت لها search_path وينتهي بـ pg_temp",
+  /ALTER FUNCTION public\.update_updated_at_column\(\)\s*\n\s*SET search_path = public, pg_temp;/.test(sql025) &&
+    /ALTER FUNCTION public\.student_login\(TEXT, TEXT, TEXT\)\s*\n\s*SET search_path = public, extensions, pg_temp;/.test(sql025)
+)
+check(
+  "025: دوال المُشغِّلات والدوال الداخلية بلا EXECUTE لـ anon",
+  /REVOKE ALL ON FUNCTION public\.survey_response_protect\(\)\s+FROM anon;/.test(sql025) &&
+    /REVOKE ALL ON FUNCTION public\.rls_auto_enable\(\)\s+FROM anon, authenticated;/.test(sql025)
+)
+check(
+  "025: فحص تثبيت يرفض الترحيل إن بقي منفذ قراءة عامة",
+  /has_table_privilege\('anon'/.test(sql025) &&
+    /RAISE EXCEPTION 'ما زالت هناك قراءة عامة على جداول خاصة/.test(sql025)
+)
+// لا يعود أي ترحيل لاحق ليفتح ما أُغلق
+for (const f of files.filter(f => Number(f.slice(0, 3)) >= 25)) {
+  const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf8")
+  check(
+    `${f}: لا يمنح anon قراءة على students/attendance/dues/payments/exams`,
+    !/GRANT[^;]*SELECT[^;]*\b(students|attendance|dues|payments|exams)\b[^;]*TO[^;]*anon/i.test(sql)
+  )
+}
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن
