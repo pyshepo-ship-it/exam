@@ -329,8 +329,3 @@ export const printElement = (elementId: string) => {
     capped,
   ]).then(printOnce)
 }
-
-/** طباعة A4 من الصفحة الحالية */
-export const printA4 = () => {
-  printElement("exam-preview-content")
-}

@@ -17,6 +17,7 @@ import { fetchPublicData } from "@/lib/supabase/sync"
 import { isSupabaseConfigured } from "@/lib/supabase/client"
 import { attemptNeedsResultRelease, effectiveAttemptScore } from "@/lib/portal-content"
 import { gradeExam } from "@/lib/exam-grade"
+import { correctAnswerLabel, withServerFeedback } from "@/lib/exam-public"
 
 interface ExamReviewDialogProps {
   open: boolean
@@ -41,48 +42,6 @@ function answerLabel(question: Question, sq: SubQuestion, answer: ExamAttempt["a
     return answer?.isTrue === true ? "صواب" : answer?.isTrue === false ? "خطأ" : "لم تُجب"
   }
   return answer?.text?.trim() || "لم تُجب"
-}
-
-type AnswerFeedback = NonNullable<ExamAttempt["answerFeedback"]>[string]
-
-function correctAnswerLabel(question: Question, sq: SubQuestion, feedback?: AnswerFeedback): string {
-  if (question.questionType === 1) {
-    return sq.choices?.find(choice => choice.id === feedback?.choiceId || choice.isCorrect)?.choiceText || "—"
-  }
-  if (question.questionType === 3) {
-    const value = typeof feedback?.isTrue === "boolean" ? feedback.isTrue : sq.isTrue
-    return value === true ? "صواب" : value === false ? "خطأ" : "—"
-  }
-  if (question.questionType === 5) return feedback?.text || sq.corrections?.map(c => c.correctAnswer).filter(Boolean).join("، ") || "—"
-  return feedback?.text || sq.correctAnswer?.trim() || "—"
-}
-
-/** يضيف فقط مفاتيحاً أصدرها RPC للجلسة ذاتها إلى نسخة المراجعة المحلية. */
-function withServerFeedback(exam: Exam, feedback: NonNullable<ExamAttempt["answerFeedback"]>): Exam {
-  if (Object.keys(feedback).length === 0) return exam
-  return {
-    ...exam,
-    questions: exam.questions.map(question => ({
-      ...question,
-      subQuestions: question.subQuestions.map(sq => {
-        const item = feedback[sq.id]
-        if (!item) return sq
-        if (question.questionType === 1) {
-          return { ...sq, choices: sq.choices?.map(choice => ({ ...choice, isCorrect: choice.id === item.choiceId })) }
-        }
-        if (question.questionType === 3) return { ...sq, isTrue: item.isTrue }
-        if (question.questionType === 5) {
-          return {
-            ...sq,
-            corrections: (sq.corrections || []).map((correction, index) =>
-              index === 0 ? { ...correction, correctAnswer: item.text || "" } : correction
-            ),
-          }
-        }
-        return { ...sq, correctAnswer: item.text }
-      }),
-    })),
-  }
 }
 
 export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentName }: ExamReviewDialogProps) {
@@ -130,8 +89,17 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
   const score = best ? effectiveAttemptScore(best) : null
   const totalMarks = best?.totalMarks || theExam.totalMarks || 0
   const pct = score !== null && totalMarks > 0 ? Math.round((score / totalMarks) * 100) : null
-  const answerFeedback = best?.answerFeedback || {}
+  // تغليف في useMemo: كائن جديد في كل رسم كان يُبطل useMemo التالية (تحذير react-hooks).
+  const answerFeedback = useMemo(() => best?.answerFeedback || {}, [best?.answerFeedback])
   const gradedExam = useMemo(() => withServerFeedback(theExam, answerFeedback), [theExam, answerFeedback])
+  /** مفاتيح الإجابة بعد دمج ما أصدره الخادم — منها وحدها يُعرض المفتاح للطالب */
+  const mergedKeyById = useMemo(() => {
+    const map = new Map<string, { question: Question; sq: SubQuestion }>()
+    for (const question of gradedExam.questions || []) {
+      for (const sq of question.subQuestions || []) map.set(sq.id, { question, sq })
+    }
+    return map
+  }, [gradedExam])
   const grade = useMemo(() => best ? gradeExam(gradedExam, best.answers) : null, [gradedExam, best])
   const detailById = useMemo(() => new Map(grade?.details.map(item => [item.subQuestionId, item]) || []), [grade])
 
@@ -215,8 +183,12 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
                       const feedback = answerFeedback[sq.id]
                       // المفتاح لا يظهر إلا إذا أصدره الخادم لهذه الجلسة وفق
                       // afterEach / atEnd. المعاينة المحلية فقط تحفظ التوافق القديم.
+                      const merged = mergedKeyById.get(sq.id)
+                      const correctKey = merged
+                        ? correctAnswerLabel(merged.question, merged.sq)
+                        : correctAnswerLabel(question, sq)
                       const showCorrectKey = !isManualQuestion && (
-                        !!feedback || (!isSupabaseConfigured() && !!theExam.reviewOpen && correctAnswerLabel(question, sq) !== "—")
+                        !!feedback || (!isSupabaseConfigured() && !!theExam.reviewOpen && correctKey !== "—")
                       )
                       const showTeacherFeedback = explicitlyReleased && !!review
                       const showModelAnswer = explicitlyReleased && isManualQuestion && !!(review?.correction || sq.correctAnswer)
@@ -263,7 +235,7 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
                           {showCorrectKey && verdict !== "correct" && (
                             <div className="flex items-start gap-2 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-100">
                               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                              <span><strong>الإجابة الصحيحة:</strong> {correctAnswerLabel(question, sq, feedback)}</span>
+                              <span><strong>الإجابة الصحيحة:</strong> {correctKey}</span>
                             </div>
                           )}
 

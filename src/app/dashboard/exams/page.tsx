@@ -22,10 +22,15 @@ ClipboardList,
 Timer,
   Settings2,
   EyeOff,
-  SlidersHorizontal,
   Users,
   UserCheck,
   Phone,
+  LayoutGrid,
+  List,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  Hourglass,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -41,7 +46,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import toast from "react-hot-toast"
-import { exportToPDF, printElement, printA4 } from "@/lib/pdf-utils"
+import { exportToPDF, printElement } from "@/lib/pdf-utils"
 import {
   Select,
   SelectContent,
@@ -64,9 +69,8 @@ import {
   examDeliveryMode,
   getOnlineExamMode,
   getOnlineExamReadiness,
-  isEssayQuestionForMode,
   isOnlineExam,
-  isObjectiveQuestionType,
+  maybeAutoHonor,
   getGrades,
   getExams,
   saveExams,
@@ -90,10 +94,11 @@ import {
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
-import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
+import { attemptNeedsResultRelease, effectiveAttemptScore, examAvailability } from "@/lib/portal-content"
 import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 import { grantDeviceAttempt } from "@/lib/supabase/sync"
-import { marksForReviewVerdict, summarizeAttemptReview } from "@/lib/exam-grade"
+import { marksForReviewVerdict, shouldPromoteToHonor, summarizeAttemptReview } from "@/lib/exam-grade"
+import { correctAnswerLabel } from "@/lib/exam-public"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { Switch } from "@/components/ui/switch"
 import { ExamPaper, TemplatePicker, TemplateSwitcher } from "@/components/exam/exam-paper"
@@ -105,6 +110,55 @@ const ONLINE_MODE_LABELS: Record<OnlineExamMode, string> = {
   essay: "مقالي",
   mixed: "مختلط",
 }
+
+/** فلتر نوع الاختبار في قائمة الاختبارات: الكل أو ورقي أو إلكتروني */
+type ExamTypeFilter = "all" | "paper" | "online"
+
+/**
+ * حالة الإجابة داخل مراجعة المعلم، ومنها يُشتق لون بطاقة السؤال:
+ * wrong = أحمر (سؤال موضوعي لم يطابق مفتاح الإجابة، أو مقالي منحتَه صفراً)،
+ * correct = أخضر، partial = كهرماني (جزء من الدرجة)، pending = مقالي لم يُصحّح بعد.
+ */
+type ReviewAnswerTone = "wrong" | "correct" | "partial" | "pending"
+
+const REVIEW_TONE_STYLES: Record<ReviewAnswerTone, { card: string; answerBox: string; badge: string }> = {
+  wrong: {
+    card: "border-red-300 dark:border-red-800 bg-red-50/70 dark:bg-red-950/20 ring-1 ring-red-200 dark:ring-red-900",
+    answerBox: "border border-red-200 dark:border-red-900 bg-red-100/70 dark:bg-red-950/40 text-red-900 dark:text-red-100",
+    badge: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+  },
+  correct: {
+    card: "border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/10",
+    answerBox: "border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-100",
+    badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+  },
+  partial: {
+    card: "border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/10",
+    answerBox: "border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-100",
+    badge: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  },
+  pending: {
+    card: "border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900",
+    answerBox: "bg-slate-50 dark:bg-slate-800 text-gray-700 dark:text-gray-200",
+    badge: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+  },
+}
+
+const REVIEW_TONE_ICONS: Record<ReviewAnswerTone, typeof CheckCircle2> = {
+  wrong: XCircle,
+  correct: CheckCircle2,
+  partial: AlertCircle,
+  pending: Hourglass,
+}
+
+/** طريقة عرض قائمة الاختبارات: كروت متجاورة أو قائمة أسطر متتالية */
+type ExamsViewMode = "grid" | "list"
+
+const EXAMS_TYPE_FILTERS: { value: ExamTypeFilter; label: string }[] = [
+  { value: "all", label: "الكل — ورقي وإلكتروني" },
+  { value: "paper", label: "ورقي" },
+  { value: "online", label: "إلكتروني" },
+]
 
 function scheduledAvailabilityIssue(
   availabilityMode: "always" | "scheduled",
@@ -145,6 +199,13 @@ function fromLocalInputValue(value: string): string | undefined {
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [exams, setExams] = useState<Exam[]>([])
+  /**
+   * فلاتر قائمة الاختبارات وطريقة عرضها — حالة واجهة في ذاكرة الصفحة فقط،
+   * فلا تُكتب في المتصفح (سياسة التخزين: البيانات في Supabase وحده).
+   */
+  const [examsFilterGrade, setExamsFilterGrade] = useState<string>("all")
+  const [examsFilterType, setExamsFilterType] = useState<ExamTypeFilter>("all")
+  const [examsViewMode, setExamsViewMode] = useState<ExamsViewMode>("grid")
   /** تظهر أولاً لاختيار مسار الاختبار، ثم يفتح محرر النوع المختار */
   const [examTypeDialogOpen, setExamTypeDialogOpen] = useState(false)
   const [onlineModeDialogOpen, setOnlineModeDialogOpen] = useState(false)
@@ -180,6 +241,8 @@ export default function ExamsPage() {
   const editorInitialFingerprintRef = useRef("")
   const examsRef = useRef<Exam[]>([])
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** تنبيه واحد لكل جلسة تحرير: الحفظ التلقائي أخفى اختباراً منشوراً */
+  const unpublishedWarningShownRef = useRef(false)
 
   const [previewTemplate, setPreviewTemplate] = useState<ExamTemplateId>("classic")
   const [previewDecorations, setPreviewDecorations] = useState(true)
@@ -196,7 +259,6 @@ export default function ExamsPage() {
     unit: "",
     academicYear: getStoredAcademicYear(),
     duration: 60,
-    totalMarks: 0,
     questions: [] as Question[],
     templateId: "classic" as ExamTemplateId,
     showDecorations: true,
@@ -375,6 +437,26 @@ export default function ExamsPage() {
     }))
   }
 
+  /**
+   * ترشيح المتفوق للوحة الشرف بعد إطلاق النتيجة.
+   * هذا هو المسار الوحيد لاختبارات المقال/المختلط: درجتها النهائية لا تكتمل
+   * إلا بعد مراجعة المعلم، فلا تُحتسب عند تسليم الطالب.
+   */
+  const promoteHonoreeOnRelease = (exam: Exam, attempt: ExamAttempt, score: number, totalMarks: number) => {
+    if (totalMarks <= 0) return
+    // القاعدة الموحدة نفسها المستعملة عند التسليم الآلي
+    if (!shouldPromoteToHonor(exam, { autoTotal: totalMarks, percent: (score / totalMarks) * 100 })) return
+    const honoree = maybeAutoHonor({
+      exam,
+      studentName: attempt.studentName,
+      groupId: attempt.groupId,
+      studentId: attempt.studentId,
+      score,
+      totalMarks,
+    })
+    if (honoree) toast.success(`أُضيف ${attempt.studentName} إلى لوحة الشرف`)
+  }
+
   const saveAttemptReview = (release = false) => {
     if (!reviewAttempt || !resultsExam) return
     const nextAnswers: ExamAttempt["answers"] = { ...reviewAttempt.answers }
@@ -399,42 +481,51 @@ export default function ExamsPage() {
       gradingStatus: release ? "released" : summary.status,
       reviewedAt: summary.reviewedManualCount > 0 ? now : reviewAttempt.reviewedAt,
       resultReleasedAt: release ? now : reviewAttempt.resultReleasedAt,
+      // مراجعة كل إجابة صارت المصدر الوحيد للدرجة، فلا يبقى تعديل إجمالي قديم
+      // يعرض للطالب رقماً مختلفاً عن درجات الإجابات.
+      manualOverride: undefined,
     }
     const updated = getExamAttempts().map(attempt => attempt.id === nextAttempt.id ? nextAttempt : attempt)
     saveExamAttempts(updated)
     setReviewAttempt(nextAttempt)
     setResultsVersion(version => version + 1)
     toast.success(release ? "تم حفظ المراجعة وإطلاق النتيجة للطالب" : "تم حفظ مراجعة الإجابات")
+    if (release) promoteHonoreeOnRelease(resultsExam, nextAttempt, summary.score, summary.totalMarks)
   }
 
   const releaseAllReviewed = () => {
     if (!resultsExam) return
     const now = new Date().toISOString()
-    let released = 0
+    const releasedAttempts: { attempt: ExamAttempt; score: number; totalMarks: number }[] = []
     const updated = getExamAttempts().map(attempt => {
       if (attempt.examId !== resultsExam.id || attempt.resultReleasedAt) return attempt
       const summary = summarizeAttemptReview(resultsExam, attempt.answers)
       if (summary.pendingManualCount > 0) return attempt
-      released += 1
+      const totalMarks = summary.totalMarks || attempt.totalMarks
+      releasedAttempts.push({ attempt, score: summary.score, totalMarks })
       return {
         ...attempt,
         score: summary.autoScore,
-        totalMarks: summary.totalMarks || attempt.totalMarks,
+        totalMarks,
         autoScore: summary.autoScore,
         autoTotal: summary.autoTotal,
         manualScore: summary.manualScore,
         manualTotal: summary.manualTotal,
         gradingStatus: "released" as const,
         resultReleasedAt: now,
+        manualOverride: undefined,
       }
     })
-    if (!released) {
+    if (releasedAttempts.length === 0) {
       toast.error("لا توجد محاولات مكتملة المراجعة لإطلاقها")
       return
     }
     saveExamAttempts(updated)
     setResultsVersion(version => version + 1)
-    toast.success(`تم إطلاق نتائج ${released} طالب`)
+    toast.success(`تم إطلاق نتائج ${releasedAttempts.length} طالب`)
+    releasedAttempts.forEach(item =>
+      promoteHonoreeOnRelease(resultsExam, item.attempt, item.score, item.totalMarks)
+    )
   }
 
   const toggleQuestion = (questionId: string) => {
@@ -675,29 +766,6 @@ export default function ExamsPage() {
     }))
   }
 
-  const updateCorrection = (questionId: string, subQuestionId: string, field: "wordPosition" | "wordCount", value: number) => {
-    setExamForm(prev => ({
-      ...prev,
-      questions: prev.questions.map(q => {
-        if (q.id === questionId) {
-          return {
-            ...q,
-            subQuestions: q.subQuestions.map(sq => {
-              if (sq.id === subQuestionId && sq.corrections) {
-                return {
-                  ...sq,
-                  corrections: sq.corrections.map(c => ({ ...c, [field]: value })),
-                }
-              }
-              return sq
-            }),
-          }
-        }
-        return q
-      }),
-    }))
-  }
-
   const removeSubQuestion = (questionId: string, subQuestionId: string) => {
     setExamForm(prev => ({
       ...prev,
@@ -735,7 +803,6 @@ export default function ExamsPage() {
     unit: "",
     academicYear: getStoredAcademicYear(),
     duration: 60,
-    totalMarks: 0,
     questions: [] as Question[],
     templateId: "classic" as ExamTemplateId,
     showDecorations: true,
@@ -832,6 +899,16 @@ export default function ExamsPage() {
     const previous = current.find(exam => exam.id === id)
     const createdAt = previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
     const draft = buildExamFromForm(form, id, createdAt, true, previous)
+    // الحفظ التلقائي يخفي اختباراً منشوراً صار ناقصاً — نُخبر المعلم مرة واحدة
+    // حتى لا يختفي الاختبار من البوابة بلا سبب مفهوم.
+    if (
+      previous?.allowOnline === true &&
+      draft.allowOnline !== true &&
+      !unpublishedWarningShownRef.current
+    ) {
+      unpublishedWarningShownRef.current = true
+      toast("أُخفي الاختبار عن الطلاب مؤقتاً لأن تعديلاتك جعلته غير مكتمل — يعود للظهور عند إصلاح الناقص وحفظه", { icon: "⚠️" })
+    }
     const next = previous
       ? current.map(exam => exam.id === id ? draft : exam)
       : [...current, draft]
@@ -886,14 +963,14 @@ export default function ExamsPage() {
     onlineMode: OnlineExamMode = "objective"
   ) => {
     const form = exam ? {
-      gradeId: exam.gradeId,
+      // الاختبار العام مخزّن بصف فارغ، وقيمة «عام — كل الصفوف» في القائمة هي __all
+      gradeId: exam.gradeId || "__all",
       groupId: exam.groupId || "",
       title: exam.title === "مسودة اختبار بدون عنوان" ? "" : exam.title,
       month: exam.month || new Date().getMonth() + 1,
       unit: exam.unit || "",
       academicYear: exam.academicYear,
       duration: exam.duration || 60,
-      totalMarks: exam.totalMarks || 0,
       questions: exam.questions,
       templateId: exam.templateId || "classic" as ExamTemplateId,
       showDecorations: exam.showDecorations !== false,
@@ -919,6 +996,7 @@ export default function ExamsPage() {
     editorExamIdRef.current = exam?.id || `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     editorCreatedAtRef.current = exam?.createdAt || new Date().toISOString()
     editorInitialFingerprintRef.current = JSON.stringify(form)
+    unpublishedWarningShownRef.current = false
     setAutoSaveState("idle")
     setExamForm(form)
     setExpandedQuestions([])
@@ -1027,7 +1105,7 @@ export default function ExamsPage() {
   }
 
   const deleteExam = (examId: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا الاختبار؟")) {
+    if (confirm("هل أنت متأكد من حذف هذا الاختبار؟\nملاحظة: محاولات الطلاب المسجلة عليه تبقى في السجلات ولن تُحذف معه.")) {
       const updatedExams = exams.filter(e => e.id !== examId)
       setExams(updatedExams)
       saveExams(updatedExams)
@@ -1065,20 +1143,9 @@ export default function ExamsPage() {
     return <>{before} {blank} {after}</>
   }
 
-  const renderCorrectionSentence = (sq: SubQuestion) => {
-    const words = getUnderlinedWords(sq)
-    if (words.length === 0) return null
-    return words.map((w, i) => (
-      <span key={i}>
-        <span className={w.underlined ? "underline decoration-2 underline-offset-4" : undefined}>{w.word}</span>
-        {i < words.length - 1 ? " " : ""}
-      </span>
-    ))
-  }
-
   const totalSubQuestions = examForm.questions.reduce((s, q) => s + q.subQuestions.length, 0)
   const liveTotalMarks = getExamTotalMarks(examForm.questions)
-  const selectedGradeName = getGradeName(examForm.gradeId)
+  const selectedGradeName = examForm.gradeId === "__all" ? "عام — كل الصفوف" : getGradeName(examForm.gradeId)
   const isOnlineForm = examForm.deliveryMode === "online"
   const onlineReadiness = getOnlineExamReadiness({
     questions: examForm.questions,
@@ -1087,6 +1154,196 @@ export default function ExamsPage() {
   const questionButtons = isOnlineForm
     ? QUESTION_BUTTONS.filter(btn => allowedOnlineQuestionTypes(examForm.onlineExamMode).includes(btn.type))
     : QUESTION_BUTTONS
+
+
+  // ===== قائمة الاختبارات: فلترة (الصف + ورقي/إلكتروني) وطريقتا العرض =====
+  /** "all" = كل الصفوف، "__all" = الاختبارات العامة بلا صف محدّد */
+  const matchesExamsFilters = (exam: Exam, gradeFilter: string, typeFilter: ExamTypeFilter) => {
+    const matchesGrade =
+      gradeFilter === "all" ||
+      (gradeFilter === "__all" ? !exam.gradeId : exam.gradeId === gradeFilter)
+    const matchesType =
+      typeFilter === "all" || (isOnlineExam(exam) ? "online" : "paper") === typeFilter
+    return matchesGrade && matchesType
+  }
+
+  const filteredExams = exams.filter(exam => matchesExamsFilters(exam, examsFilterGrade, examsFilterType))
+  const countExams = (gradeFilter: string, typeFilter: ExamTypeFilter) =>
+    exams.filter(exam => matchesExamsFilters(exam, gradeFilter, typeFilter)).length
+  const hasExamsFilter = examsFilterGrade !== "all" || examsFilterType !== "all"
+  const resetExamsFilters = () => {
+    setExamsFilterGrade("all")
+    setExamsFilterType("all")
+  }
+
+  /** شارات حالة الاختبار — تُعرض كما هي في الكروت وفي القائمة */
+  const renderExamBadges = (exam: Exam) => {
+    const online = isOnlineExam(exam)
+    const onlineMode = getOnlineExamMode(exam)
+    const tpl = getTemplate(exam.templateId)
+    return (
+      <>
+        {online ? (
+          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+            <Globe className="w-3 h-3 ml-1" />
+            اختبار إلكتروني
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <Printer className="w-3 h-3 ml-1" />
+            اختبار ورقي
+          </Badge>
+        )}
+        {online && (
+          <Badge variant="outline" className="bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+            {ONLINE_MODE_LABELS[onlineMode]}
+          </Badge>
+        )}
+        {!online && (
+          <Badge variant="outline" className="bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+            <Palette className="w-3 h-3 ml-1" />
+            {tpl.name}
+          </Badge>
+        )}
+        {exam.month && (
+          <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+            <Calendar className="w-3 h-3 ml-1" />
+            {MONTHS[exam.month - 1]}
+          </Badge>
+        )}
+        {exam.unit && <Badge variant="outline">الوحدة: {exam.unit}</Badge>}
+        {exam.groupId && <Badge variant="outline">{getGroupName(exam.groupId)}</Badge>}
+        {exam.duration && <Badge variant="outline">{exam.duration} دقيقة</Badge>}
+        {!online && exam.showDecorations !== false && (
+          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+            <Sparkles className="w-3 h-3 ml-1" />
+            زخارف
+          </Badge>
+        )}
+        {online && (exam.allowOnline ? (
+          exam.accessMode === "public" ? (
+            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+              <Globe className="w-3 h-3 ml-1" />
+              مفتوح للجميع — بدون تسجيل
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+              <UserCheck className="w-3 h-3 ml-1" />
+              منشور للأعضاء المسجلين
+            </Badge>
+          )
+        ) : (
+          <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            <EyeOff className="w-3 h-3 ml-1" />
+            مسودة غير منشورة
+          </Badge>
+        ))}
+        {online && !!exam.maxAttempts && exam.maxAttempts > 0 && (
+          <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+            المحاولات: {exam.maxAttempts} لكل طالب
+          </Badge>
+        )}
+        {(() => {
+          const av = examAvailability(exam)
+          if (!online || !exam.allowOnline) return null
+          return av.open ? (
+            <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300">
+              <Timer className="w-3 h-3 ml-1" />
+              متاح الآن
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              <Timer className="w-3 h-3 ml-1" />
+              مغلق الآن
+            </Badge>
+          )
+        })()}
+      </>
+    )
+  }
+
+  /** أزرار إجراءات الاختبار — نفسها في الكروت وفي القائمة */
+  const renderExamActions = (exam: Exam, layout: "card" | "row" = "card") => {
+    const online = isOnlineExam(exam)
+    return (
+      <>
+        <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className={layout === "card" ? "min-w-[9rem] flex-1" : "min-w-[9rem]"}>
+          <Eye className="w-4 h-4" />
+          <span>معاينة</span>
+        </Button>
+        {online && exam.allowOnline && (
+          <Button
+            variant="outline"
+            size="sm"
+            title="نتائج الطلاب وتعديل الدرجات يدوياً"
+            onClick={() => setResultsExam(exam)}
+            className="h-10 w-10 shrink-0"
+          >
+            <ClipboardList className="w-4 h-4" />
+          </Button>
+        )}
+        {online && exam.allowOnline && (
+          <Button
+            variant="outline"
+            size="sm"
+            title={exam.accessMode === "public"
+              ? "نسخ رابط الاختبار — مفتوح للجميع (يُفتح بدون تسجيل)"
+              : "نسخ رابط الاختبار"}
+            onClick={() => copyExamLink(exam.id)}
+            className="h-10 w-10 shrink-0"
+          >
+            <Link2 className="w-4 h-4" />
+          </Button>
+        )}
+        {(online || exam.deliveryMode === undefined) && (
+          <Button
+            variant="outline"
+            size="sm"
+            title="لوحة تحكم الظهور والمحاولات"
+            onClick={() => openPanel(exam)}
+            className="h-10 w-10 shrink-0 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+          >
+            <Settings2 className="w-4 h-4" />
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)} className="h-10 w-10 shrink-0">
+          <Edit2 className="w-4 h-4" />
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => deleteExam(exam.id)}
+          className="h-10 w-10 shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+        >
+          <Trash2 className="w-4 h-4" />
+        </Button>
+      </>
+    )
+  }
+
+  /** حالة الفراغ: لا اختبارات أصلاً، أو لا نتائج مطابقة للفلاتر */
+  const renderExamsEmptyState = () => {
+    if (filteredExams.length > 0) return null
+    return (
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="col-span-full text-center py-12">
+        <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
+        <p className="text-gray-500 dark:text-gray-400 mb-4">
+          {exams.length === 0 ? "لا توجد اختبارات بعد" : "لا توجد اختبارات مطابقة للفلاتر المختارة"}
+        </p>
+        {exams.length === 0 ? (
+          <Button onClick={openExamTypeDialog} className="bg-gradient-to-r from-red-500 to-rose-600">
+            <Plus className="w-4 h-4" />
+            <span>إنشاء أول اختبار</span>
+          </Button>
+        ) : (
+          <Button variant="outline" onClick={resetExamsFilters}>
+            <X className="w-4 h-4" />
+            <span>إلغاء الفلاتر</span>
+          </Button>
+        )}
+      </motion.div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -1135,19 +1392,136 @@ export default function ExamsPage() {
         </div>
       </motion.div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <AnimatePresence>
-          {exams.map((exam, index) => {
-            const online = isOnlineExam(exam)
-            const onlineMode = getOnlineExamMode(exam)
-            const tpl = getTemplate(exam.templateId)
-            return (
+      {/* شريط الفلاتر وطريقة العرض — يظهر متى وُجدت اختبارات، ولا معنى له مع قائمة فارغة */}
+      {exams.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-200 dark:border-gray-800 shadow-lg"
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="grid flex-1 grid-cols-1 gap-3 sm:grid-cols-2 lg:max-w-2xl">
+              {/* فلتر الصف */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-gray-500 dark:text-gray-400">الصف</Label>
+                <Select value={examsFilterGrade} onValueChange={setExamsFilterGrade}>
+                  <SelectTrigger className="bg-gray-50 dark:bg-gray-800" aria-label="تصفية الاختبارات حسب الصف">
+                    <SelectValue placeholder="كل الصفوف" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">كل الصفوف ({countExams("all", examsFilterType)})</SelectItem>
+                    {grades.map(grade => (
+                      <SelectItem key={grade.id} value={grade.id}>
+                        {grade.name} ({countExams(grade.id, examsFilterType)})
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__all">عام — كل الصفوف ({countExams("__all", examsFilterType)})</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* فلتر نوع الاختبار: ورقي أو إلكتروني */}
+              <div className="space-y-1.5">
+                <Label className="text-xs text-gray-500 dark:text-gray-400">نوع الاختبار</Label>
+                <Select
+                  value={examsFilterType}
+                  onValueChange={(value) => setExamsFilterType(value as ExamTypeFilter)}
+                >
+                  <SelectTrigger className="bg-gray-50 dark:bg-gray-800" aria-label="تصفية الاختبارات حسب النوع: ورقي أو إلكتروني">
+                    <SelectValue placeholder="كل الأنواع" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {EXAMS_TYPE_FILTERS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label} ({countExams(examsFilterGrade, option.value)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* طريقة العرض: كروت أو قائمة */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-gray-500 dark:text-gray-400">طريقة العرض</Label>
+              <div
+                className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 p-1"
+                role="group"
+                aria-label="طريقة عرض الاختبارات"
+              >
+                <button
+                  type="button"
+                  onClick={() => setExamsViewMode("grid")}
+                  aria-pressed={examsViewMode === "grid"}
+                  title="عرض كروت"
+                  className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                    examsViewMode === "grid"
+                      ? "bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 shadow"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  }`}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  <span>كروت</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExamsViewMode("list")}
+                  aria-pressed={examsViewMode === "list"}
+                  title="عرض قائمة"
+                  className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                    examsViewMode === "list"
+                      ? "bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 shadow"
+                      : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                  }`}
+                >
+                  <List className="w-4 h-4" />
+                  <span>قائمة</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 dark:border-gray-800 pt-3">
+            <Badge variant="outline" className="bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              النتائج: {filteredExams.length} من {exams.length}
+            </Badge>
+            {examsFilterGrade !== "all" && (
+              <Badge variant="outline" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                الصف: {examsFilterGrade === "__all" ? "عام — كل الصفوف" : getGradeName(examsFilterGrade)}
+              </Badge>
+            )}
+            {examsFilterType !== "all" && (
+              <Badge variant="outline" className={
+                examsFilterType === "online"
+                  ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                  : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+              }>
+                {examsFilterType === "online" ? "إلكتروني" : "ورقي"}
+              </Badge>
+            )}
+            {hasExamsFilter && (
+              <Button variant="ghost" size="sm" onClick={resetExamsFilters} className="h-7 text-xs">
+                <X className="w-3.5 h-3.5" />
+                <span>إعادة تعيين الفلاتر</span>
+              </Button>
+            )}
+          </div>
+        </motion.div>
+      )}
+
+      {examsViewMode === "grid" ? (
+        /* مفتاح خاص بكل طريقة عرض: يضمن إعادة بناء القائمة بالكامل عند التبديل
+           فلا تبقى عناصر الطريقة السابقة معلّقة داخل الحاوية نفسها */
+        <div key="exams-grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <AnimatePresence>
+            {filteredExams.map((exam, index) => (
               <motion.div
                 key={exam.id}
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.9 }}
-                transition={{ delay: index * 0.05 }}
+                transition={{ delay: Math.min(index * 0.05, 0.3) }}
                 className="h-full"
               >
                 {/*
@@ -1178,152 +1552,64 @@ export default function ExamsPage() {
                   </CardHeader>
                   <CardContent className="flex-1 flex flex-col pt-0">
                     <div className="flex flex-wrap content-start items-start gap-2 flex-1 min-h-[6.5rem]">
-                      {online ? (
-                        <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                          <Globe className="w-3 h-3 ml-1" />
-                          اختبار إلكتروني
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-                          <Printer className="w-3 h-3 ml-1" />
-                          اختبار ورقي
-                        </Badge>
-                      )}
-                      {online && (
-                        <Badge variant="outline" className="bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300">
-                          {ONLINE_MODE_LABELS[onlineMode]}
-                        </Badge>
-                      )}
-                      {!online && (
-                        <Badge variant="outline" className="bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300">
-                          <Palette className="w-3 h-3 ml-1" />
-                          {tpl.name}
-                        </Badge>
-                      )}
-                      {exam.month && (
-                        <Badge variant="outline" className="bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                          <Calendar className="w-3 h-3 ml-1" />
-                          {MONTHS[exam.month - 1]}
-                        </Badge>
-                      )}
-                      {exam.unit && <Badge variant="outline">الوحدة: {exam.unit}</Badge>}
-                      {exam.groupId && <Badge variant="outline">{getGroupName(exam.groupId)}</Badge>}
-                      {exam.duration && <Badge variant="outline">{exam.duration} دقيقة</Badge>}
-                      {!online && exam.showDecorations !== false && (
-                        <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                          <Sparkles className="w-3 h-3 ml-1" />
-                          زخارف
-                        </Badge>
-                      )}
-                      {online && (exam.allowOnline ? (
-                        exam.accessMode === "public" ? (
-                          <Badge variant="outline" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
-                            <Globe className="w-3 h-3 ml-1" />
-                            مفتوح للجميع — بدون تسجيل
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
-                            <UserCheck className="w-3 h-3 ml-1" />
-                            منشور للأعضاء المسجلين
-                          </Badge>
-                        )
-                      ) : (
-                        <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                          <EyeOff className="w-3 h-3 ml-1" />
-                          مسودة غير منشورة
-                        </Badge>
-                      ))}
-                      {online && !!exam.maxAttempts && exam.maxAttempts > 0 && (
-                        <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                          المحاولات: {exam.maxAttempts} لكل طالب
-                        </Badge>
-                      )}
-                      {(() => {
-                        const av = examAvailability(exam)
-                        if (!online || !exam.allowOnline) return null
-                        return av.open ? (
-                          <Badge variant="outline" className="bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300">
-                            <Timer className="w-3 h-3 ml-1" />
-                            متاح الآن
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                            <Timer className="w-3 h-3 ml-1" />
-                            مغلق الآن
-                          </Badge>
-                        )
-                      })()}
+                      {renderExamBadges(exam)}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 mt-auto pt-3 border-t border-gray-100 dark:border-gray-800">
-                      <Button variant="outline" size="sm" onClick={() => previewExamHandler(exam)} className="min-w-[9rem] flex-1">
-                        <Eye className="w-4 h-4" />
-                        <span>معاينة</span>
-                      </Button>
-                      {online && exam.allowOnline && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="نتائج الطلاب وتعديل الدرجات يدوياً"
-                          onClick={() => setResultsExam(exam)}
-                          className="h-10 w-10 shrink-0"
-                        >
-                          <ClipboardList className="w-4 h-4" />
-                        </Button>
-                      )}
-                      {online && exam.allowOnline && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title={exam.accessMode === "public"
-                            ? "نسخ رابط الاختبار — مفتوح للجميع (يُفتح بدون تسجيل)"
-                            : "نسخ رابط الاختبار"}
-                          onClick={() => copyExamLink(exam.id)}
-                          className="h-10 w-10 shrink-0"
-                        >
-                          <Link2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                      {(online || exam.deliveryMode === undefined) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="لوحة تحكم الظهور والمحاولات"
-                          onClick={() => openPanel(exam)}
-                          className="h-10 w-10 shrink-0 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950"
-                        >
-                          <Settings2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                      <Button variant="outline" size="sm" onClick={() => openCreateDialog(exam)} className="h-10 w-10 shrink-0">
-                        <Edit2 className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => deleteExam(exam.id)}
-                        className="h-10 w-10 shrink-0 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {renderExamActions(exam, "card")}
                     </div>
                   </CardContent>
                 </Card>
               </motion.div>
-            )
-          })}
-        </AnimatePresence>
-
-        {exams.length === 0 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="col-span-full text-center py-12">
-            <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300 dark:text-gray-700" />
-            <p className="text-gray-500 dark:text-gray-400 mb-4">لا توجد اختبارات بعد</p>
-            <Button onClick={openExamTypeDialog} className="bg-gradient-to-r from-red-500 to-rose-600">
-              <Plus className="w-4 h-4" />
-              <span>إنشاء أول اختبار</span>
-            </Button>
-          </motion.div>
-        )}
-      </div>
+            ))}
+          </AnimatePresence>
+          {renderExamsEmptyState()}
+        </div>
+      ) : (
+        /* عرض القائمة: سطر كامل لكل اختبار، الأسطر متراصّة أسفل بعضها */
+        <div key="exams-list" className="space-y-3">
+          <AnimatePresence initial={false}>
+            {filteredExams.map((exam, index) => (
+              <motion.div
+                key={exam.id}
+                layout
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ delay: Math.min(index * 0.03, 0.3) }}
+              >
+                <Card className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
+                  <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start gap-2">
+                        <h3
+                          className="text-base font-bold leading-snug text-gray-900 dark:text-white break-words"
+                          title={exam.title}
+                        >
+                          {exam.title}
+                        </h3>
+                        <Badge variant="outline" className="shrink-0 bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300">
+                          {exam.questions.length} سؤال
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400 break-words">
+                        {getGradeName(exam.gradeId)}
+                        {exam.groupId ? ` — ${getGroupName(exam.groupId)}` : ""}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {renderExamBadges(exam)}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 lg:shrink-0 lg:border-s lg:border-gray-100 dark:lg:border-gray-800 lg:ps-4">
+                      {renderExamActions(exam, "row")}
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          {renderExamsEmptyState()}
+        </div>
+      )}
 
       {/* اختيار نوع الاختبار — يظهر قبل المحرر عند إنشاء اختبار جديد */}
       <Dialog open={examTypeDialogOpen} onOpenChange={setExamTypeDialogOpen}>
@@ -2715,16 +3001,19 @@ export default function ExamsPage() {
                 const finalScore = effectiveAttemptScore(a)
                 const overridden = !!a.manualOverride
                 const pending = summary?.pendingManualCount || 0
+                const needsRelease = attemptNeedsResultRelease(a)
                 const statusLabel = a.resultReleasedAt
                   ? "النتيجة مُطلقة"
                   : pending > 0
                   ? `بانتظار تصحيح ${pending} إجابة`
-                  : "مراجعة مكتملة — بانتظار الإطلاق"
+                  : needsRelease
+                  ? "مراجعة مكتملة — بانتظار الإطلاق"
+                  : "النتيجة ظاهرة للطالب"
                 return (
                   <div key={a.id} className={`rounded-xl border p-3 ${overridden ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20" : "border-gray-200 dark:border-gray-800"}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="font-bold text-gray-900 dark:text-white">
+                        <div className="font-bold text-gray-900 dark:text-white">
                           {a.studentName}
                           {!a.studentId && (
                             <Badge className="mr-2 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">زائر — بلا حساب</Badge>
@@ -2733,16 +3022,21 @@ export default function ExamsPage() {
                             <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
                           )}
                           <Badge className={`mr-2 ${
-                            a.resultReleasedAt
+                            a.resultReleasedAt || !needsRelease
                               ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
                               : pending > 0
                               ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
                               : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
                           }`}>{statusLabel}</Badge>
-                        </p>
+                        </div>
                         {summary && (
                           <p className="text-[11px] text-gray-500 mt-1">
                             تلقائي: {summary.autoScore} / {summary.autoTotal} • يدوي: {summary.manualScore} / {summary.manualTotal}
+                            {summary.details.some(detail => detail.auto && !detail.correct) && (
+                              <span className="font-bold text-red-600 dark:text-red-400">
+                                {" "}• {summary.details.filter(detail => detail.auto && !detail.correct).length} إجابة خاطئة
+                              </span>
+                            )}
                           </p>
                         )}
                         <p className="text-xs text-gray-400">
@@ -2834,13 +3128,24 @@ export default function ExamsPage() {
               ])),
             })
             const detailById = new Map(summary.details.map(detail => [detail.subQuestionId, detail]))
+            /** عدد الإجابات التي صحّحها الموقع تلقائياً وثبت خطؤها — يظهر بالأحمر أعلى المراجعة */
+            const wrongCount = summary.details.filter(detail => detail.auto && !detail.correct).length
             return (
               <div className="space-y-4 py-2">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 p-3 text-center text-xs">
+                {reviewAttempt.manualOverride && (
+                  <p className="rounded-xl border border-purple-300 dark:border-purple-800 bg-purple-50 dark:bg-purple-950/30 px-3 py-2 text-xs font-bold text-purple-800 dark:text-purple-200">
+                    على هذه المحاولة تعديل درجة يدوي ({reviewAttempt.manualOverride.score} / {reviewAttempt.totalMarks}) وهو المعروض للطالب حالياً — حفظ المراجعة سيلغيه ويعتمد درجات الإجابات أدناه.
+                  </p>
+                )}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 rounded-xl bg-slate-50 dark:bg-slate-900 p-3 text-center text-xs">
                   <div><p className="text-gray-500">التلقائي</p><p className="font-extrabold">{summary.autoScore} / {summary.autoTotal}</p></div>
                   <div><p className="text-gray-500">المقالي</p><p className="font-extrabold">{summary.manualScore} / {summary.manualTotal}</p></div>
                   <div><p className="text-gray-500">النهائي الحالي</p><p className="font-extrabold text-indigo-700">{summary.score} / {summary.totalMarks}</p></div>
                   <div><p className="text-gray-500">بانتظار التصحيح</p><p className={`font-extrabold ${summary.pendingManualCount ? "text-amber-600" : "text-emerald-600"}`}>{summary.pendingManualCount}</p></div>
+                  <div>
+                    <p className="text-gray-500">إجابات خاطئة</p>
+                    <p className={`font-extrabold ${wrongCount ? "text-red-600 dark:text-red-400" : "text-emerald-600"}`}>{wrongCount}</p>
+                  </div>
                 </div>
 
                 {resultsExam.questions.flatMap((question, qIndex) => question.subQuestions.map((sq, sqIndex) => {
@@ -2855,19 +3160,70 @@ export default function ExamsPage() {
                     : answer.text?.trim() || "لم يُجب"
                   const automatic = detail.auto
                   const currentAward = typeof review.awardedMarks === "number" ? review.awardedMarks : detail.awarded
+                  /**
+                   * السؤال الموضوعي يأخذ لونه من نتيجة التصحيح الإلكتروني (الأحمر = لم يطابق المفتاح)
+                   * حتى يبقى تمييز الخطأ سريعاً ولو منح المعلم درجة استثنائية، والسؤال المقالي
+                   * يتلوّن بقرار المعلم: بلا قرار = بانتظار التصحيح، صفر = أحمر، كامل = أخضر.
+                   */
+                  const tone: ReviewAnswerTone = automatic
+                    ? detail.correct ? "correct" : "wrong"
+                    : typeof review.awardedMarks !== "number"
+                    ? "pending"
+                    : currentAward <= 0
+                    ? "wrong"
+                    : currentAward >= detail.marks
+                    ? "correct"
+                    : "partial"
+                  const toneStyle = REVIEW_TONE_STYLES[tone]
+                  const ToneIcon = REVIEW_TONE_ICONS[tone]
+                  const toneLabel = automatic
+                    ? detail.correct ? "إجابة صحيحة" : "إجابة خاطئة"
+                    : tone === "pending"
+                    ? "يحتاج تصحيحاً يدوياً"
+                    : tone === "wrong"
+                    ? "قرارك: خاطئة"
+                    : tone === "correct"
+                    ? "قرارك: صحيحة"
+                    : "قرارك: نصف حل"
+                  /** الدرجة الاستثنائية التي منحها المعلم على إجابة موضوعية */
+                  const awardOverridden = automatic &&
+                    typeof review.awardedMarks === "number" &&
+                    review.awardedMarks !== detail.awarded
                   return (
-                    <article key={sq.id} className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 sm:p-4 space-y-3">
+                    <article
+                      key={sq.id}
+                      className={`rounded-2xl border p-3 sm:p-4 space-y-3 ${toneStyle.card}`}
+                    >
                       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-xs font-bold text-indigo-600">السؤال {qIndex + 1} — الفرعي {sqIndex + 1}</p>
                           <p className="font-bold text-gray-900 dark:text-white mt-1">{sq.questionText}</p>
-                          <p className="mt-2 rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 whitespace-pre-wrap">
+                          <p className={`mt-2 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${toneStyle.answerBox}`}>
                             <span className="font-bold">إجابة الطالب: </span>{answerText}
                           </p>
+                          {automatic && (
+                            <p
+                              className={`mt-2 rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${
+                                tone === "wrong"
+                                  ? "border border-emerald-200 dark:border-emerald-900 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-900 dark:text-emerald-100"
+                                  : "bg-slate-50 dark:bg-slate-800 text-gray-700 dark:text-gray-200"
+                              }`}
+                            >
+                              <span className="font-bold">الإجابة الصحيحة: </span>{correctAnswerLabel(question, sq)}
+                            </p>
+                          )}
                         </div>
-                        <Badge className={automatic ? "w-fit bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300" : "w-fit bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"}>
-                          {automatic ? "مصَحّح تلقائياً" : "يحتاج تصحيحاً يدوياً"} — {detail.marks} د
-                        </Badge>
+                        <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
+                          <Badge className={`w-fit gap-1 ${toneStyle.badge}`}>
+                            <ToneIcon className="w-3.5 h-3.5" />
+                            {toneLabel} — {detail.marks} د
+                          </Badge>
+                          {awardOverridden && (
+                            <span className="text-[11px] font-bold text-purple-600 dark:text-purple-300">
+                              الدرجة الممنوحة يدوياً: {currentAward} / {detail.marks}
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3 space-y-3">

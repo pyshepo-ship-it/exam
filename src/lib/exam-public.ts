@@ -1,4 +1,4 @@
-import type { Exam, ExamAttemptAnswer } from "./data-storage"
+import type { Exam, ExamAttemptAnswer, SubQuestion } from "./data-storage"
 import { gradeExam, type GradeResult } from "./exam-grade"
 
 type AnswerSpec = {
@@ -22,6 +22,62 @@ export function stripExamAnswers(exam: Exam): Exam {
       })),
     })),
   }
+}
+
+/**
+ * يضيف مفاتيح التصحيح التي أصدرها الخادم (أو المفكوكة من الختم) إلى نسخة العرض.
+ * نسخة واحدة مشتركة بين صفحة الطالب وحوار المراجعة حتى لا يختلف السلوك بينهما.
+ */
+export function withServerFeedback(
+  exam: Exam,
+  feedback: Record<string, AnswerSpec>
+): Exam {
+  return {
+    ...exam,
+    questions: (exam.questions || []).map(question => ({
+      ...question,
+      subQuestions: (question.subQuestions || []).map(subQuestion => {
+        const spec = feedback[subQuestion.id]
+        if (!spec) return subQuestion
+        if (question.questionType === 1) {
+          return {
+            ...subQuestion,
+            choices: subQuestion.choices?.map(choice => ({ ...choice, isCorrect: choice.id === spec.choiceId })),
+          }
+        }
+        if (question.questionType === 3) return { ...subQuestion, isTrue: spec.isTrue }
+        if (question.questionType === 5) {
+          const corrections = subQuestion.corrections && subQuestion.corrections.length > 0
+            ? subQuestion.corrections.map((correction, index) => (
+              index === 0 ? { ...correction, correctAnswer: spec.text || "" } : correction
+            ))
+            : [{ id: `feedback-${subQuestion.id}`, wrongWord: "", correctAnswer: spec.text || "", wordPosition: 1 }]
+          return { ...subQuestion, corrections }
+        }
+        return { ...subQuestion, correctAnswer: spec.text }
+      }),
+    })),
+  }
+}
+
+/**
+ * نص الإجابة الصحيحة لعرضه في المراجعة — نسخة واحدة لكل الشاشات.
+ * تُقرأ من مفتاح السؤال نفسه، فالمفاتيح الصادرة من الخادم تُدمج أولاً عبر withServerFeedback.
+ */
+export function correctAnswerLabel(
+  question: { questionType: number },
+  sq: SubQuestion
+): string {
+  if (question.questionType === 1) {
+    return sq.choices?.filter(choice => choice.isCorrect).map(choice => choice.choiceText).join("، ") || "—"
+  }
+  if (question.questionType === 3) {
+    return sq.isTrue === true ? "صواب" : sq.isTrue === false ? "خطأ" : "—"
+  }
+  if (question.questionType === 5) {
+    return sq.corrections?.map(correction => correction.correctAnswer).filter(Boolean).join("، ") || "—"
+  }
+  return sq.correctAnswer?.trim() || "—"
 }
 
 function collectAnswerSpec(exam: Exam): Record<string, AnswerSpec> {
