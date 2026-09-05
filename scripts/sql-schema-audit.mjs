@@ -540,7 +540,9 @@ const phoneReq =
   /v_phone := public\.survey_phone_key\(p_guest_phone\);[\s\S]{0,600}?IF v_phone IS NULL THEN/.test(sql022) &&
   // الأرقام العربية-الهندية تُوحَّد قبل المقارنة، وإلافلت الطالب من البصمة بتغيير صيغة الكتابة
   /translate\(coalesce\(p_phone, ''\), '٠١٢٣٤٥٦٧٨٩/.test(sql022)
-check("022: رقم الهاتف مطلوب للزائر (بمفتاح موحّد) قبل أي تفريع للـ anonymous", phoneReq)
+// ملاحظة: قاعدة «الرقم إلزامي» في 022 ألغاها 023 (بلا رقم إجباري). ما يهم هنا
+// أن مسار 022 نفسه يوحّد الأرقام قبل أي مقارنة — والقاعدة السارية تُفحص في 2-هـ.
+check("022: توحيد صيغة الرقم قبل أي مقارنة (إرث ما زال مستعملًا في وضع phone)", phoneReq)
 check("022: رقم الطالب يُطابق بآخر ١١ رقمًا (المقارنة الحرفية كانت تفشل مع 2010…)",
   (sql022.match(/public\.survey_phone_key\(st\.phone\) = v_(?:key|phone)/g) || []).length >= 2)
 check("022: الرد المخزَّن يحمل مفتاح الهاتف الموحد لا الصيغة الأصلية", /phone = COALESCE\(public\.survey_phone_key\(r\.phone\), r\.phone\)/.test(sql022))
@@ -557,6 +559,305 @@ check("022: بصمة الرد لا تُرسل مع ردود الطالب", /to_j
 check("022: دالة البصمة داخلية بلا صلاحيات عامة", /REVOKE ALL ON FUNCTION public\.survey_response_hash\(TEXT, TEXT\) FROM PUBLIC/.test(sql022))
 check("022: حماية إغراق للزوار (حد ردود في الساعة)", /identity_hash = v_hash[\s\S]{0,200}1 hour/.test(sql022))
 
+section("2-د) دوال ممنوحة لـ anon: لا قراءة جدول محمي بلا SECURITY DEFINER")
+
+// العطل الذي أوقف كل ردود الاستبيان (022): أُعيد إنشاء submit_survey_response
+// بـ CREATE OR REPLACE بدون SECURITY DEFINER، وCREATE OR REPLACE لا يرث خاصية
+// الدالة السابقة. الدالة صارت تعمل بدور المنادي (anon) وRLS يمنع anon من قراءة
+// public.surveys ⇒ «الاستبيان غير موجود» لكل مُجيب، بلا أي خطأ في السجلات.
+//
+// القاعدة المفروضة هنا: كل دالة تُمنح لـ anon وتلمس جدولاً في المخطط يجب أن
+// تكون SECURITY DEFINER في **آخر** تعريف لها عبر كل الترحيلات.
+
+/** آخر تعريف لكل دالة عبر الترحيلات بالترتيب: name -> { file, header, body } */
+const lastFunctionDef = new Map()
+for (const { file, sql } of allSqlSources) {
+  const fnRe = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\(([\s\S]*?)\)\s*\n\s*RETURNS[\s\S]*?\n\s*AS\s*(\$[a-z_]*\$)([\s\S]*?)\3/gi
+  let m
+  while ((m = fnRe.exec(sql))) {
+    const name = m[1].toLowerCase()
+    const header = m[0].slice(0, m[0].indexOf("AS " + m[3]))
+    lastFunctionDef.set(name, { file, header, body: m[4] })
+  }
+}
+
+/** أسماء الدوال الممنوحة لـ anon (من كل ملفات SQL) */
+const anonGranted = new Set()
+for (const { sql } of allSqlSources) {
+  for (const g of sql.matchAll(
+    /GRANT\s+EXECUTE\s+ON\s+FUNCTION\s+(?:public\.)?([a-z_][a-z0-9_]*)\s*\([^)]*\)\s+TO\s+([^;]+);/gi
+  )) {
+    if (/\banon\b/i.test(g[2])) anonGranted.add(g[1].toLowerCase())
+  }
+}
+
+const definerProblems = []
+for (const name of anonGranted) {
+  const def = lastFunctionDef.get(name)
+  if (!def) continue // دالة معرّفة خارج ملفات المشروع
+  // هل تلمس جدولاً حقيقياً؟ (الدوال الحسابية البحتة لا تحتاج SECURITY DEFINER)
+  const touched = [...def.body.matchAll(/\b(?:FROM|JOIN|UPDATE|INSERT\s+INTO|DELETE\s+FROM)\s+public\.([a-z_][a-z0-9_]*)/gi)]
+    .map((x) => x[1].toLowerCase())
+    .filter((t) => schema.has(t))
+  if (touched.length === 0) continue
+  if (!/SECURITY\s+DEFINER/i.test(def.header)) {
+    definerProblems.push(
+      `${def.file}: ${name} تقرأ ${[...new Set(touched)].slice(0, 3).join("/")} وهي ممنوحة لـ anon بلا SECURITY DEFINER`
+    )
+  }
+}
+check(
+  "كل دالة ممنوحة لـ anon وتلمس جدولاً محمياً معرّفة SECURITY DEFINER (آخر تعريف)",
+  definerProblems.length === 0,
+  definerProblems.join(" | ")
+)
+
+// نفس الفكرة من زاوية أخرى: أي دالة استبيان يجب ألا تفقد SECURITY DEFINER في
+// أي ترحيل لاحق (حتى لو لم تُمنح لـ anon في نفس الملف).
+const surveyRpcs = ["submit_survey_response", "get_public_surveys", "get_student_surveys", "surveys_for_student"]
+const lostDefiner = surveyRpcs.filter((fn) => {
+  const def = lastFunctionDef.get(fn)
+  return def && !/SECURITY\s+DEFINER/i.test(def.header)
+})
+check(
+  "دوال الاستبيان الأربع محتفظة بـ SECURITY DEFINER في آخر تعريف",
+  lostDefiner.length === 0,
+  lostDefiner.join(", ")
+)
+
+section("2-هـ) ترحيل 023: إصلاح «الاستبيان غير موجود» + هوية بلا رقم هاتف")
+
+const sql023 = byName("023_survey_identity_fix.sql")
+check(
+  "023: submit_survey_response أُعيد تعريفها SECURITY DEFINER (أصل العطل)",
+  /CREATE OR REPLACE FUNCTION public\.submit_survey_response\([\s\S]*?RETURNS jsonb\s*\nLANGUAGE plpgsql SECURITY DEFINER/.test(sql023)
+)
+check(
+  "023: التوقيعان القديمان يُحذفان قبل إنشاء الجديدين (لا التباس في PostgREST)",
+  /DROP FUNCTION IF EXISTS public\.submit_survey_response\(TEXT, TEXT, JSONB, TEXT, TEXT, TEXT, TEXT\);/.test(sql023) &&
+    /DROP FUNCTION IF EXISTS public\.get_public_surveys\(TEXT\);/.test(sql023)
+)
+check(
+  "023: فحص تثبيت يرفض الترحيل إن بقيت دالة استبيان بلا SECURITY DEFINER",
+  /prosecdef IS FALSE/.test(sql023) && /RAISE EXCEPTION/.test(sql023.slice(sql023.indexOf("prosecdef IS FALSE")))
+)
+check(
+  "023: طرق تعريف الزائر الأربع محصورة بقيد CHECK",
+  /CHECK \(guest_identity IN \('device', 'strict', 'phone', 'open'\)\)/.test(sql023) &&
+    /CHECK \(name_mode IN \('off', 'optional', 'required'\)\)/.test(sql023)
+)
+check(
+  "023: الرقم مطلوب فقط في طريقة phone (لا رقم إجباري بعد الآن)",
+  /IF v_mode = 'phone' AND v_phone IS NULL THEN/.test(sql023) &&
+    !/IF v_phone IS NULL THEN\s*\n\s*RETURN jsonb_build_object\('ok', false, 'error',\s*\n?\s*'اكتب رقم هاتف صحيح \(11 رقمًا\) — يُستخدم/.test(sql023)
+)
+check(
+  "023: ترتيب الهوية = حساب الطالب ← الرقم إن وُجد ← بطاقة الجهاز ← الشبكة",
+  /WHEN v_phone IS NOT NULL THEN 'ph:'\s*\|\| v_phone[\s\S]{0,200}WHEN v_dev\s+IS NOT NULL THEN 'dev:' \|\| v_dev[\s\S]{0,200}WHEN v_fp\s+IS NOT NULL THEN 'net:' \|\| v_fp/.test(sql023)
+)
+check(
+  "023: بطاقة الجهاز تُنظَّف قبل الاستعمال (طول وحروف مسموحة)",
+  /survey_device_key/.test(sql023) && /length\(d\) BETWEEN 16 AND 128/.test(sql023)
+)
+check(
+  "023: عنوان الشبكة لا يُخزَّن خامًا أبدًا (يُهشَّر بملح الاستبيان)",
+  /v_net := public\.survey_response_hash\(v_survey\.response_salt, 'net:' \|\| v_fp\)/.test(sql023) &&
+    !/net_ip|raw_ip|ip_address/i.test(sql023)
+)
+check(
+  "023: أولوية cf-connecting-ip ثم x-real-ip ثم آخر عنصر في x-forwarded-for",
+  /cf-connecting-ip[\s\S]{0,400}x-real-ip[\s\S]{0,400}x-forwarded-for/.test(sql023) &&
+    /v_parts\[array_length\(v_parts, 1\)\]/.test(sql023)
+)
+check(
+  "023: الوضع المشدَّد يمنع نافذة التخفي (مطابقة بصمة الشبكة)",
+  /v_mode = 'strict' AND v_sid IS NULL AND v_net IS NOT NULL AND r\.net_hash = v_net/.test(sql023)
+)
+check(
+  "023: الوضع الافتراضي يعلّم التكرار المُرجَّح ولا يمنعه",
+  /duplicate_suspect/.test(sql023) && /v_mode IN \('device', 'phone'\)/.test(sql023)
+)
+check(
+  "023: مُشغِّل يحمي أعمدة الخادم من upsert لوحة المعلم (البصمات لا تُمحى)",
+  /CREATE TRIGGER trg_survey_response_protect[\s\S]{0,120}BEFORE UPDATE ON public\.survey_responses/.test(sql023) &&
+    /NEW\.identity_hash\s*:= COALESCE\(NEW\.identity_hash, OLD\.identity_hash\)/.test(sql023)
+)
+check(
+  "023: الاستبيان المجهول ما زال لا يحفظ أي هوية",
+  /IF v_survey\.anonymous IS TRUE THEN[\s\S]{0,300}v_sid\s*:= NULL;[\s\S]{0,200}v_phone := NULL;/.test(sql023)
+)
+
+section("2-و) ترحيل 024: إغلاق الاختبار بعد فتح المراجعة + حد المحاولات")
+
+const sql024 = byName("024_exam_attempts_and_review_gate.sql")
+check(
+  "024: start_online_exam_session أُعيدت كاملة مع SECURITY DEFINER",
+  /CREATE OR REPLACE FUNCTION public\.start_online_exam_session\([\s\S]*?LANGUAGE plpgsql\s*\nSECURITY DEFINER/.test(sql024)
+)
+check(
+  "024: فتح المراجعة يمنع أي محاولة جديدة على الخادم",
+  /IF COALESCE\(v_meta->>'reviewOpen', 'false'\) = 'true' THEN[\s\S]{0,160}RAISE EXCEPTION 'انتهى هذا الاختبار — المراجعة متاحة الآن فقط'/.test(sql024)
+)
+check(
+  "024: حد المحاولات ما زال يُقرأ من غلاف الإعدادات مع قفل التزامن",
+  /v_limit := \(v_meta->>'maxAttempts'\)::integer/.test(sql024) &&
+    /pg_advisory_xact_lock/.test(sql024) &&
+    /RAISE EXCEPTION 'استُنفد الحد الأقصى للمحاولات لهذا الاختبار'/.test(sql024)
+)
+check(
+  "024: محاولات الطالب المسجَّل تشمل ما أداه كزائر بالاسم والمجموعة",
+  /student_id = p_student_id\s*\n\s*OR \(\s*\n\s*student_id IS NULL\s*\n\s*AND lower\(trim\(student_name\)\) = lower\(trim\(p_student_name\)\)/.test(sql024)
+)
+check(
+  "024: الصلاحيات تُعاد بعد إعادة التعريف (وإلا فقدها anon)",
+  /GRANT EXECUTE ON FUNCTION public\.start_online_exam_session\(TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) TO anon, authenticated;/.test(sql024)
+)
+
+section("2-ز) ترحيل 025: إغلاق القراءة العامة عن الجداول الخاصة")
+
+const sql025 = byName("025_lock_private_tables_and_harden_functions.sql")
+for (const t of ["students", "attendance", "dues", "payments"]) {
+  check(
+    `025: ${t} — تُسقط سياسة القراءة العامة ويُسحب SELECT من anon`,
+    new RegExp(`DROP POLICY IF EXISTS "public read" ON public\\.${t};`).test(sql025) &&
+      new RegExp(`REVOKE SELECT ON TABLE public\\.${t}\\s+FROM anon;`).test(sql025) &&
+      new RegExp(`REVOKE SELECT ON TABLE public\\.${t}\\s+FROM PUBLIC;`).test(sql025)
+  )
+}
+check(
+  "025: سياسة exams الميتة تُسقط نهائيًا (015 لم يطابق اسمها)",
+  /DROP POLICY IF EXISTS "public read" ON public\.exams;/.test(sql025)
+)
+check(
+  "025: كل دالة يثبَّت لها search_path وينتهي بـ pg_temp",
+  /ALTER FUNCTION public\.update_updated_at_column\(\)\s*\n\s*SET search_path = public, pg_temp;/.test(sql025) &&
+    /ALTER FUNCTION public\.student_login\(TEXT, TEXT, TEXT\)\s*\n\s*SET search_path = public, extensions, pg_temp;/.test(sql025)
+)
+check(
+  "025: دوال المُشغِّلات والدوال الداخلية بلا EXECUTE لـ anon",
+  /REVOKE ALL ON FUNCTION public\.survey_response_protect\(\)\s+FROM anon;/.test(sql025) &&
+    /REVOKE ALL ON FUNCTION public\.rls_auto_enable\(\)\s+FROM anon, authenticated;/.test(sql025)
+)
+check(
+  "025: فحص تثبيت يرفض الترحيل إن بقي منفذ قراءة عامة",
+  /has_table_privilege\('anon'/.test(sql025) &&
+    /RAISE EXCEPTION 'ما زالت هناك قراءة عامة على جداول خاصة/.test(sql025)
+)
+// لا يعود أي ترحيل لاحق ليفتح ما أُغلق
+for (const f of files.filter(f => Number(f.slice(0, 3)) >= 25)) {
+  const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf8")
+  check(
+    `${f}: لا يمنح anon قراءة على students/attendance/dues/payments/exams`,
+    !/GRANT[^;]*SELECT[^;]*\b(students|attendance|dues|payments|exams)\b[^;]*TO[^;]*anon/i.test(sql)
+  )
+}
+
+section("2-ح) ترحيل 026: بريد فريد لكل طالب")
+
+const sql026 = byName("026_unique_student_email.sql")
+check(
+  "026: فهرس فريد جزئي على بريد الطلاب (بلا حساسية لحالة الأحرف)",
+  /CREATE UNIQUE INDEX IF NOT EXISTS uq_students_email\s*\n\s*ON public\.students \(lower\(trim\(email\)\)\)/.test(sql026) &&
+    /WHERE NULLIF\(trim\(COALESCE\(email, ''\)\), ''\) IS NOT NULL;/.test(sql026)
+)
+check(
+  "026: فهرس فريد مماثل على حسابات الدخول",
+  /CREATE UNIQUE INDEX IF NOT EXISTS uq_student_accounts_email\s*\n\s*ON public\.student_accounts \(lower\(trim\(email\)\)\)/.test(sql026)
+)
+check(
+  "026: يكشف التكرار ويسمّيه قبل فرض القيد (لا يفشل برسالة غامضة)",
+  /RAISE EXCEPTION 'بريد مكرر بين طلاب/.test(sql026) &&
+    /RAISE EXCEPTION 'بريد مكرر بين حسابات الدخول/.test(sql026)
+)
+check(
+  "026: فحص تثبيت بعد الإنشاء",
+  /RAISE EXCEPTION 'لم يُنشأ فهرس البريد الفريد'/.test(sql026)
+)
+// الواجهة تمنع التكرار قبل أن يصل الخطأ الخام للمعلم
+const accountsSrc = readFileSync("src/lib/student-accounts.ts", "utf8")
+const studentsPage = readFileSync("src/app/dashboard/students/page.tsx", "utf8")
+check(
+  "الواجهة: emailOwnerName يفحص الطلاب والحسابات معًا",
+  /export function emailOwnerName\(email: string, exceptStudentId\?: string\): string \| null/.test(accountsSrc) &&
+    /getStudentAccounts\(\)\.find\(a => norm\(a\.email\) === mail && a\.studentId !== exceptStudentId\)/.test(accountsSrc)
+)
+check(
+  "الواجهة: إضافة طالب وتعديله يفحصان البريد قبل الحفظ",
+  /emailOwnerName\(mail, editingStudent\?\.id\)/.test(studentsPage) &&
+    /const owner = emailOwnerName\(mail, studentId\)/.test(accountsSrc)
+)
+
+section("2-ط) ترحيل 027: هوية الجهاز والحظر وتتبّع الزوار")
+
+const sql027 = byName("027_device_identity_and_bans.sql")
+check(
+  "027: جداول الأجهزة والحظر والأحداث بـ RLS ومحجوبة عن anon",
+  /CREATE TABLE IF NOT EXISTS public\.devices/.test(sql027) &&
+    /CREATE TABLE IF NOT EXISTS public\.device_bans/.test(sql027) &&
+    /ALTER TABLE public\.devices\s+ENABLE ROW LEVEL SECURITY/.test(sql027) &&
+    /REVOKE ALL ON TABLE public\.devices\s+FROM anon/.test(sql027) &&
+    /REVOKE ALL ON TABLE public\.device_bans\s+FROM anon/.test(sql027)
+)
+check(
+  "027: نبضة الجهاز SECURITY DEFINER وتربطه بالطالب بسرّ جلسته",
+  /CREATE OR REPLACE FUNCTION public\.touch_device\([\s\S]{0,400}SECURITY DEFINER/.test(sql027) &&
+    /FROM public\.student_sessions s\s*\n\s*WHERE s\.token_hash = encode\(digest\(p_token, 'sha256'\), 'hex'\)/.test(sql027)
+)
+check(
+  "027: الحظر يطابق البطاقة أو البصمة (مسح التخزين لا يرفعه)",
+  /CREATE OR REPLACE FUNCTION public\.device_is_banned/.test(sql027) &&
+    /b\.card = p_card[\s\S]{0,120}b\.fp_hash = p_fp/.test(sql027)
+)
+check(
+  "027: بدء الاختبار يرفض الجهاز المحظور",
+  /IF public\.device_is_banned\(v_card, v_fp\) THEN[\s\S]{0,160}RAISE EXCEPTION 'تم إيقاف هذا الجهاز عن المشاركة/.test(sql027)
+)
+check(
+  "027: حد المحاولات يُحسب على الجهاز أيضاً (تغيير الاسم لا يمنح رصيداً)",
+  /\(v_card IS NOT NULL AND os\.device_card = v_card\)/.test(sql027) &&
+    /\(v_fp IS NOT NULL AND os\.device_fp = v_fp\)/.test(sql027) &&
+    /v_used >= v_limit \+ v_extra/.test(sql027)
+)
+check(
+  "027: استثناء يدوي من المعلم يمنح محاولة إضافية لجهاز بعينه",
+  /CREATE TABLE IF NOT EXISTS public\.device_attempt_grants/.test(sql027) &&
+    /SELECT COALESCE\(sum\(extra\), 0\) INTO v_extra/.test(sql027)
+)
+check(
+  "027: الاستبيان يرفض الجهاز المحظور ويسجّل بطاقته مع الرد",
+  /'code', 'banned'/.test(sql027) &&
+    /public\.device_key_ok\(p_device_id\), public\.device_fp_ok\(p_device_fp\), now\(\)\)/.test(sql027)
+)
+check(
+  "027: محاولة الاختبار ترث جهاز جلستها ولا يمحوه رفع لوحة المعلم",
+  /CREATE TRIGGER trg_exam_attempt_device/.test(sql027) &&
+    /NEW\.device_card := COALESCE\(NEW\.device_card, OLD\.device_card\)/.test(sql027)
+)
+check(
+  "027: identify_device للمعلم وحده (تمنع الزائر صراحةً)",
+  /IF auth\.role\(\) IS DISTINCT FROM 'authenticated' THEN[\s\S]{0,120}RAISE EXCEPTION 'هذه البيانات للمعلم فقط'/.test(sql027) &&
+    /GRANT EXECUTE ON FUNCTION public\.identify_device\(TEXT, TEXT\) TO authenticated;/.test(sql027) &&
+    !/GRANT EXECUTE ON FUNCTION public\.identify_device\(TEXT, TEXT\) TO anon/.test(sql027)
+)
+// الواجهة: البصمة تُحسب ولا تُخزَّن، والهوية تُرسل مع كل طلب حسّاس
+const deviceSrc = readFileSync("src/lib/device-identity.ts", "utf8")
+const syncSrcDevices = readFileSync("src/lib/supabase/sync.ts", "utf8")
+check(
+  "الواجهة: بطاقة في ثلاثة مخازن + بصمة عتاد تُحسب بلا تخزين",
+  /localStorage/.test(deviceSrc) && /document\.cookie/.test(deviceSrc) && /indexedDB/.test(deviceSrc) &&
+    /canvasSignal|webglSignal|fontsSignal/.test(deviceSrc) &&
+    /SHA-256/.test(deviceSrc)
+)
+check(
+  "الواجهة: هوية الجهاز تُرسل مع بدء الاختبار ومع رد الاستبيان",
+  /p_device_card: isValidDeviceCard\(card\) \? card : null/.test(syncSrcDevices) &&
+    /p_device_fp: isValidFingerprint\(deviceFp\) \? deviceFp : null/.test(syncSrcDevices)
+)
+check(
+  "الواجهة: تراجع آمن لقاعدة لم تُرقَّ إلى 027 (لا يفشل بدء الاختبار)",
+  /delete args\.p_device_card;\s*\n\s*delete args\.p_device_fp;/.test(syncSrcDevices)
+)
+
 section("3) توافق مزامنة الواجهة مع المخطط")
 
 // أعمدة NOT NULL بلا قيمة افتراضية في الجداول الجديدة يجب أن يرسلها المزامن
@@ -565,8 +866,12 @@ const syncSrc = readFileSync("src/lib/supabase/sync.ts", "utf8")
 section("3-ب) مسار الحفظ المحلي يطابق قواعد الخادم")
 
 const localPath = syncSrc.slice(syncSrc.indexOf("export async function submitSurveyResponse"))
-check("البصمة المحلية تُبنى من رقم الزائر (guestPhone) لا حقل غير موجود",
-  /localIdentityKey\(\{\s*token:\s*input\.token,\s*phone:\s*input\.guestPhone\s*\}\)/.test(localPath))
+check("البصمة المحلية تُبنى من الجلسة أو الرقم أو بطاقة المتصفح (نفس ترتيب الخادم)",
+  /localIdentityKey\(\{\s*token:\s*input\.token,\s*phone:\s*input\.guestPhone,\s*deviceId\s*\}\)/.test(localPath))
+check("بطاقة المتصفح تُرسل مع كل رد وكل قراءة عامة (p_device_id)",
+  /p_device_id:\s*deviceId \|\| null/.test(syncSrc) && /p_device_id:\s*getSurveyDeviceId\(\) \|\| null/.test(syncSrc))
+check("تراجع آمن لقاعدة لم تُرقَّ إلى 023 (توقيع RPC قديم لا يُضيع إجابة)",
+  /isMissingRpcArgError/.test(syncSrc) && /PGRST202/.test(syncSrc))
 check("المسار المحلي يحذف الهوية في الاستبيان المجهول (كما يفعل الخادم)",
   /localIdentityPayload\(input, survey\?\.anonymous === true\)/.test(localPath) &&
   /function localIdentityPayload[\s\S]{0,420}studentName: ""/.test(syncSrc))

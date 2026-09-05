@@ -482,7 +482,16 @@ export default function StudentPortalPage() {
                         return (
                           <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 px-4 py-3">
                             <div className="min-w-0">
-                              <p className="font-bold text-sm text-gray-900 dark:text-white truncate">{e.title}</p>
+                              {/* العنوان والصف بخط واحد واضح — لا يبدأ الطالب اختبار صف آخر بالخطأ */}
+                              <p className="text-base sm:text-lg font-extrabold leading-snug text-gray-900 dark:text-white">
+                                {e.title}
+                                {report?.gradeName && (
+                                  <>
+                                    {" — "}
+                                    <span className="text-indigo-700 dark:text-indigo-300">{report.gradeName}</span>
+                                  </>
+                                )}
+                              </p>
                               <p className="text-xs text-gray-400">
                                 {e.availableFrom && <>يُفتح: {fmtDate(e.availableFrom)}</>}
                                 {e.availableFrom && e.availableUntil && " • "}
@@ -593,9 +602,9 @@ export default function StudentPortalPage() {
                             </div>
                             <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                               {!av.open ? (
-                                <span className="flex items-center gap-1.5 text-xs font-bold text-amber-600">
+                                <span className={`flex items-center gap-1.5 text-xs font-bold ${av.reviewPhase ? "text-indigo-600 dark:text-indigo-300" : "text-amber-600"}`}>
                                   <Lock className="w-4 h-4" />
-                                  مغلق الآن
+                                  {av.reviewPhase ? "انتهى الاختبار" : "مغلق الآن"}
                                 </span>
                               ) : !at.allowed ? (
                                 <span className="flex items-center gap-1.5 text-xs font-bold text-red-600">
@@ -606,7 +615,13 @@ export default function StudentPortalPage() {
                                 <Link href={`/exam/${e.id}`}>
                                   <Button size="sm" className="bg-gradient-to-r from-rose-500 to-red-600 text-white">
                                     <PlayCircle className="w-4 h-4" />
-                                    <span>{myAttempts.length > 0 ? `إعادة (${at.remaining} متبقية)` : "ابدأ الاختبار"}</span>
+                                    <span>
+                                      {myAttempts.length === 0
+                                        ? "ابدأ الاختبار"
+                                        : at.unlimited
+                                        ? "إعادة المحاولة"
+                                        : `إعادة (${at.remaining} متبقية)`}
+                                    </span>
                                   </Button>
                                 </Link>
                               )}

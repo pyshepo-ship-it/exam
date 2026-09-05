@@ -56,7 +56,7 @@ import { isSupabaseConfigured } from "@/lib/supabase/client"
 import { rememberOnlineExamResultSession } from "@/lib/online-exam-result-session"
 import {
   fetchPublicData,
-  fetchStudentById,
+  fetchStudentSelfRecord,
   submitPublicHonoree,
   startOnlineExamTimerSession,
   saveOnlineExamTimerProgress,
@@ -266,10 +266,11 @@ export default function TakeExamPage() {
 
       // جلسة الطالب: الهوية تلقائية — لا اختيار اسم إطلاقاً
       const portal = getPortalSession()
-      // بيانات الطالب من جهازه، أو من السحابة إن كان الجهاز خالياً (دخول من جهاز جديد)
+      // بيانات الطالب من جهازه، أو بسرّ جلسته من السحابة (دخول من جهاز جديد).
+      // لا نقرأ جدول students الخام: القراءة العامة مغلقة في المخطط المحصَّن.
       let me = portal ? nextStudents.find(s => s.id === portal.studentId) || undefined : undefined
       if (portal && !me) {
-        const remote = await fetchStudentById(portal.studentId).catch(() => null)
+        const remote = await fetchStudentSelfRecord(portal.token || "").catch(() => null)
         if (remote) {
           me = remote as Student
           nextStudents = [...nextStudents.filter(s => s.id !== me!.id), me]
@@ -986,6 +987,19 @@ export default function TakeExamPage() {
                   بدون تسجيل دخول — أدخل بياناتك مرة واحدة ثم أجب عن الأسئلة
                 </p>
               </div>
+            </div>
+
+            {/* عنوان الاختبار وصفه بخط كبير قبل البدء — تأكيد أنه الاختبار الصحيح */}
+            <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 px-4 py-3 text-center">
+              <p className="text-lg sm:text-xl font-extrabold leading-snug text-gray-900 dark:text-white">
+                {exam.title}
+              </p>
+              <p className="mt-1 text-base font-extrabold text-indigo-700 dark:text-indigo-300">
+                {grades.find(g => g.id === (exam.gradeId || guestGradeId))?.name || "بلا صف محدد"}
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                تأكد أن هذا اختبار صفك قبل البدء
+              </p>
             </div>
 
             {memberOtherGrade && (

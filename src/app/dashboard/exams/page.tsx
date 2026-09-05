@@ -91,6 +91,8 @@ import {
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
 import { examAvailability, effectiveAttemptScore } from "@/lib/portal-content"
+import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
+import { grantDeviceAttempt } from "@/lib/supabase/sync"
 import { marksForReviewVerdict, summarizeAttemptReview } from "@/lib/exam-grade"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { Switch } from "@/components/ui/switch"
@@ -121,6 +123,25 @@ function scheduledAvailabilityIssue(
   return null
 }
 
+/**
+ * ISO (UTC) → قيمة datetime-local بتوقيت المعلم.
+ * قصّ نص ISO مباشرةً كان يعرض توقيت UTC داخل حقل محلي، فتنزاح نافذة الاختبار
+ * بمقدار فارق التوقيت مع كل حفظ (‎+3 ساعات في مصر).
+ */
+function toLocalInputValue(iso?: string): string {
+  if (!iso) return ""
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+
+/** قيمة datetime-local (توقيت المعلم) → ISO للتخزين */
+function fromLocalInputValue(value: string): string | undefined {
+  if (!value) return undefined
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
 export default function ExamsPage() {
   const [grades, setGrades] = useState<Grade[]>([])
   const [exams, setExams] = useState<Exam[]>([])
@@ -146,6 +167,8 @@ export default function ExamsPage() {
     targetGroupIds: [] as string[],
     maxAttempts: "0",
     reviewOpen: false,
+    listedOnBoard: true,
+    showInPortal: true,
   })
   const [overrideTarget, setOverrideTarget] = useState<{ attemptId: string; name: string; current: number; total: number } | null>(null)
   const [overrideScore, setOverrideScore] = useState("")
@@ -231,9 +254,11 @@ export default function ExamsPage() {
       allowOnline: !!exam.allowOnline,
       accessMode: exam.accessMode === "public" ? "public" : "members",
       availabilityMode: exam.availabilityMode || "always",
-      availableFrom: (exam.availableFrom || "").slice(0, 16),
-      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      availableFrom: toLocalInputValue(exam.availableFrom),
+      availableUntil: toLocalInputValue(exam.availableUntil),
       reviewOpen: !!exam.reviewOpen,
+      listedOnBoard: exam.listedOnBoard !== false,
+      showInPortal: exam.showInPortal !== false,
       targetGroupIds: exam.targetGroupIds || [],
       maxAttempts: String(exam.maxAttempts && exam.maxAttempts > 0 ? exam.maxAttempts : 0),
     })
@@ -273,13 +298,15 @@ export default function ExamsPage() {
             allowOnline: panelForm.allowOnline,
             accessMode: panelForm.accessMode,
             availabilityMode: panelForm.availabilityMode,
-            availableFrom: panelForm.availabilityMode === "scheduled" && panelForm.availableFrom
-              ? new Date(panelForm.availableFrom).toISOString() : undefined,
-            availableUntil: panelForm.availabilityMode === "scheduled" && panelForm.availableUntil
-              ? new Date(panelForm.availableUntil).toISOString() : undefined,
+            availableFrom: panelForm.availabilityMode === "scheduled"
+              ? fromLocalInputValue(panelForm.availableFrom) : undefined,
+            availableUntil: panelForm.availabilityMode === "scheduled"
+              ? fromLocalInputValue(panelForm.availableUntil) : undefined,
             targetGroupIds: panelForm.targetGroupIds,
             maxAttempts: maxN > 0 ? maxN : undefined,
             reviewOpen: panelForm.reviewOpen,
+            listedOnBoard: panelForm.listedOnBoard,
+            showInPortal: panelForm.showInPortal,
             updatedAt: new Date().toISOString(),
           }
         : e
@@ -730,12 +757,18 @@ export default function ExamsPage() {
     answerVisibility: "never" as 'never' | 'afterEach' | 'atEnd',
   })
 
-  /** يحول حالة المحرر إلى سجل قابل للحفظ، مع إبقاء المسودة غير مكتملة مخفية عن الطلاب. */
+  /**
+   * يحول حالة المحرر إلى سجل قابل للحفظ، مع إبقاء المسودة غير مكتملة مخفية عن الطلاب.
+   * إعدادات لوحة التحكم (حد المحاولات وفتح المراجعة) لا يملكها المحرر، فتُنقل
+   * كما هي من السجل السابق. بدون ذلك كان أي حفظ/حفظ تلقائي من المحرر يمسح
+   * maxAttempts فيصير الاختبار بلا حد محاولات على الخادم وفي البوابة معاً.
+   */
   const buildExamFromForm = (
     form: typeof examForm,
     id: string,
     createdAt: string,
-    protectIncompleteDraft = false
+    protectIncompleteDraft = false,
+    previous?: Exam
   ): Exam => {
     const online = form.deliveryMode === "online"
     const readiness = getOnlineExamReadiness({
@@ -774,12 +807,17 @@ export default function ExamsPage() {
       autoHonorBoard: online ? form.autoHonorBoard : false,
       honorMinPercent: online ? form.honorMinPercent : undefined,
       availabilityMode: online ? form.availabilityMode : undefined,
-      availableFrom: online && form.availabilityMode === "scheduled" && form.availableFrom
-        ? new Date(form.availableFrom).toISOString() : undefined,
-      availableUntil: online && form.availabilityMode === "scheduled" && form.availableUntil
-        ? new Date(form.availableUntil).toISOString() : undefined,
+      availableFrom: online && form.availabilityMode === "scheduled"
+        ? fromLocalInputValue(form.availableFrom) : undefined,
+      availableUntil: online && form.availabilityMode === "scheduled"
+        ? fromLocalInputValue(form.availableUntil) : undefined,
       targetGroupIds: online ? form.targetGroupIds : undefined,
       answerVisibility: online ? form.answerVisibility : undefined,
+      // ===== إعدادات لوحة التحكم — يملكها panelForm وحده، ولا يجوز أن يمسحها المحرر =====
+      maxAttempts: previous?.maxAttempts && previous.maxAttempts > 0 ? previous.maxAttempts : undefined,
+      reviewOpen: !!previous?.reviewOpen,
+      listedOnBoard: previous ? previous.listedOnBoard !== false : true,
+      showInPortal: previous ? previous.showInPortal !== false : true,
       createdAt,
       updatedAt: new Date().toISOString(),
     }
@@ -793,7 +831,7 @@ export default function ExamsPage() {
     const current = examsRef.current
     const previous = current.find(exam => exam.id === id)
     const createdAt = previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
-    const draft = buildExamFromForm(form, id, createdAt, true)
+    const draft = buildExamFromForm(form, id, createdAt, true, previous)
     const next = previous
       ? current.map(exam => exam.id === id ? draft : exam)
       : [...current, draft]
@@ -871,8 +909,8 @@ export default function ExamsPage() {
       autoHonorBoard: !!exam.autoHonorBoard,
       honorMinPercent: exam.honorMinPercent ?? 100,
       availabilityMode: (exam.availabilityMode || "always") as "always" | "scheduled",
-      availableFrom: (exam.availableFrom || "").slice(0, 16),
-      availableUntil: (exam.availableUntil || "").slice(0, 16),
+      availableFrom: toLocalInputValue(exam.availableFrom),
+      availableUntil: toLocalInputValue(exam.availableUntil),
       targetGroupIds: exam.targetGroupIds || [],
       answerVisibility: (exam.answerVisibility || "never") as "never" | "afterEach" | "atEnd",
     } : emptyForm(mode, onlineMode)
@@ -947,7 +985,9 @@ export default function ExamsPage() {
     const examData = buildExamFromForm(
       examForm,
       id,
-      previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
+      previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString(),
+      false,
+      previous
     )
     const current = examsRef.current
     const updatedExams = current.some(exam => exam.id === id)
@@ -2718,6 +2758,8 @@ export default function ExamsPage() {
                         {overridden && a.manualOverride?.reason && (
                           <p className="text-xs text-purple-600 mt-1">سبب التعديل: {a.manualOverride.reason}</p>
                         )}
+                        {/* من هذا الجهاز؟ يظهر حين يخالف الاسم المكتوب صاحبَ الجهاز المعروف */}
+                        <DeviceOwnerBadge card={a.deviceCard} fpHash={a.deviceFp} writtenName={a.studentName} />
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
@@ -2742,6 +2784,27 @@ export default function ExamsPage() {
                         >
                           تعديل الدرجة
                         </Button>
+                        {a.deviceCard && resultsExam && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-emerald-300 text-emerald-700 dark:text-emerald-300"
+                            title="يمنح جهاز هذا الطالب محاولة إضافية في هذا الاختبار فقط"
+                            onClick={async () => {
+                              const res = await grantDeviceAttempt(resultsExam.id, a.deviceCard!, a.studentName)
+                              if (res.ok) toast.success("تم منح محاولة إضافية لهذا الجهاز")
+                              else toast.error(res.error || "تعذر منح المحاولة")
+                            }}
+                          >
+                            محاولة إضافية
+                          </Button>
+                        )}
+                        <BanDeviceButton
+                          card={a.deviceCard}
+                          fpHash={a.deviceFp}
+                          writtenName={a.studentName}
+                          label={`محاولة اختبار: ${resultsExam?.title || ""}`}
+                        />
                       </div>
                     </div>
                   </div>
@@ -2962,8 +3025,8 @@ export default function ExamsPage() {
                   </p>
                   <p className="text-xs text-gray-500">
                     {panelForm.reviewOpen
-                      ? "الطلاب يرون أسئلة الاختبار وإجاباتهم ومفاتيح الأسئلة الموضوعية؛ أما درجات المقال والتعليقات فلا تظهر إلا بعد إطلاق نتيجة كل طالب"
-                      : "فعّلها بعد امتحان جميع الطلاب — تظهر عين المراجعة بجانب الاختبار من دون كشف ملاحظات المقال غير المُطلقة"}
+                      ? "الاختبار انتهى: لا يستطيع أي طالب بدء محاولة جديدة، ويرى الطلاب أسئلة الاختبار وإجاباتهم ومفاتيح الأسئلة الموضوعية؛ أما درجات المقال والتعليقات فلا تظهر إلا بعد إطلاق نتيجة كل طالب"
+                      : "فعّلها بعد امتحان جميع الطلاب — تُغلق المحاولات الجديدة نهائياً وتظهر عين المراجعة بجانب الاختبار من دون كشف ملاحظات المقال غير المُطلقة"}
                   </p>
                 </div>
                 <Switch checked={panelForm.reviewOpen} onCheckedChange={v => setPanelForm(prev => ({ ...prev, reviewOpen: v }))} />
@@ -3017,8 +3080,48 @@ export default function ExamsPage() {
                         : "لا يفتح الاختبار إلا طالب مسجَّل الدخول من صفه — هويته تلقائية من حسابه"}
                     </p>
 
-                    {/* رابط النشر — للاختبار المفتوح للجميع */}
-                    {panelForm.accessMode === "public" && (
+                    {/* أين يظهر الاختبار — «بالرابط فقط» يخفيه عن الجميع إلا من يملك الرابط */}
+                    <div className="space-y-2 rounded-xl border border-gray-200 dark:border-gray-800 p-3">
+                      <p className="font-bold text-sm text-gray-900 dark:text-white">أين يظهر الاختبار؟</p>
+                      {panelForm.accessMode === "public" && (
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-bold text-gray-800 dark:text-gray-100">في لوحة الإعلانات (الصفحة الرئيسية)</p>
+                            <p className="text-xs text-gray-500">
+                              {panelForm.listedOnBoard
+                                ? "يراه كل زائر للصفحة الرئيسية"
+                                : "مخفي عن اللوحة — لا يفتحه إلا من أرسلتَ له الرابط"}
+                            </p>
+                          </div>
+                          <Switch
+                            checked={panelForm.listedOnBoard}
+                            onCheckedChange={v => setPanelForm(prev => ({ ...prev, listedOnBoard: v }))}
+                          />
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800 dark:text-gray-100">في بوابة الطالب المسجَّل («اختباراتي»)</p>
+                          <p className="text-xs text-gray-500">
+                            {panelForm.showInPortal
+                              ? "يظهر لطلاب صفه ومجموعاته المستهدفة"
+                              : "مخفي من البوابة — بالرابط فقط"}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={panelForm.showInPortal}
+                          onCheckedChange={v => setPanelForm(prev => ({ ...prev, showInPortal: v }))}
+                        />
+                      </div>
+                      {!panelForm.listedOnBoard && !panelForm.showInPortal && (
+                        <p className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs font-bold text-amber-700 dark:text-amber-300">
+                          بالرابط فقط: انسخ الرابط وأرسله في قناة الواتساب — لن يظهر الاختبار في أي قائمة.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* رابط النشر — للمفتوح للجميع، ولأي اختبار مخفي يُفتح بالرابط */}
+                    {(panelForm.accessMode === "public" || !panelForm.showInPortal) && (
                       <div className="rounded-xl border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-2">
                         <p className="text-xs font-bold text-emerald-800 dark:text-emerald-200 flex items-center gap-1.5">
                           <Link2 className="w-3.5 h-3.5" />
@@ -3171,9 +3274,20 @@ export default function ExamsPage() {
                 </p>
               </div>
 
-              {/* حالة الإتاحة الحالية */}
+              {/* حالة الإتاحة الحالية — تعكس ما سيُحفظ الآن، لا الحالة القديمة */}
               {(() => {
-                const av = examAvailability(panelExam)
+                const preview: Exam = {
+                  ...panelExam,
+                  deliveryMode: "online",
+                  allowOnline: panelForm.allowOnline,
+                  availabilityMode: panelForm.availabilityMode,
+                  availableFrom: panelForm.availabilityMode === "scheduled"
+                    ? fromLocalInputValue(panelForm.availableFrom) : undefined,
+                  availableUntil: panelForm.availabilityMode === "scheduled"
+                    ? fromLocalInputValue(panelForm.availableUntil) : undefined,
+                  reviewOpen: panelForm.reviewOpen,
+                }
+                const av = examAvailability(preview)
                 return (
                   <div className={`rounded-xl border p-3 text-sm font-bold ${
                     panelForm.allowOnline && av.open

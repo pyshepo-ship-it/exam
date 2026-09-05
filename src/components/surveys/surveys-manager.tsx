@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react"
 import toast from "react-hot-toast"
+import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 import {
   Plus,
   Pencil,
@@ -49,6 +50,8 @@ import {
   Grade,
   Student,
   Survey,
+  SurveyGuestIdentity,
+  SurveyNameMode,
   SurveyQuestion,
   SurveyQuestionType,
   getSurveys,
@@ -60,13 +63,17 @@ import {
   audienceLabel,
   audienceStudentsCount,
   deadlineLabel,
+  guestIdentityOf,
   isSurveyOpen,
+  nameModeOf,
   nextVersionAfterEdit,
   questionTypeLabel,
   surveyCsv,
   surveyStats,
   surveyVersion,
   answerToText,
+  GUEST_IDENTITY_LABELS,
+  GUEST_IDENTITY_MODES,
 } from "@/lib/surveys"
 
 /**
@@ -93,6 +100,10 @@ interface SurveyDraft {
   questions: QuestionDraft[]
   published: boolean
   allowGuests: boolean
+  /** كيف يُمنع الزائر من الرد مرتين (بلا رقم هاتف إجباري) */
+  guestIdentity: SurveyGuestIdentity
+  /** حقل الاسم في نموذج الزائر */
+  nameMode: SurveyNameMode
   anonymous: boolean
   /** قفل الإجابة بعد الإرسال: لا تصحيح ولا تعديل (يبقى ردّ واحد دائمًا) */
   lockAfterSubmit: boolean
@@ -117,6 +128,8 @@ const emptyDraft = (): SurveyDraft => ({
   questions: [],
   published: false,
   allowGuests: false,
+  guestIdentity: "device",
+  nameMode: "optional",
   anonymous: false,
   lockAfterSubmit: false,
   deadlineLocal: "",
@@ -183,18 +196,28 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
   const resultsVersion = resultsSurvey ? surveyVersion(resultsSurvey) : 1
   /** النتائج افتراضيًا على النسخة الحالية (حتى لا تختلط إجابات أسئلة قديمة جديدة) */
   const [resultsAllVersions, setResultsAllVersions] = useState(false)
+  /** استبعاد الردود التي رجّح الخادم أنها تكرار (نفس الشبكة والمتصفح) */
+  const [hideSuspect, setHideSuspect] = useState(true)
   const allSurveyResponses = useMemo(
     () => responses.filter(r => r.surveyId === resultsId),
     [responses, resultsId]
   )
-  const resultsResponses = useMemo(
+  const versionResponses = useMemo(
     () =>
       resultsAllVersions
         ? allSurveyResponses
         : allSurveyResponses.filter(r => (Number(r.version) || 1) === resultsVersion),
     [allSurveyResponses, resultsAllVersions, resultsVersion]
   )
-  const resultsOlderCount = allSurveyResponses.length - resultsResponses.length
+  const suspectCount = useMemo(
+    () => versionResponses.filter(r => r.duplicateSuspect === true).length,
+    [versionResponses]
+  )
+  const resultsResponses = useMemo(
+    () => (hideSuspect ? versionResponses.filter(r => r.duplicateSuspect !== true) : versionResponses),
+    [versionResponses, hideSuspect]
+  )
+  const resultsOlderCount = allSurveyResponses.length - versionResponses.length
   const resultsStats = useMemo(
     () => (resultsSurvey ? surveyStats(resultsSurvey, resultsResponses) : []),
     [resultsSurvey, resultsResponses]
@@ -227,6 +250,8 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
       })),
       published: survey.published,
       allowGuests: survey.allowGuests === true,
+      guestIdentity: guestIdentityOf(survey),
+      nameMode: nameModeOf(survey),
       anonymous: survey.anonymous === true,
       lockAfterSubmit: survey.lockAfterSubmit === true,
       deadlineLocal: isoToLocal(survey.deadline),
@@ -308,6 +333,8 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
       questions,
       published: draft.published,
       allowGuests: draft.allowGuests,
+      guestIdentity: draft.guestIdentity,
+      nameMode: draft.anonymous ? "off" : draft.nameMode,
       anonymous: draft.anonymous,
       lockAfterSubmit: draft.lockAfterSubmit,
       version: nextVersion,
@@ -495,7 +522,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                   {survey.allowGuests && (
                     <Badge variant="outline" className="text-[10px] gap-1 text-emerald-600 border-emerald-300">
                       <Globe2 className="h-3 w-3" />
-                      مفتوح للزوار
+                      مفتوح للزوار • {GUEST_IDENTITY_LABELS[guestIdentityOf(survey)].title}
                     </Badge>
                   )}
                   {survey.anonymous && (
@@ -839,9 +866,8 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
               <div className="rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-900 p-2 text-[10px] text-indigo-800 dark:text-indigo-200 flex items-start gap-2">
                 <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
                 <span>
-                  يُحفظ **ردّ واحد فقط لكل طالب أو رقم هاتف** في كل نسخة من هذا الاستبيان —
-                  التكرار يُحدِّث ردّه هو ولا يُضيف صفًّا جديدًا، والاستبيان المجهول يُمنع
-                  تكراره ببصمة رقم الحساب (بلا تخزين الاسم أو الرقم).
+                  الطالب المسجَّل يُحسب له ردّ واحد بحسابه. أما الزائر بلا تسجيل فتختار أنت
+                  طريقة منع تكراره أدناه — بلا مطالبته ببيانات لا تحتاجها.
                 </span>
               </div>
 
@@ -857,8 +883,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                 <div>
                   <p className="text-xs font-bold text-gray-700 dark:text-gray-200">مفتوح للزوار في الصفحة الرئيسية</p>
                   <p className="text-[10px] text-gray-500">
-                    يجيب الزائر برقم هاتفه (بلا تسجيل دخول) — الرقم مطلوب حتى في الاستبيان المجهول
-                    لأنه البصمة التي تمنع الرد المكرر
+                    يجيب أي زائر بلا تسجيل دخول — ويظهر الاستبيان في لوحة الإعلانات
                   </p>
                 </div>
                 <Switch
@@ -866,6 +891,53 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                   onCheckedChange={val => setDraft(prev => ({ ...prev, allowGuests: val }))}
                 />
               </div>
+
+              {draft.allowGuests && (
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-2 space-y-2 bg-gray-50/60 dark:bg-gray-900/40">
+                  <div>
+                    <Label className="text-[11px]">منع تكرار ردّ الزائر</Label>
+                    <Select
+                      value={draft.guestIdentity}
+                      onValueChange={val =>
+                        setDraft(prev => ({ ...prev, guestIdentity: val as SurveyGuestIdentity }))
+                      }
+                    >
+                      <SelectTrigger className="mt-1 h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {GUEST_IDENTITY_MODES.map(mode => (
+                          <SelectItem key={mode} value={mode} className="text-xs">
+                            {GUEST_IDENTITY_LABELS[mode].title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-[10px] text-gray-500 mt-1 leading-relaxed">
+                      {GUEST_IDENTITY_LABELS[draft.guestIdentity].hint}
+                    </p>
+                  </div>
+
+                  {!draft.anonymous && (
+                    <div>
+                      <Label className="text-[11px]">حقل الاسم للزائر</Label>
+                      <Select
+                        value={draft.nameMode}
+                        onValueChange={val => setDraft(prev => ({ ...prev, nameMode: val as SurveyNameMode }))}
+                      >
+                        <SelectTrigger className="mt-1 h-9 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="optional" className="text-xs">اختياري (مثل استبيانات Google)</SelectItem>
+                          <SelectItem value="required" className="text-xs">مطلوب</SelectItem>
+                          <SelectItem value="off" className="text-xs">لا تسأل عن الاسم</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -890,7 +962,9 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                 </div>
                 <Switch
                   checked={draft.anonymous}
-                  onCheckedChange={val => setDraft(prev => ({ ...prev, anonymous: val }))}
+                  onCheckedChange={val =>
+                    setDraft(prev => ({ ...prev, anonymous: val, nameMode: val ? "off" : "optional" }))
+                  }
                 />
               </div>
 
@@ -940,6 +1014,7 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                 <DialogDescription>
                   {resultsResponses.length} رد على النسخة {resultsVersion} • {audienceLabel(resultsSurvey, grades)} •{" "}
                   {resultsSurvey.anonymous ? "إجابات مجهولة" : "بأسماء الطلاب"}
+                  {suspectCount > 0 && !hideSuspect && ` • منها ${suspectCount} مُرجَّح أنها مكررة`}
                 </DialogDescription>
               </DialogHeader>
 
@@ -973,6 +1048,20 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                     <Lock className="h-3 w-3" />
                     الإجابة مقفولة بعد الإرسال
                   </Badge>
+                )}
+                {suspectCount > 0 && (
+                  <Button
+                    size="sm"
+                    variant={hideSuspect ? "default" : "ghost"}
+                    onClick={() => setHideSuspect(v => !v)}
+                    className="text-[10px] h-7 gap-1"
+                    title="ردود جاءت من نفس الشبكة والمتصفح اللذين أجابا من قبل — غالبًا نفس الشخص من نافذة تخفٍّ"
+                  >
+                    <ShieldCheck className="h-3 w-3" />
+                    {hideSuspect
+                      ? `مستبعَد ${suspectCount} ردّ مكرر مُرجَّح`
+                      : `إظهار ${suspectCount} ردّ مكرر مُرجَّح (مضمَّن الآن)`}
+                  </Button>
                 )}
               </div>
 
@@ -1031,17 +1120,29 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                     )
                   })}
 
-                  {!resultsSurvey.anonymous && (
+                  {(
                     <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                       <p className="text-xs font-bold text-gray-700 dark:text-gray-200 px-3 py-2 bg-gray-50 dark:bg-gray-900">
-                        من أجاب ({resultsResponses.length})
+                        {resultsSurvey.anonymous
+                          ? `الردود (${resultsResponses.length}) — بلا أسماء، ويمكنك حظر جهاز المسيء`
+                          : `من أجاب (${resultsResponses.length})`}
                       </p>
                       <div className="max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
                         {resultsResponses.map(r => (
-                          <div key={r.id} className="px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+                          <div key={r.id} className="px-3 py-2 space-y-1.5 text-[11px]">
+                            <div className="flex flex-wrap items-center gap-2">
                             <span className="font-bold text-gray-700 dark:text-gray-200">
-                              {r.studentName || "بلا اسم"}
+                              {resultsSurvey.anonymous ? "ردّ مجهول" : r.studentName || "بلا اسم"}
                             </span>
+                            {r.duplicateSuspect && (
+                              <Badge
+                                variant="outline"
+                                className="text-[9px] text-amber-600 border-amber-300"
+                                title="نفس الشبكة والمتصفح أرسلا ردًّا قبله على هذه النسخة"
+                              >
+                                تكرار مُرجَّح
+                              </Badge>
+                            )}
                             {r.gradeId && (
                               <Badge variant="outline" className="text-[9px]">
                                 {grades.find(g => g.id === r.gradeId)?.name || ""}
@@ -1060,6 +1161,15 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
                                 {q.title.slice(0, 18)}: {answerToText(q, r.answers?.[q.id])}
                               </span>
                             ))}
+                            <BanDeviceButton
+                              card={r.deviceCard}
+                              fpHash={r.deviceFp}
+                              writtenName={r.studentName}
+                              label={`رد استبيان: ${resultsSurvey.title}`}
+                            />
+                            </div>
+                            {/* من هذا الجهاز؟ — يظهر حين يخالف الاسم المكتوب صاحب الجهاز المعروف */}
+                            <DeviceOwnerBadge card={r.deviceCard} fpHash={r.deviceFp} writtenName={r.studentName} />
                           </div>
                         ))}
                       </div>

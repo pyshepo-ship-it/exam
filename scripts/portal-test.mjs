@@ -141,6 +141,8 @@ const rewrite = (src) =>
     .replace(/from "\.\.\/storage-keys"/g, 'from "../storage-keys.mjs"')
     .replace(/from "\.\.\/memory-store"/g, 'from "../memory-store.mjs"')
     .replace(/from "\.\.\/surveys"/g, 'from "../surveys.mjs"')
+    .replace(/from "\.\.\/survey-device"/g, 'from "../survey-device.mjs"')
+    .replace(/from "\.\.\/device-identity"/g, 'from "../device-identity.mjs"')
     .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
     .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
@@ -188,6 +190,11 @@ files["utils.mjs"] = rewrite(utils)
   let sv = stripImportsOf(readFileSync("src/lib/surveys.ts", "utf8"), "data-storage")
   sv = rewrite(sv)
   files["surveys.mjs"] = sv
+}
+{
+  // بطاقة المتصفح — تستدعيها sync.ts عند كل رد استبيان (بلا window تعيد "")
+  files["survey-device.mjs"] = rewrite(readFileSync("src/lib/survey-device.ts", "utf8"))
+  files["device-identity.mjs"] = rewrite(readFileSync("src/lib/device-identity.ts", "utf8"))
 }
 {
   let sr = readFileSync("src/lib/student-report.ts", "utf8")
@@ -692,6 +699,19 @@ eq("فترة مستقبلية → مغلق الآن", PC.examAvailability(mkExam
 eq("فترة منتهية → مغلق", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 7200e3).toISOString(), availableUntil: new Date(Date.now() - 3600e3).toISOString() })).open === false)
 eq("داخل الفترة → متاح", PC.examAvailability(mkExam({ availabilityMode: "scheduled", availableFrom: new Date(Date.now() - 3600e3).toISOString(), availableUntil: new Date(Date.now() + 3600e3).toISOString() })).open === true)
 
+// «تم الامتحان — فتح المراجعة للجميع» = انتهاء الاختبار: يبقى ظاهراً للمراجعة ولا يقبل محاولة جديدة
+const reviewPhaseExam = PC.examAvailability(mkExam({ reviewOpen: true }))
+eq("فتح المراجعة → مغلق أمام المحاولات الجديدة", reviewPhaseExam.open === false, JSON.stringify(reviewPhaseExam))
+eq("فتح المراجعة → السبب مرحلة مراجعة", reviewPhaseExam.reviewPhase === true && /انتهى هذا الاختبار/.test(reviewPhaseExam.reason || ""))
+eq("فتح المراجعة يغلق حتى داخل الفترة المجدولة", PC.examAvailability(mkExam({
+  reviewOpen: true,
+  availabilityMode: "scheduled",
+  availableFrom: new Date(Date.now() - 3600e3).toISOString(),
+  availableUntil: new Date(Date.now() + 3600e3).toISOString(),
+})).open === false)
+eq("فتح المراجعة يُخفي الاختبار من لوحة الإعلانات العامة", PC.publicBoardExams([mkExam({ accessMode: "public", gradeId: "", reviewOpen: true })]).length === 0)
+eq("قبل فتح المراجعة يظهر في لوحة الإعلانات العامة", PC.publicBoardExams([mkExam({ accessMode: "public", gradeId: "" })]).length === 1)
+
 eq("اختبار لصف آخر → لا يظهر للطالب", PC.isExamForStudent(mkExam({ gradeId: "g-2" }), "g-1", "gr-1") === false)
 eq("اختبار الصف بلا استهداف مجموعات → يظهر لكل المجموعات", PC.isExamForStudent(mkExam({}), "g-1", "gr-2") === true)
 eq("اختبار لمجموعة محددة → لا يظهر لمجموعة أخرى", PC.isExamForStudent(mkExam({ targetGroupIds: ["gr-2"] }), "g-1", "gr-1") === false)
@@ -858,6 +878,22 @@ eq("الزائر بعد محاولتين → ممنوع", at5.allowed === false 
 const at6 = PC.attemptsStatus(limitExam, attemptsAll, "طالب-آخر")
 eq("محاولات طالب آخر لا تُحسب عليّ", at6.allowed === true && at6.used === 0)
 
+// المتبقي لا يكون سالباً أبداً — كان يظهر للطالب «إعادة (-1 متبقية)»
+const at7 = PC.attemptsStatus({ ...limitExam, maxAttempts: undefined }, [
+  { examId: "ex-limit", studentId: "st-old" },
+  { examId: "ex-limit", studentId: "st-old" },
+  { examId: "ex-limit", studentId: "st-old" },
+], "st-old")
+eq("بلا حد → unlimited صريح ولا رقم متبقٍ يُعرض", at7.unlimited === true && at7.max === 0 && at7.used === 3, JSON.stringify(at7))
+const at8 = PC.attemptsStatus(limitExam, attemptsAll, "st-old", undefined, undefined, 5)
+eq("محاولات سحابية أكثر من الحد → ممنوع والمتبقي صفر", at8.allowed === false && at8.remaining === 0 && at8.unlimited === false, JSON.stringify(at8))
+eq("داخل الحد → المتبقي موجب", PC.attemptsStatus(limitExam, [], "st-old").remaining === 2)
+const attemptsNeverNegative = [0, 1, 2, 3, 7].every(used => {
+  const status = PC.attemptsStatus(limitExam, [], "st-old", undefined, undefined, used)
+  return status.remaining >= 0
+})
+eq("المتبقي المعروض ≥ 0 مهما بلغ عدد المحاولات", attemptsNeverNegative)
+
 // ============================================================
 section("سيناريو 17: دخول الطالب من جهازه بعد موافقة المدرس من جهاز آخر")
 
@@ -969,9 +1005,14 @@ const localDataKeys = () => localKeyList().filter((k) => DATA_KEYS.includes(k))
 
 eq("بعد كل عمليات الحفظ والدخول والخروج: لا أثر لأي بيان في التخزين المحلي",
   localDataKeys().length === 0, localDataKeys().join("، ") || "لا شيء")
-eq("المسموح على الجهاز: عدّاد حماية الإغراق فقط (رقم بلا أسماء)",
-  localKeyList().every((k) => k === "studentRateLimits"),
+// المسموح: عدّاد الحماية + بطاقتا الاستبيان والجهاز (نصوص عشوائية بلا بيانات)
+const ALLOWED_LOCAL = ["studentRateLimits", "survey_device_id", "device_card_id"]
+eq("المسموح على الجهاز: عدّاد الحماية وبطاقتان عشوائيتان فقط (بلا أي بيانات)",
+  localKeyList().every((k) => ALLOWED_LOCAL.includes(k)),
   localKeyList().join("، ") || "لا شيء")
+eq("بطاقة الجهاز المخزَّنة نص عشوائي فقط (لا اسم ولا رقم ولا بصمة)",
+  localKeyList().filter(k => k === "device_card_id").every(k => /^[a-z0-9-]{16,128}$/.test(globalThis.window.localStorage.getItem(k) || "")),
+  globalThis.window.localStorage.getItem("device_card_id") || "غير موجودة")
 
 // حفظ جديد (طلاب + اختبارات + إعدادات + سنة دراسية) — لا يُكتب على الجهاز
 const snap13 = snapshotMemory()
@@ -1177,9 +1218,26 @@ const g4 = await SYNC16.submitSurveyResponse({
 eq("رقم مختلف = ردّ جديد (لا يُلغى حق غيره في الإجابة)", g4.ok === true && g4.code === "ok")
 eq("اللوحة فيها ردّان من شخصين", respOf("sv-once").length === 2)
 
-const g5 = await SYNC16.submitSurveyResponse({ surveyId: "sv-once", answers: { q1: { text: "بلا هوية" } } })
-eq("بلا رقم هاتف → مرفوض (لا يمكن ضمان عدم التكرار)", g5.ok === false)
-eq("ولم يُضف أي صف", respOf("sv-once").length === 2)
+// ---- بلا رقم هاتف إطلاقًا: بطاقة المتصفح هي الهوية (ترحيل 023) ----
+// «متصفح جديد» = مسح بطاقة الجهاز (وضع تخفٍّ/جهاز آخر)
+const newBrowser = () => {
+  try { window.localStorage.removeItem("survey_device_id") } catch { /* لا شيء */ }
+  document.cookie = "sdid=; path=/; max-age=0"
+}
+
+newBrowser()
+const g5 = await SYNC16.submitSurveyResponse({ surveyId: "sv-once", answers: { q1: { text: "بلا رقم" } } })
+eq("الزائر يجيب بلا رقم هاتف ولا اسم (هويته بطاقة متصفحه)", g5.ok === true && g5.code === "ok", g5.error || "")
+eq("أُضيف ردّه", respOf("sv-once").length === 3)
+
+const g5b = await SYNC16.submitSurveyResponse({ surveyId: "sv-once", answers: { q1: { text: "محاولة ثانية بلا رقم" } } })
+eq("نفس المتصفح لا يُسجَّل مرتين (تحديث لا ردّ جديد)", g5b.ok === true && g5b.code === "updated", g5b.error || "")
+eq("العدد لم يزد", respOf("sv-once").length === 3, `عدد = ${respOf("sv-once").length}`)
+
+newBrowser()
+const g5c = await SYNC16.submitSurveyResponse({ surveyId: "sv-once", answers: { q1: { text: "زائر من جهاز آخر" } } })
+eq("متصفح آخر = شخص آخر يحق له الرد", g5c.ok === true && g5c.code === "ok")
+eq("صار عندنا أربعة ردود", respOf("sv-once").length === 4)
 
 // ---- النسخ: تعديل الأسئلة يفتح الإجابة، وتعديل غيره لا يفتحها ----
 const svOnce = DS.getSurveys().find(x => x.id === "sv-once")
@@ -1195,9 +1253,9 @@ const g6 = await SYNC16.submitSurveyResponse({
 })
 eq("من أجاب على نسخة قديمة يستطيع الإجابة على الجديدة", g6.ok === true && g6.code === "ok", g6.error || "")
 eq("ردوده القديمة على النسخة ١ محفوظة (لا تُمسح عند التعديل)",
-  respOf("sv-once").filter(r => (Number(r.version) || 1) === 1).length === 2)
+  respOf("sv-once").filter(r => (Number(r.version) || 1) === 1).length === 4)
 eq("ردّ واحد فقط على النسخة الحالية", respOf("sv-once").filter(r => (Number(r.version) || 1) === 2).length === 1)
-eq("عدد الردود الكلي = ٣ (ردّان قديمان + واحد جديد)", respOf("sv-once").length === 3)
+eq("عدد الردود الكلي = ٥ (أربعة على النسخة ١ + واحد على النسخة ٢)", respOf("sv-once").length === 5)
 
 const g7 = await SYNC16.submitSurveyResponse({
   surveyId: "sv-once", answers: { q1: { text: "محاولة تكرار على النسخة الجديدة" } },
@@ -1224,9 +1282,25 @@ eq("المجهول: لا رقم ولا اسم في الصف المحفوظ",
 const anonRow16 = respOf("sv-anon")[0] || {}
 eq("المجهول: البصمة وحدها موجودة (تُستخدم للمنع لا للكشف)",
   typeof anonRow16.identityKey === "string" && String(anonRow16.identityKey).startsWith("ph:"))
+newBrowser()
 const a3_16 = await SYNC16.submitSurveyResponse({ surveyId: "sv-anon", answers: { q1: { text: "دخول مجهول تمامًا" } } })
-eq("المجهول بلا رقم → مرفوض (لا بصمة ⇒ لا ضمان)", a3_16.ok === false)
-eq("ولم يُضف رد مجهول بلا حصر", respOf("sv-anon").length === 1)
+eq("المجهول بلا رقم ولا اسم: مقبول (البطاقة تكفي لمنع التكرار)", a3_16.ok === true, a3_16.error || "")
+eq("المجهول: ردّان من شخصين مختلفين", respOf("sv-anon").length === 2)
+const a3b_16 = await SYNC16.submitSurveyResponse({ surveyId: "sv-anon", answers: { q1: { text: "محاولة تكرار مجهولة" } } })
+eq("المجهول: نفس المتصفح لا يكرر", a3b_16.ok === true && a3b_16.code === "updated")
+eq("المجهول: العدد ثابت", respOf("sv-anon").length === 2)
+eq("المجهول: لا اسم ولا رقم في أي صف",
+  respOf("sv-anon").every(r => !r.phone && (r.studentName || "") === ""))
+
+// ---- التصويت الحر: المعلم يختاره صراحةً فلا منع تكرار ----
+DS.saveSurveys([...DS.getSurveys(), {
+  id: "sv-open", title: "تصويت حر", audience: "all", questions: [q1],
+  published: true, allowGuests: true, guestIdentity: "open", version: 1,
+  createdAt: iso16, updatedAt: iso16,
+}])
+const o1 = await SYNC16.submitSurveyResponse({ surveyId: "sv-open", answers: { q1: { text: "صوت ١" } } })
+const o2 = await SYNC16.submitSurveyResponse({ surveyId: "sv-open", answers: { q1: { text: "صوت ٢" } } })
+eq("التصويت الحر يقبل أكثر من ردّ من نفس المتصفح", o1.ok === true && o2.ok === true && respOf("sv-open").length === 2)
 
 // ---- قفل الإجابة بعد الإرسال ----
 DS.saveSurveys(DS.getSurveys().map(x => (x.id === "sv-anon" ? { ...x, lockAfterSubmit: true } : x)))
@@ -1236,7 +1310,7 @@ const a4_16 = await SYNC16.submitSurveyResponse({
 })
 eq("المقفول: لا تعديل بعد الإرسال", a4_16.ok === false && /لا يمكن تعديلها/.test(a4_16.error || ""), a4_16.error || "")
 eq("المقفول: الإجابة بقيت آخر ما أُرسل (لم تُستبدل بمحاولة مرفوضة)",
-  respOf("sv-anon")[0]?.answers?.q1?.text === "رأي ثانٍ من نفس الرقم")
+  respOf("sv-anon").some(r => r.answers?.q1?.text === "رأي ثانٍ من نفس الرقم"))
 
 // ---- أدوات النسخ في الواجهة ----
 eq("hasAnsweredCurrent يفرّق النسخ",

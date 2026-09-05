@@ -31,6 +31,7 @@ import {
   setStudentPortalActive,
   resetStudentPasswordByTeacher,
   updateStudentByTeacher,
+  emailOwnerName,
 } from "@/lib/student-accounts"
 import { forcePushAll } from "@/lib/supabase/sync"
 import { isInquiryChannelClosed, setStudentInquiryChannel } from "@/lib/inquiries"
@@ -171,6 +172,15 @@ export default function StudentsPage() {
     if (!form.groupId) {
       toast.error("يرجى اختيار المجموعة")
       return
+    }
+    // البريد مفتاح دخول الطالب — لا يتكرر بين طالبين (القاعدة تفرضه بفهرس فريد)
+    const mail = form.email.trim().toLowerCase()
+    if (mail) {
+      const owner = emailOwnerName(mail, editingStudent?.id)
+      if (owner) {
+        toast.error(`هذا البريد مستخدم بالفعل للطالب: ${owner}`)
+        return
+      }
     }
 
     let updatedStudents: Student[]

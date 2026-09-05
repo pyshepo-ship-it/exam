@@ -1,4 +1,12 @@
-import type { Grade, Survey, SurveyAnswer, SurveyQuestion, SurveyResponse } from "./data-storage"
+import type {
+  Grade,
+  Survey,
+  SurveyAnswer,
+  SurveyGuestIdentity,
+  SurveyNameMode,
+  SurveyQuestion,
+  SurveyResponse,
+} from "./data-storage"
 
 /**
  * أدوات الاستبيانات المشتركة بين:
@@ -196,6 +204,84 @@ export function canEditAnswer(
 }
 
 // ------------------------------------------------------------
+// هوية من يجيب بلا تسجيل — بلا رقم هاتف إجباري
+// ------------------------------------------------------------
+// القاعدة العملية: لا نطلب من الزائر بيانات لا نحتاجها فعلًا. الجهاز نفسه
+// يحمل بطاقة عشوائية (survey-device.ts) يهشّرها الخادم بملح الاستبيان، ومن
+// فتح نافذة تخفٍّ يُكشف من بصمة الشبكة والمتصفح في الخادم. الرقم صار خيارًا
+// للمعلم حين يريد ربط الردود بحسابات الطلاب لا شرطًا للإجابة.
+
+export const GUEST_IDENTITY_MODES: SurveyGuestIdentity[] = ["device", "strict", "phone", "open"]
+
+/** طريقة التحقق الفعلية للاستبيان (الافتراضي: بطاقة الجهاز) */
+export function guestIdentityOf(survey: Pick<Survey, "guestIdentity">): SurveyGuestIdentity {
+  const v = survey.guestIdentity
+  return GUEST_IDENTITY_MODES.includes(v as SurveyGuestIdentity) ? (v as SurveyGuestIdentity) : "device"
+}
+
+/** وضع حقل الاسم (المجهول لا يعرض اسمًا مهما كان الإعداد) */
+export function nameModeOf(survey: Pick<Survey, "nameMode" | "anonymous">): SurveyNameMode {
+  if (survey.anonymous === true) return "off"
+  const v = survey.nameMode
+  return v === "off" || v === "required" || v === "optional" ? v : "optional"
+}
+
+export const GUEST_IDENTITY_LABELS: Record<SurveyGuestIdentity, { title: string; hint: string }> = {
+  device: {
+    title: "بلا بيانات (موصى به)",
+    hint: "يجيب الزائر مباشرة. الموقع يميّز المتصفح تلقائيًا فلا يُقبل ردّ ثانٍ منه، والردود التي تأتي من نفس الشبكة والمتصفح تُعلَّم لك كتكرار مُرجَّح.",
+  },
+  strict: {
+    title: "مشدَّد — ردّ واحد لكل شبكة ومتصفح",
+    hint: "يمنع وضع التخفي والنوافذ الجديدة. انتبه: طالبان على نفس الواي-فاي وبنفس المتصفح قد يُحسبان شخصًا واحدًا.",
+  },
+  phone: {
+    title: "برقم الهاتف",
+    hint: "يُطلب الرقم ويُربط الرد بحساب الطالب إن كان مسجّلًا عندك. لا يمنع الأرقام الوهمية وحده.",
+  },
+  open: {
+    title: "تصويت حر",
+    hint: "بلا أي منع للتكرار — للتصويت السريع فقط.",
+  },
+}
+
+export interface GuestFields {
+  /** يظهر حقل الاسم؟ */
+  showName: boolean
+  /** الاسم مطلوب؟ */
+  requireName: boolean
+  /** يظهر حقل رقم الهاتف؟ */
+  showPhone: boolean
+  /** الرقم مطلوب؟ */
+  requirePhone: boolean
+}
+
+/** الحقول التي يراها الزائر فعلًا (مصدر واحد للواجهة وللتحقق) */
+export function guestFields(survey: Pick<Survey, "guestIdentity" | "nameMode" | "anonymous">): GuestFields {
+  const mode = guestIdentityOf(survey)
+  const names = nameModeOf(survey)
+  return {
+    showName: names !== "off",
+    requireName: names === "required",
+    showPhone: mode === "phone",
+    requirePhone: mode === "phone",
+  }
+}
+
+/** تحقق مدخلات الزائر قبل الإرسال — نفس قواعد الخادم (ترحيل 023) */
+export function validateGuestInput(
+  survey: Pick<Survey, "guestIdentity" | "nameMode" | "anonymous">,
+  input: { name?: string; phone?: string }
+): string | null {
+  const fields = guestFields(survey)
+  if (fields.requireName && (input.name || "").trim().length < 2) return "اكتب اسمك من فضلك"
+  if (fields.requirePhone && !normalizeSurveyPhone(input.phone || "")) {
+    return "اكتب رقم هاتف صحيح (11 رقمًا)"
+  }
+  return null
+}
+
+// ------------------------------------------------------------
 // خطة الحفظ المحلي (تطوير/معاينة بلا Supabase) — نفس قاعدة الخادم:
 // ردّ واحد لكل هوية في كل نسخة، بلا صف ثانٍ أبدًا.
 // ------------------------------------------------------------
@@ -212,6 +298,7 @@ export interface SurveyLike {
   id: string
   version?: number
   lockAfterSubmit?: boolean
+  guestIdentity?: SurveyGuestIdentity
 }
 
 export interface LocalSubmitPlan {
@@ -224,8 +311,8 @@ export interface LocalSubmitPlan {
 
 /**
  * يقرر: إدراج رد جديد، أم تحديث ردّ هذا الشخص على نفس النسخة، أم رفض.
- * `identityKey` مطلوب دائمًا — بلا هوية لا يمكن ضمان عدم التكرار (نرفض بدل
- * تلويث النتائج)، وهو نفس سلوك submit_survey_response في قاعدة البيانات.
+ * `identityKey` مطلوب إلا في وضع «التصويت الحر» — بلا هوية لا يمكن ضمان عدم
+ * التكرار (نرفض بدل تلويث النتائج)، وهو نفس سلوك submit_survey_response.
  */
 export function planLocalSurveySubmit(
   responses: Array<SurveyResponseLike & { version?: number } >,
@@ -233,10 +320,18 @@ export function planLocalSurveySubmit(
   identityKey: string
 ): LocalSubmitPlan {
   const key = (identityKey || "").trim()
-  if (!survey) return { action: "reject", version: 1, error: "الاستبيان غير موجود" }
+  if (!survey) return { action: "reject", version: 1, error: "لم يعد هذا الاستبيان متاحًا — حدِّث الصفحة" }
   const version = surveyVersion(survey)
+  // تصويت حر: كل ضغطة ردّ مستقل (اختيار صريح من المعلم)
+  if (guestIdentityOf(survey) === "open" && !key.startsWith("sid:")) {
+    return { action: "insert", version }
+  }
   if (!key) {
-    return { action: "reject", version, error: "أدخل رقم هاتفك حتى لا يتكرر ردّك" }
+    return {
+      action: "reject",
+      version,
+      error: "تعذّر فتح الاستبيان في هذا المتصفح — فعّل تخزين المواقع أو جرّب متصفحًا آخر",
+    }
   }
   // نفس الشخص + نفس النسخة = ردّه الحالي (يُحدَّث). ردود النسخ الأقدم تُترك
   // كما هي — وإلا محي تاريخ إجاباتهم السابقة عند كل تعديل للأسئلة.
@@ -277,11 +372,17 @@ export function normalizeSurveyPhone(value: string): string {
   return d.length >= 10 ? d.slice(-11) : ""
 }
 
-/** بصمة محلية لردّ (تُستخدم في التطوير فقط؛ في الإنتاج يحسبها الخادم) */
-export function localIdentityKey(input: { token?: string; phone?: string }): string {
+/**
+ * بصمة محلية لردّ (تُستخدم في التطوير فقط؛ في الإنتاج يحسبها الخادم بملح سرّي).
+ * الترتيب نفسه المستعمل في submit_survey_response: حساب الطالب، ثم رقم الهاتف
+ * إن طُلب، ثم بطاقة المتصفح — فلا يحتاج الزائر رقمًا ليُمنع من الرد مرتين.
+ */
+export function localIdentityKey(input: { token?: string; phone?: string; deviceId?: string }): string {
   if (input.token) return "sid:" + input.token.slice(-16)
-  const key = normalizeSurveyPhone(input.phone || "")
-  return key ? "ph:" + key : ""
+  const phone = normalizeSurveyPhone(input.phone || "")
+  if (phone) return "ph:" + phone
+  const device = String(input.deviceId || "").trim()
+  return device ? "dev:" + device : ""
 }
 
 export interface QuestionStat {
@@ -364,7 +465,7 @@ export function surveyCsv(survey: Survey, responses: SurveyResponse[], grades: G
     const s = v == null ? "" : String(v)
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
   }
-  const head = ["الاسم", "الهاتف", "الصف", "المجموعة", "التاريخ", "النسخة", ...survey.questions.map(q => q.title)]
+  const head = ["الاسم", "الهاتف", "الصف", "المجموعة", "التاريخ", "النسخة", "تكرار مُرجَّح", ...survey.questions.map(q => q.title)]
   const rows = responses.map(r => [
     r.studentName || (survey.anonymous ? "مجهول" : ""),
     r.phone || "",
@@ -373,6 +474,7 @@ export function surveyCsv(survey: Survey, responses: SurveyResponse[], grades: G
     r.createdAt ? new Date(r.createdAt).toLocaleString("ar-EG") : "",
     // نسخة الاستبيان التي أُجيب عنها — للتمييز عند عرض «كل النسخ»
     String(Number(r.version) || 1),
+    r.duplicateSuspect === true ? "نعم" : "",
     ...survey.questions.map(q => answerToText(q, r.answers?.[q.id])),
   ])
   return [head, ...rows].map(row => row.map(esc).join(",")).join("\n")
