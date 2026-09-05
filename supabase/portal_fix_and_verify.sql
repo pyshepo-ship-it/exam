@@ -156,8 +156,12 @@ DROP POLICY IF EXISTS "public read" ON inquiries;
 DROP POLICY IF EXISTS "public insert" ON inquiries;
 
 -- الزائر يرسل طلباته فقط (إدراج) — لا قراءة لبيانات أي طالب/حساب/درجات/مالية/سجل
+-- (DROP قبل CREATE لأن Postgres لا يدعم IF NOT EXISTS للسياسات — آمن لإعادة التشغيل)
+DROP POLICY IF EXISTS "anon insert registration_requests" ON registration_requests;
 CREATE POLICY "anon insert registration_requests" ON registration_requests FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon insert group_transfer_requests" ON group_transfer_requests;
 CREATE POLICY "anon insert group_transfer_requests" ON group_transfer_requests FOR INSERT TO anon WITH CHECK (true);
+DROP POLICY IF EXISTS "anon insert inquiries" ON inquiries;
 CREATE POLICY "anon insert inquiries" ON inquiries FOR INSERT TO anon WITH CHECK (true);
 
 -- لا قراءة خام لـ anon على كل بيانات البوابة الحسّاسة
