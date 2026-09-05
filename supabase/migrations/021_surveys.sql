@@ -141,11 +141,11 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'انتهت الجلسة — أعد تسجيل الدخول');
   END IF;
 
+  -- expires_at محفوظ كنص ISO بنمط المشروع (016/017) — تُقارن نصّياً
   SELECT student_id INTO v_sid
   FROM public.student_sessions
   WHERE token_hash = encode(digest(p_token, 'sha256'), 'hex')
-    AND expires_at > now()
-    AND revoked_at IS NULL;
+    AND expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 
   IF v_sid IS NULL THEN
     RETURN jsonb_build_object('ok', false, 'error', 'انتهت الجلسة — أعد تسجيل الدخول');
@@ -174,15 +174,10 @@ DECLARE
   v_norm  text := public.survey_norm_phone(p_phone);
   v_sid   text := NULL;
 BEGIN
+  -- الهوية تُستنتج من رقم الهاتف في جدول الطلاب (لا يوجد عمود phone في
+  -- student_accounts — الحساب مرتبط بالطالب عبر student_id)
   IF v_norm IS NOT NULL THEN
-    SELECT sa.student_id INTO v_sid
-    FROM public.student_accounts sa
-    WHERE sa.phone = v_norm AND sa.student_id IS NOT NULL
-    LIMIT 1;
-
-    IF v_sid IS NULL THEN
-      SELECT st.id INTO v_sid FROM public.students st WHERE st.phone = v_norm LIMIT 1;
-    END IF;
+    SELECT st.id INTO v_sid FROM public.students st WHERE st.phone = v_norm LIMIT 1;
   END IF;
 
   RETURN jsonb_build_object(
@@ -244,8 +239,7 @@ BEGIN
     SELECT ss.student_id INTO v_sid
     FROM public.student_sessions ss
     WHERE ss.token_hash = encode(digest(p_token, 'sha256'), 'hex')
-      AND ss.expires_at > now()
-      AND ss.revoked_at IS NULL;
+      AND ss.expires_at > to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
 
     IF v_sid IS NULL THEN
       RETURN jsonb_build_object('ok', false, 'error', 'انتهت الجلسة — أعد تسجيل الدخول');
@@ -256,7 +250,7 @@ BEGIN
     FROM public.students st
     WHERE st.id = v_sid;
 
-    IF (SELECT sa.status FROM public.student_accounts sa WHERE sa.student_id = v_sid LIMIT 1) = 'suspended' THEN
+    IF (SELECT st.status FROM public.students st WHERE st.id = v_sid) = 'inactive' THEN
       RETURN jsonb_build_object('ok', false, 'error', 'حسابك موقوف — تواصل مع إدارة المعهد');
     END IF;
   ELSE
@@ -280,13 +274,7 @@ BEGIN
       END IF;
 
       -- ربط تلقائي بحساب طالب إن وُجد بنفس الرقم
-      SELECT sa.student_id INTO v_sid
-      FROM public.student_accounts sa
-      WHERE sa.phone = v_phone AND sa.student_id IS NOT NULL
-      LIMIT 1;
-      IF v_sid IS NULL THEN
-        SELECT st.id INTO v_sid FROM public.students st WHERE st.phone = v_phone LIMIT 1;
-      END IF;
+      SELECT st.id INTO v_sid FROM public.students st WHERE st.phone = v_phone LIMIT 1;
 
       IF v_sid IS NOT NULL THEN
         SELECT st.name, st.grade_id, st.group_id
@@ -297,6 +285,12 @@ BEGIN
         v_group := nullif(btrim(coalesce(p_guest_group_id, '')), '');
       END IF;
     END IF;
+  END IF;
+
+  -- هل الاستبيان موجّه لهذا المُجيب فعلاً؟ (الصف/المجموعة/الجميع)
+  -- الزائر غير المعروف (v_sid فارغ) يرى استبيانات «الجميع» فقط.
+  IF NOT EXISTS (SELECT 1 FROM public.surveys_for_student(v_sid) x WHERE x.id = p_survey_id) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'هذا الاستبيان غير موجّه إليك');
   END IF;
 
   -- استبيان مجهول: لا تُخزَّن أي هوية
@@ -351,8 +345,10 @@ $$;
 REVOKE ALL ON FUNCTION public.survey_norm_phone(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.survey_norm_phone(text) TO anon, authenticated;
 
+-- أداة داخلية: تناديها الدوال المالكة فقط (لا حاجة لصلاحية anon عليها)
 REVOKE ALL ON FUNCTION public.surveys_for_student(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.surveys_for_student(text) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.surveys_for_student(text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.surveys_for_student(text) TO authenticated;
 
 REVOKE ALL ON FUNCTION public.get_student_surveys(text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_student_surveys(text) TO anon, authenticated;

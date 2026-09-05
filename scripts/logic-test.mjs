@@ -621,6 +621,44 @@ t("ورقة الاختبار تُطبّق الخط عبر getTemplateFont فعل
   eq(paper.includes("fontFamily"), true)
 })
 
+// ============================================================
+console.log("\n\x1b[1mسيناريو 15: ثوابت الزخارف (لا تغطي النص) وبطاقات الاختبارات\x1b[0m")
+// ============================================================
+
+const ornRaw = readFileSync("src/components/exam/science-ornaments.tsx", "utf8")
+const examsPageRaw = readFileSync("src/app/dashboard/exams/page.tsx", "utf8")
+
+t("طبقة الزخارف بلا تفاعل وخلف النص دائماً (zIndex صفري + pointer-events-none)", () => {
+  const layers = ornRaw.match(/className="exam-ornaments[^"]*"/g) || []
+  eq(layers.length >= 2, true, `عدد طبقات الزخارف = ${layers.length}`)
+  layers.forEach(c => eq(c.includes("pointer-events-none"), true, `طبقة بلا pointer-events-none: ${c}`))
+  const styled = ornRaw.match(/style=\{\{\s*opacity:[^}]*zIndex:\s*0\s*\}\}/g) || []
+  eq(styled.length >= 2, true, `طبقات بـ zIndex: 0 = ${styled.length}`)
+})
+
+t("شفافية الزخارف مقيّدة دائماً بين 0.04 و 0.5 فلا تعود لتغطي الأسئلة", () => {
+  eq(/Math\.min\(\s*0\.5\s*,\s*Math\.max\(\s*0\.04/.test(tplRaw), true)
+  const capped = tplMod.resolveOrnamentOpacity(1, "high", "question")
+  eq(capped, 0.5, `chosen=1 → ${capped}`)
+  eq(tplMod.resolveOrnamentOpacity(0, "high", "question") <= 0.5, true)
+  eq(tplMod.resolveOrnamentOpacity(0.01, "low", "page") >= 0.04, true)
+  eq(tplMod.resolveOrnamentOpacity(NaN, "medium", "question") > 0, true)
+})
+
+t("بطاقات الاختبارات موحّدة الارتفاع: h-full + أزرار في الأسفل (mt-auto)", () => {
+  eq(/<Card className="h-full flex flex-col/.test(examsPageRaw), true)
+  eq(examsPageRaw.includes("mt-auto"), true)
+})
+
+t("بطاقات الاختبارات لا تقتص عنوان الاختبار (لا line-clamp على CardTitle)", () => {
+  const titleBlock = /<CardTitle\b[\s\S]*?<\/CardTitle>/.exec(examsPageRaw)
+  eq(!!titleBlock, true, "لم تُعثر على CardTitle في صفحة الاختبارات")
+  if (titleBlock) {
+    eq(/line-clamp/.test(titleBlock[0]), false, "العنوان مُقتطع بـ line-clamp — تفاصيل مخفية")
+    eq(titleBlock[0].includes("min-h-"), true, "لا مساحة محجوزة للعنوان — البطاقات لن تصطف")
+  }
+})
+
 console.log(`\n${"=".repeat(56)}`)
 console.log(`\x1b[1mالنتيجة: ${pass} ناجح / ${fail} فاشل\x1b[0m`)
 if (fail) {

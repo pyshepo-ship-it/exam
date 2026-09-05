@@ -303,11 +303,38 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
 
   const togglePublish = (survey: Survey) => {
     const now = new Date().toISOString()
+
+    // النشر من قائمة الاستبيانات يمر بنفس تحققات المحرّر: لا يُنشر استبيان
+    // بغير هدف صالح (مثلاً حُذف صفّه أو مجموعته وهو مسودة) — وإلا ظهر للمعلم
+    // أنه نُشر بينما لا يراه أحد.
+    if (!survey.published) {
+      if (survey.audience === "grade" && !survey.gradeId) {
+        toast.error("الصف المستهدف لم يعد موجودًا — افتح الاستبيان واختر صفًا جديدًا")
+        return
+      }
+      if (survey.audience === "group" && (survey.groupIds?.length ?? 0) === 0) {
+        toast.error("المجموعات المستهدفة لم تعد موجودة — افتح الاستبيان واختر مجموعة")
+        return
+      }
+      const recipients = audienceStudentsCount(survey, grades, students)
+      if (recipients === 0 && survey.allowGuests !== true) {
+        toast.error("لا يوجد طالب واحد في هذه الفئة — لن يظهر الاستبيان لأحد")
+        return
+      }
+    }
+
     saveSurveys(
       surveys.map(s => (s.id === survey.id ? { ...s, published: !s.published, updatedAt: now } : s))
     )
     refresh()
-    toast.success(survey.published ? "أُوقف نشر الاستبيان" : "تم نشر الاستبيان للطلاب")
+    const recipients = audienceStudentsCount(survey, grades, students)
+    toast.success(
+      survey.published
+        ? "أُوقف نشر الاستبيان"
+        : recipients > 0
+          ? `تم نشر الاستبيان — يصل إلى ${recipients} طالب`
+          : "تم نشر الاستبيان — متاح للزوار في لوحة الإعلانات"
+    )
   }
 
   const removeSurvey = (survey: Survey) => {

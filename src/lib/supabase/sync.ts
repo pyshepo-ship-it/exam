@@ -712,14 +712,36 @@ function isForeignKeyError(err: any): boolean {
 }
 
 /**
- * هل الخطأ «عمود غير موجود» (42703) لعمود بعينه؟
+ * هل الخطأ «عمود غير موجود» لعمود بعينه؟
  * يُستخدم للتراجع الآمن عندما تكون قاعدة البيانات لم تُرحَّل بعد
- * (مثلاً عمود phone في exam_attempts المُضاف في 013) — فلا تضيع محاولة الطالب.
+ * (مثلاً عمود phone في exam_attempts المُضاف في 013، وأعمدة التسعير في 020)
+ * — فلا تضيع محاولة الطالب ولا يتوقف حفظ المجموعات والاستحقاقات.
+ *
+ * يغطي الصيغتين:
+ *   • Postgres المباشر: code 42703 «column "x" of relation "y" does not exist»
+ *   • PostgREST الحديث: code PGRST204 «Could not find the 'x' column of 'y' in the schema cache»
+ *     (بدون هذا الكشف يفشل الحفظ عند معلم لم يشغّل الترحيل الأخير بدل أن
+ *     يُسقط الأعمدة الجديدة ويعيد المحاولة).
+ *
+ * @param column اسم العمود المطلوب التحقق منه — وإن مُرِّر "" يُقبل أي عمود.
  */
 function isMissingColumnError(err: any, column: string): boolean {
-  if (err?.code !== "42703") return false;
-  const msg = String(err?.message || "");
-  return msg.includes(column) || /column .* does not exist/i.test(msg);
+  const code = String(err?.code || "")
+  const msg = String(err?.message || "")
+
+  // Postgres: column "phone" of relation "exam_attempts" does not exist
+  if (code === "42703" || /column .* does not exist/i.test(msg)) {
+    return column ? msg.includes(column) : true
+  }
+
+  // PostgREST: Could not find the 'phone' column of 'exam_attempts' in the schema cache
+  if (code === "PGRST204" || /Could not find the .* column/i.test(msg)) {
+    const m = /Could not find the '([^']+)' column/i.exec(msg)
+    if (!m) return column ? msg.includes(column) : true
+    return column ? m[1] === column : true
+  }
+
+  return false
 }
 
 /**

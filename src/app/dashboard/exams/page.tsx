@@ -1111,22 +1111,23 @@ export default function ExamsPage() {
                 className="h-full"
               >
                 {/*
-                  بطاقات موحّدة الحجم: البطاقة تملأ ارتفاع الصف في الشبكة،
-                  والتفاصيل (الشارات) تأخذ المساحة المتوسطة وتتمدّد، بينما
-                  أزرار الإجراءات مثبّتة أسفل البطاقة دائماً — فلا يختلف موضعها
-                  من بطاقة لأخرى، ولا يُخفى أي تفصيل.
+                  بطاقات موحّدة الحجم دون إخفاء شيء: البطاقة تملأ ارتفاع صفّها
+                  في الشبكة (h-full) فتصطف كل البطاقات على الطول نفسه، والعنوان
+                  يلتف على أسطره كاملةً (بلا اقتصاص) مع مساحة ثابتة لسطرين
+                  لمحاذاة البطاقات الأقصر، والشارات تأخذ الوسط ويتمدد، وأزرار
+                  الإجراءات مثبّتة بأسفل البطاقة (mt-auto) في موضع واحد.
                 */}
                 <Card className="h-full flex flex-col bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg hover:shadow-xl transition-shadow">
                   <CardHeader className="shrink-0 pb-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <CardTitle
-                          className="text-lg leading-snug text-gray-900 dark:text-white line-clamp-2 min-h-[3.25rem]"
+                          className="text-lg leading-snug text-gray-900 dark:text-white break-words min-h-[3.25rem]"
                           title={exam.title}
                         >
                           {exam.title}
                         </CardTitle>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 truncate" title={getGradeName(exam.gradeId)}>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 break-words">
                           {getGradeName(exam.gradeId)}
                         </p>
                       </div>

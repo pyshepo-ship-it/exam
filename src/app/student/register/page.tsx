@@ -55,7 +55,11 @@ export default function StudentRegisterPage() {
       // الصفوف من Supabase مباشرة — المصدر الوحيد (لا تخزين محلي على الجهاز)
       const pub = await fetchPublicData()
       if (pub?.settings) {
-        for (const [key, value] of Object.entries(pub.settings)) writeSetting(key, value)
+        // يُنسخ إلى ذاكرة الجلسة ما يخص البوابة فقط — لا حشو إعدادات غير لازمة
+        for (const key of ["registrationOpen", "autoApproveRegistration", "studentReportsEnabled"] as const) {
+          const value = pub.settings[key]
+          if (typeof value === "string") writeSetting(key, value)
+        }
         setRegistrationOpen(pub.settings.registrationOpen !== "")
         setAutoApprove(!!pub.settings.autoApproveRegistration)
       }

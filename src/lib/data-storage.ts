@@ -156,7 +156,7 @@ export interface Due {
   cycle?: DueCycle
   /**
    * مفتاح الفترة الفريد لمنع تكرار الاستحقاق:
-   * شهري = 2026-09، أسبوعي = 2026-W36، بالحصّة = 2026-09-05 (×العدد)، مخصص = المعرّف
+   * شهري = ‎2026-09، أسبوعي = ‎2026-W36، بالحصّة = ‎2026-09-05#2 (تاريخ#عدد الحصص)
    */
   periodKey?: string
   /** وصف الفترة كما يظهر للمعلم ولولي الأمر: «سبتمبر 2026» / «أسبوع 7–13 سبتمبر» / «حصتان يوم 5 سبتمبر» */
@@ -1454,7 +1454,9 @@ function applyCascadeDelete(opts: { gradeIds?: Set<string>; groupIds?: Set<strin
       out = { ...out, groupIds: out.groupIds.filter(id => !droppedGroupIds.has(id)) }
     }
     if (out.gradeId && gradeIds.has(out.gradeId)) {
-      out = { ...out, gradeId: undefined, audience: "all" }
+      // يبقى «موجهاً لصف» بلا صف صالح: فلا يُبثّ لكل الطلاب بالخطأ،
+      // ولا يظهر لأحد حتى يحدّد المعلم فصلاً جديداً من شاشة الاستبيانات.
+      out = { ...out, gradeId: undefined }
     }
     return out
   })
