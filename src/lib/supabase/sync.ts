@@ -62,7 +62,6 @@ function getSupabase() {
 
 // معرفات الصفوف الموجودة حالياً في Supabase (لكشف الحذف)
 let remoteIds: Record<string, Set<string>> = {};
-let warnedOnce = false;
 let lastWarned = "";
 
 const DB_TABLES = [
@@ -648,7 +647,6 @@ function warnSyncError(err: unknown) {
   const message = `تعذر الحفظ في قاعدة البيانات${table}: ${explainSupabaseError(err)}`;
   if (lastWarned === message) return;
   lastWarned = message;
-  warnedOnce = true;
   // رسائل الاتصال تظهر في صفحة الإعدادات فقط عبر SyncStatus
 }
 
@@ -1590,8 +1588,8 @@ export async function pullAllData(): Promise<{ ok: boolean; migrated: boolean }>
       archivesRes,
       settingsRes,
     ];
-    // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — نتعامل معها بمرونة
-    const portalRes = [manualGradesRes, regRequestsRes, transferReqRes, studentHistoryRes, studentAccountsRes, inquiriesRes, surveysRes, surveyResponsesRes];
+    // جداول بوابة الطلاب قد لا تكون مُنشأة بعد في مخططات قديمة — لذلك نفحص
+    // أخطاء الجداول الأساسية فقط هنا، ونترك أخطاء جداول البوابة للتعامل المرن أدناه.
     for (const res of all) {
       if (res.error) throw res.error;
     }

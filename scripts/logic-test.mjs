@@ -449,13 +449,6 @@ t("تحديد الكلمات في صوب ما تحته خط بدقة عبر getU
 
 console.log("\n\x1b[1mسيناريو 12: منتقي الوقت السهل المخصص للجوال (12 ساعة، الدقائق، الفترات ص/م، وحساب المدة)\x1b[0m")
 t("تحويل الوقت من 24 إلى 12 ساعة مع العربية formatTime12", () => {
-  let utilsSrc = readFileSync("src/lib/utils.ts", "utf8")
-  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"tailwind-merge"/, "")
-  utilsSrc = utilsSrc.replace(/import\s*\{[\s\S]*?\}\s*from\s*"clsx"/, "")
-  const utilsJs = ts.transpileModule(utilsSrc + "\nexport { formatTime12, addDuration };", {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 },
-  }).outputText
-  
   // اختبار التنسيقات
   const formatTime12Fn = (time24) => {
     if (!time24) return ""

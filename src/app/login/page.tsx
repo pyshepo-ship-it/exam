@@ -7,7 +7,6 @@ import {
   Eye, 
   EyeOff, 
   Lock, 
-  User, 
   Loader2, 
   Mail
 } from "lucide-react"
@@ -64,7 +63,7 @@ export default function LoginPage() {
         router.push("/dashboard")
         router.refresh()
       }
-    } catch (error) {
+    } catch {
       toast.error("حدث خطأ أثناء تسجيل الدخول")
     } finally {
       setLoading(false)
@@ -94,7 +93,7 @@ export default function LoginPage() {
 
       toast.success("تم إرسال رابط إعادة التعيين إلى بريدك الإلكتروني")
       setShowForgotPassword(false)
-    } catch (error) {
+    } catch {
       toast.error("حدث خطأ أثناء إرسال البريد")
     } finally {
       setLoading(false)

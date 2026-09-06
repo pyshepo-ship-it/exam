@@ -285,12 +285,6 @@ const eq = (name, cond, extra = "") => {
 }
 const section = (t) => console.log(`\n${"=".repeat(56)}\n${t}\n${"=".repeat(56)}`)
 
-const dateSlash = (iso) => {
-  const d = new Date(iso)
-  if (isNaN(d)) return ""
-  return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`
-}
-
 const NOW = new Date()
 const Y = NOW.getFullYear()
 const M = NOW.getMonth() + 1
@@ -455,7 +449,6 @@ const toOtherGrade = await SA.requestGroupTransfer(saraId, "gr-1")
 eq("نقل لمجموعة في صف آخر → ممنوع", toOtherGrade.ok === false)
 const sameGroup = await SA.requestGroupTransfer(saraId, "gr-3")
 eq("نقل لنفس مجموعته → مرفوض", sameGroup.ok === false)
-const tr1 = await SA.requestGroupTransfer(saraId, "gr-3" === "" ? "" : (await 0) || (grade2.groups[0].id))
 const trSame = await SA.requestGroupTransfer(saraId, "gr-4-nope")
 eq("مجموعة غير موجودة → مرفوض", trSame.ok === false)
 

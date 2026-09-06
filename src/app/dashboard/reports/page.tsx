@@ -1,9 +1,8 @@
 "use client"
 
-import React, { useState, useEffect, useRef, useMemo } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { motion } from "framer-motion"
 import { 
-  BarChart3, 
   TrendingUp, 
   Users, 
   DollarSign, 
@@ -63,7 +62,7 @@ import { printHtml, downloadHtmlAsPDF } from "@/lib/schedule-print"
 import { Loader2, Eye, Printer as PrinterIcon, ClipboardList } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Printer, FileText as FileTextIcon, Plus, Trash2, UserRound } from "lucide-react"
+import { Plus, Trash2 } from "lucide-react"
 
 const MONTHS = [
   "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
@@ -94,7 +93,6 @@ export default function ReportsPage() {
   const [pdfBusy, setPdfBusy] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
   const [srReport, setSrReport] = useState<StudentReport | null>(null)
-  const [printOpen, setPrintOpen] = useState(false)
 
   // ===== الدرجات اليدوية =====
   const [manualGrades, setManualGrades] = useState<ManualGrade[]>([])
@@ -341,7 +339,7 @@ export default function ReportsPage() {
                   { orientation: 'portrait', scale: 2 }
                 )
                 toast.success('تم تحميل التقرير بنجاح')
-              } catch (error) {
+              } catch {
                 toast.error('حدث خطأ أثناء التصدير')
               }
             }}
@@ -424,7 +422,7 @@ export default function ReportsPage() {
             { icon: DollarSign, label: "المحصل", value: `${monthTotalPayments} ج.م`, color: "from-green-500 to-emerald-600" },
             { icon: AlertCircle, label: "المتبقي", value: `${monthBalance} ج.م`, color: monthBalance > 0 ? "from-red-500 to-rose-600" : "from-green-500 to-emerald-600" },
             { icon: TrendingUp, label: "نسبة التحصيل", value: `${monthCollectionRate}%`, color: "from-blue-500 to-indigo-600" },
-          ].map((stat, index) => {
+          ].map((stat) => {
             const Icon = stat.icon
             return (
               <Card key={stat.label} className="bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 shadow-lg">

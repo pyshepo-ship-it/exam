@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { 
   Users, 
   Plus, 
@@ -11,12 +11,10 @@ import {
   Phone, 
   BookOpen,
   Eye,
-  Filter,
   UserCheck,
   UserX,
   DollarSign,
   Download,
-  X,
   FileText,
   CheckCircle,
   AlertCircle,
@@ -1084,7 +1082,7 @@ export default function StudentsPage() {
                     { orientation: 'portrait', scale: 2 }
                   )
                   toast.success('تم تحميل كشف الحساب بنجاح')
-                } catch (error) {
+                } catch {
                   toast.error('حدث خطأ أثناء التصدير')
                 }
               }}

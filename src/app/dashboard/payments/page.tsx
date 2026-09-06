@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useMemo } from "react"
-import { motion, AnimatePresence } from "framer-motion"
+import { motion } from "framer-motion"
 import { 
   DollarSign, 
   Plus, 
@@ -12,15 +12,16 @@ import {
   CheckCircle,
   Calendar,
   FileText,
-  Eye,
   Download,
-  Printer
+  Trash2,
+  ClipboardList,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -46,7 +47,7 @@ import {
 } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import toast from "react-hot-toast"
-import { exportTableToPDF, exportToPDF } from "@/lib/pdf-utils"
+import { exportToPDF } from "@/lib/pdf-utils"
 import {
   Grade,
   Student,
@@ -91,7 +92,6 @@ export default function PaymentsPage() {
   const [dues, setDues] = useState<Due[]>([])
   const [payments, setPayments] = useState<Payment[]>([])
   const [searchTerm, setSearchTerm] = useState("")
-  const [activeTab, setActiveTab] = useState<'overview' | 'payments' | 'dues'>('overview')
   
   // Payment Dialog
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
@@ -177,6 +177,7 @@ export default function PaymentsPage() {
   // Statement Dialog
   const [statementDialogOpen, setStatementDialogOpen] = useState(false)
   const [selectedStudentId, setSelectedStudentId] = useState<string>("")
+  const [showLedger, setShowLedger] = useState(false)
 
   // Load data
   useEffect(() => {
@@ -445,6 +446,47 @@ export default function PaymentsPage() {
   // Get student name
   const getStudentName = (studentId: string) => students.find(s => s.id === studentId)?.name || 'غير معروف'
 
+  // ============ تصحيح الأخطاء المالية: حذف دفعة أو استحقاق ============
+  /** حذف استحقاق: تبقى الدفعات المرتبطة به كدفعات حرة (لا تُحذف أموال محصّلة) */
+  const deleteDue = (dueId: string) => {
+    const due = dues.find(d => d.id === dueId)
+    if (!due) return
+    const linked = payments.filter(p => p.dueId === dueId)
+    const linkedNote = linked.length > 0
+      ? ` ستبقى ${linked.length} دفعة مرتبطة به كدفعات حرة — لا تُحذف أموال محصّلة.`
+      : ""
+    if (!confirm(`حذف الاستحقاق «${duePeriodLabel(due)}» (${moneyLabel(due.amount)})؟${linkedNote} لا يمكن التراجع.`)) return
+    const updatedDues = dues.filter(d => d.id !== dueId)
+    const updatedPayments = payments.map(p => (p.dueId === dueId ? { ...p, dueId: undefined } : p))
+    setDues(updatedDues)
+    saveDues(updatedDues)
+    setPayments(updatedPayments)
+    savePayments(updatedPayments)
+    toast.success("تم حذف الاستحقاق (بقيت أي دفعات مرتبطة به كدفعات حرة)")
+  }
+
+  /** حذف دفعة: يُعاد حساب حالة الاستحقاق المرتبط (مدفوع/جزئي/مستحق) */
+  const deletePayment = (paymentId: string) => {
+    const payment = payments.find(p => p.id === paymentId)
+    if (!payment) return
+    if (!confirm(`حذف دفعة «${moneyLabel(payment.amount)}» بتاريخ ${payment.paymentDate || "غير محدد"}؟ سيُعاد حساب حالة الاستحقاق المرتبط. لا يمكن التراجع.`)) return
+    const updatedPayments = payments.filter(p => p.id !== paymentId)
+    let updatedDues = dues
+    if (payment.dueId) {
+      updatedDues = dues.map(d => {
+        if (d.id !== payment.dueId) return d
+        const paid = updatedPayments.filter(p => p.dueId === d.id).reduce((s, p) => s + p.amount, 0)
+        const status: Due["status"] = paid + 1e-9 >= d.amount ? "paid" : paid > 0 ? "partial" : "pending"
+        return { ...d, status }
+      })
+      saveDues(updatedDues)
+    }
+    setPayments(updatedPayments)
+    savePayments(updatedPayments)
+    setDues(updatedDues)
+    toast.success("تم حذف الدفعة")
+  }
+
   // Stats
   const totalDues = dues.reduce((sum, d) => sum + d.amount, 0)
   const totalPayments = payments.reduce((sum, p) => sum + p.amount, 0)
@@ -708,6 +750,99 @@ export default function PaymentsPage() {
               })}
             </TableBody>
           </Table>
+        )}
+      </motion.div>
+
+      {/* سجل الاستحقاقات والدفعات — لحذف قيد مالي خاطئ */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.35 }}
+        className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 shadow-lg overflow-hidden"
+      >
+        <button
+          type="button"
+          onClick={() => setShowLedger(!showLedger)}
+          className="w-full flex items-center justify-between p-4"
+        >
+          <div className="flex items-center gap-2">
+            <ClipboardList className="w-5 h-5 text-indigo-500" />
+            <h3 className="font-bold text-gray-900 dark:text-white">سجل الاستحقاقات والدفعات</h3>
+            <span className="text-xs text-gray-400">(لحذف قيد خاطئ)</span>
+          </div>
+          {showLedger
+            ? <ChevronUp className="w-5 h-5 text-gray-400" />
+            : <ChevronDown className="w-5 h-5 text-gray-400" />}
+        </button>
+
+        {showLedger && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 p-4 border-t border-gray-200 dark:border-gray-800">
+            {/* الاستحقاقات */}
+            <div>
+              <h4 className="font-semibold text-gray-700 dark:text-gray-200 mb-2">الاستحقاقات ({dues.length})</h4>
+              {dues.length === 0 ? (
+                <p className="text-sm text-gray-400">لا توجد استحقاقات</p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pl-1">
+                  {[...dues]
+                    .sort((a, b) => (b.year - a.year) || (b.month - a.month) || (b.periodKey || "").localeCompare(a.periodKey || ""))
+                    .map(due => (
+                      <div key={due.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-gray-800 p-2.5">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{getStudentName(due.studentId)}</p>
+                          <p className="text-xs text-gray-500 truncate">{duePeriodLabel(due)}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-bold text-yellow-700 dark:text-yellow-300">{moneyLabel(due.amount)}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                            title="حذف الاستحقاق"
+                            onClick={() => deleteDue(due.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+
+            {/* الدفعات */}
+            <div>
+              <h4 className="font-semibold text-gray-700 dark:text-gray-200 mb-2">الدفعات ({payments.length})</h4>
+              {payments.length === 0 ? (
+                <p className="text-sm text-gray-400">لا توجد دفعات</p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pl-1">
+                  {[...payments]
+                    .sort((a, b) => (b.paymentDate || "").localeCompare(a.paymentDate || ""))
+                    .map(payment => (
+                      <div key={payment.id} className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-gray-800 p-2.5">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{getStudentName(payment.studentId)}</p>
+                          <p className="text-xs text-gray-500 truncate">{payment.paymentDate}{payment.notes ? ` — ${payment.notes}` : ""}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-bold text-green-700 dark:text-green-300">{moneyLabel(payment.amount)}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                            title="حذف الدفعة"
+                            onClick={() => deletePayment(payment.id)}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </motion.div>
 
@@ -1361,7 +1496,7 @@ export default function PaymentsPage() {
                     { orientation: 'portrait', scale: 2 }
                   )
                   toast.success('تم تحميل كشف الحساب بنجاح')
-                } catch (error) {
+                } catch {
                   toast.error('حدث خطأ أثناء التصدير')
                 }
               }}

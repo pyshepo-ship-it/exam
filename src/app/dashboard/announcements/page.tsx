@@ -401,11 +401,6 @@ export default function AnnouncementsPage() {
     toast.success("تم حذف الرابط")
   }
 
-  const getGroupLabel = (groupId: string) => {
-    const g = allGroups.find(x => x.id === groupId)
-    return g ? `${g.gradeName} - ${g.name}` : "غير محدد"
-  }
-
   return (
     <div className="space-y-6">
       {/* Header */}

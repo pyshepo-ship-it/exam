@@ -60,7 +60,6 @@ import { TimePicker } from "@/components/time-picker"
 import { formatTime12, addDuration } from "@/lib/utils"
 import {
   normalizeGroupPricing,
-  pricingSummary,
   pricingShort,
   sessionsPerMonthFromDays,
   groupMonthlyFee,
@@ -929,7 +928,6 @@ export default function GradesPage() {
                   value={groupForm.startTime || "16:00"}
                   onChange={(val) => {
                     setGroupForm(prev => {
-                      const currentStart = prev.startTime || "16:00"
                       const currentEnd = prev.endTime || "18:00"
                       // تحديث تلقائي لوقت النهاية ليحافظ على الفارق إذا رغب المعلم
                       return {

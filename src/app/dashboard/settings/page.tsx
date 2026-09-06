@@ -74,6 +74,22 @@ import {
   saveSharedFiles,
   getImportantLinks,
   saveImportantLinks,
+  getManualGrades,
+  saveManualGrades,
+  getStudentAccounts,
+  saveStudentAccounts,
+  getRegistrationRequests,
+  saveRegistrationRequests,
+  getGroupTransferRequests,
+  saveGroupTransferRequests,
+  getStudentHistory,
+  saveStudentHistory,
+  getInquiries,
+  saveInquiries,
+  getSurveys,
+  saveSurveys,
+  getSurveyResponses,
+  saveSurveyResponses,
   getStoredAcademicYear,
   saveAcademicYear,
   getCurrentAcademicYear,
@@ -110,6 +126,7 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [passwordBusy, setPasswordBusy] = useState(false)
   const [userEmail, setUserEmail] = useState("")
 
   const [academicYear, setAcademicYear] = useState<string>("")
@@ -286,6 +303,10 @@ export default function SettingsPage() {
 
   // Change password
   const changePassword = async () => {
+    if (!currentPassword) {
+      toast.error("اكتب كلمة المرور الحالية")
+      return
+    }
     if (newPassword.length < 6) {
       toast.error("كلمة المرور يجب أن تكون 6 أحرف على الأقل")
       return
@@ -294,14 +315,54 @@ export default function SettingsPage() {
       toast.error("كلمة المرور الجديدة غير متطابقة")
       return
     }
-    
-    // Note: Supabase password update requires re-authentication
-    // For now, we'll show a message directing users to use the forgot password flow
-    toast.success("لتغيير كلمة المرور، استخدم خيار 'نسيت كلمة المرور' من صفحة تسجيل الدخول")
-    setPasswordDialogOpen(false)
-    setCurrentPassword("")
-    setNewPassword("")
-    setConfirmPassword("")
+    if (currentPassword === newPassword) {
+      toast.error("كلمة المرور الجديدة يجب أن تختلف عن الحالية")
+      return
+    }
+
+    if (!isSupabaseConfigured()) {
+      toast.error("Supabase غير مُعدّ — لا يمكن تغيير كلمة المرور في وضع العمل المحلي")
+      return
+    }
+
+    setPasswordBusy(true)
+    try {
+      const supabase = getSupabase()
+      // البريد الحالي من الجلسة (يُجلب عند فتح الصفحة)
+      const { data: { session } } = await supabase.auth.getSession()
+      const email = session?.user?.email || userEmail
+      if (!email) {
+        toast.error("تعذر معرفة البريد الحالي — أعد تحميل الصفحة ثم حاول مجدداً")
+        return
+      }
+
+      // إعادة التحقق بكلمة المرور الحالية أولاً: تؤكد صحتها وتُحدّث الجلسة
+      // حتى يسمح الخادم بتغيير كلمة المرور (يتطلب جلسة حديثة).
+      const { error: reauthError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      })
+      if (reauthError) {
+        toast.error("كلمة المرور الحالية غير صحيحة")
+        return
+      }
+
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) {
+        toast.error(error.message || "تعذر تغيير كلمة المرور — أعد المحاولة")
+        return
+      }
+
+      toast.success("تم تغيير كلمة المرور بنجاح — استخدمها في تسجيل الدخول القادم")
+      setPasswordDialogOpen(false)
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+    } catch {
+      toast.error("حدث خطأ أثناء تغيير كلمة المرور")
+    } finally {
+      setPasswordBusy(false)
+    }
   }
 
   // ============ إدارة العام الدراسي ============
@@ -402,10 +463,18 @@ export default function SettingsPage() {
       honorees: getHonorees(),
       sharedFiles: getSharedFiles(),
       importantLinks: getImportantLinks(),
+      manualGrades: getManualGrades(),
+      studentAccounts: getStudentAccounts(),
+      registrationRequests: getRegistrationRequests(),
+      groupTransferRequests: getGroupTransferRequests(),
+      studentHistory: getStudentHistory(),
+      inquiries: getInquiries(),
+      surveys: getSurveys(),
+      surveyResponses: getSurveyResponses(),
       currentAcademicYear: getStoredAcademicYear(),
       yearArchives: getYearArchives(),
       exportedAt: new Date().toISOString(),
-      version: "1.1.0",
+      version: "1.2.0",
     }
     
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })
@@ -440,6 +509,14 @@ export default function SettingsPage() {
         if (data.honorees) saveHonorees(data.honorees)
         if (data.sharedFiles) saveSharedFiles(data.sharedFiles)
         if (data.importantLinks) saveImportantLinks(data.importantLinks)
+        if (data.manualGrades) saveManualGrades(data.manualGrades)
+        if (data.studentAccounts) saveStudentAccounts(data.studentAccounts)
+        if (data.registrationRequests) saveRegistrationRequests(data.registrationRequests)
+        if (data.groupTransferRequests) saveGroupTransferRequests(data.groupTransferRequests)
+        if (data.studentHistory) saveStudentHistory(data.studentHistory)
+        if (data.inquiries) saveInquiries(data.inquiries)
+        if (data.surveys) saveSurveys(data.surveys)
+        if (data.surveyResponses) saveSurveyResponses(data.surveyResponses)
         if (data.currentAcademicYear) saveAcademicYear(data.currentAcademicYear)
         if (data.yearArchives) saveYearArchives(data.yearArchives)
 
@@ -455,7 +532,7 @@ export default function SettingsPage() {
 
         toast.success("تم استيراد البيانات ورفعها إلى Supabase! سيتم تحديث الصفحة.")
         setTimeout(() => window.location.reload(), 1000)
-      } catch (err) {
+      } catch {
         toast.error("خطأ في قراءة الملف. تأكد من أنه ملف نسخة احتياطية صحيحة.")
       }
     }
@@ -1337,8 +1414,19 @@ export default function SettingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setPasswordDialogOpen(false)}>إلغاء</Button>
-            <Button onClick={changePassword} className="bg-gradient-to-r from-red-500 to-rose-600">
-              تغيير كلمة المرور
+            <Button
+              onClick={changePassword}
+              disabled={passwordBusy}
+              className="bg-gradient-to-r from-red-500 to-rose-600"
+            >
+              {passwordBusy ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  جارٍ التغيير...
+                </>
+              ) : (
+                "تغيير كلمة المرور"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
