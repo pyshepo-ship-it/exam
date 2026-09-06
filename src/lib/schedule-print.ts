@@ -13,7 +13,7 @@
 // ============================================================
 
 import { Grade, Student, getStudents, getStoredAcademicYear, getDues, getPayments } from "./data-storage"
-import { getTeacherName, getTeacherSignatureLine } from "./branding"
+import { getTeacherName } from "./branding"
 import { formatTime12 } from "./utils"
 import { exportToPDF, printElement } from "./pdf-utils"
 

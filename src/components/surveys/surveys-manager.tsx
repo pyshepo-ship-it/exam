@@ -184,7 +184,6 @@ export function SurveysManager({ grades, students }: { grades: Grade[]; students
     // تصل بيانات السحابة بعد تركيب الصفحة أحياناً — نحدِّث العرض عند كل تحديث للذاكرة
     const off = onStoreUpdate(() => refresh())
     return off
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const allGroups = useMemo(

@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { Printer, FileDown, Loader2, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {

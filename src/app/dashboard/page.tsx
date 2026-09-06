@@ -9,8 +9,6 @@ import {
   FileText, 
   BookOpen,
   ClipboardCheck,
-  CheckCircle,
-  AlertCircle,
   TrendingUp,
   Megaphone
 } from "lucide-react"
