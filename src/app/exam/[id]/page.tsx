@@ -19,6 +19,8 @@ import {
   Loader2,
   PlayCircle,
   Users,
+  History,
+  Star,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -53,7 +55,7 @@ import {
 import { gradeExam, shouldPromoteToHonor } from "@/lib/exam-grade"
 import { gradeSealedExam, sealExamForStudent, withServerFeedback } from "@/lib/exam-public"
 import { isSupabaseConfigured } from "@/lib/supabase/client"
-import { rememberOnlineExamResultSession } from "@/lib/online-exam-result-session"
+import { rememberOnlineExamResultSession, getRememberedOnlineExamResultSessions } from "@/lib/online-exam-result-session"
 import {
   fetchPublicData,
   fetchStudentSelfRecord,
@@ -62,7 +64,9 @@ import {
   saveOnlineExamTimerProgress,
   submitOnlineExamTimerSession,
   getOnlineExamAnswerFeedback,
+  getOnlineExamTimerResult,
   type OnlineExamTimerSession,
+  type OnlineExamTimerResultAttempt,
 } from "@/lib/supabase/sync"
 import { TeacherSignature } from "@/components/teacher-signature"
 import { TEACHER_NAME } from "@/lib/branding"
@@ -74,8 +78,12 @@ import {
   guestGroupsForGrade,
   isExamGradeSelectable,
   validateGuestIdentity,
+  attemptNeedsResultRelease,
+  effectiveAttemptScore,
   type GuestIdentity,
 } from "@/lib/portal-content"
+import { adoptedAttemptOf } from "@/lib/data-storage"
+import { ExamReviewDialog } from "@/components/exam-review-dialog"
 import { decodeSealForReview } from "@/lib/exam-public"
 import {
   ARABIC_ORDINALS,
@@ -178,6 +186,10 @@ export default function TakeExamPage() {
   const [submissionError, setSubmissionError] = useState("")
   /** مسجَّل الدخول لكن الاختبار المفتوح للجميع ليس لصفه → يدخل كزائر */
   const [memberOtherGrade, setMemberOtherGrade] = useState(false)
+  // نتائج المحاولات السابقة المستعادة من كوكي أسرار الجلسات على هذا الجهاز
+  // (زائراً كان أو عضواً) — اطلاع بالقراءة فقط، بلا بدء جلسة وبلا استهلاك محاولة.
+  const [previousAttempts, setPreviousAttempts] = useState<OnlineExamTimerResultAttempt[]>([])
+  const [reviewPrevAttempt, setReviewPrevAttempt] = useState<OnlineExamTimerResultAttempt | null>(null)
   const submittedRef = React.useRef(false)
   // المراجع تمنع أن يلتقط مؤقت الخلفية نسخة قديمة من إجابات الطالب عند انتهاء الوقت.
   const answersRef = React.useRef<Record<string, ExamAttemptAnswer>>({})
@@ -190,6 +202,29 @@ export default function TakeExamPage() {
   const finishExamRef = React.useRef<((reason?: "manual" | "timer") => Promise<void>) | null>(null)
   const sealRef = React.useRef("")
   const specRef = React.useRef<Record<string, { choiceId?: string; text?: string; isTrue?: boolean }>>({})
+
+  /**
+   * يستعيد نتائج محاولات هذا الاختبار التي نفّذها هذا الجهاز سابقاً، عبر أسرار
+   * الجلسات المحفوظة في كوكي فقط — لا يقرأ أي جدول عام ولا يبدأ جلسة جديدة
+   * ولا يستهلك محاولات. ما يظهر يحكمه البواب الآمن للخادم (الإجابة مملوكة
+   * لصاحبها، والتصحيح اليدوي لا يُكشف قبل إطلاق النتيجة).
+   */
+  const restorePreviousAttempts = async (targetExamId: string) => {
+    try {
+      const remembered = getRememberedOnlineExamResultSessions()
+      if (remembered.length === 0) return
+      const results = await Promise.all(remembered.map(saved => getOnlineExamTimerResult(saved)))
+      const mine = results
+        .filter((r): r is typeof r & { attempt: OnlineExamTimerResultAttempt } =>
+          r.ok && r.state === "submitted" && !!r.attempt && r.attempt.examId === targetExamId
+        )
+        .map(r => r.attempt)
+      mine.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))
+      setPreviousAttempts(mine)
+    } catch {
+      // تعذر الاسترجاع (شبكة/كوكي) لا يعطّل رحلة بدء الاختبار
+    }
+  }
 
   useEffect(() => {
     const load = async () => {
@@ -272,12 +307,20 @@ export default function TakeExamPage() {
           }
         }
 
+        // الإغلاق يمنع الأداء الجديد فقط — لا يمنع الاطلاع على نتائج سابقة لهذا
+        // الجهاز (تصحيح المعلم واعتماده يكتملان غالباً بعد إغلاق النافذة الزمنية).
+        const markClosed = (reason: string) => {
+          setClosedReason(reason)
+          setExam(sealExamForStudent(found).view)
+          void restorePreviousAttempts(found.id)
+          setStep("closed")
+          setGrades(nextGrades)
+        }
+
         // بوابة الإتاحة الزمنية (تسري على الأعضاء والزوار معاً)
         const av = examAvailability(found)
         if (!av.open) {
-          setClosedReason(av.reason || "الاختبار مغلق حالياً")
-          setStep("closed")
-          setGrades(nextGrades)
+          markClosed(av.reason || "الاختبار مغلق حالياً")
           return
         }
 
@@ -286,9 +329,7 @@ export default function TakeExamPage() {
         if (portal && me && asMember) {
           const at = attemptsStatus(found, getExamAttempts(), portal.studentId)
           if (!at.allowed) {
-            setClosedReason(at.reason || "استُنفدت محاولاتك لهذا الاختبار")
-            setStep("closed")
-            setGrades(nextGrades)
+            markClosed(at.reason || "استُنفدت محاولاتك لهذا الاختبار")
             return
           }
         }
@@ -325,6 +366,8 @@ export default function TakeExamPage() {
         setStep("missing")
       } else {
         setStep("identify")
+        // بالتوازي مع نموذج البدء: استرجاع نتائج هذا الجهاز السابقة للاطلاع عليها
+        void restorePreviousAttempts(found.id)
       }
     }
     load()
@@ -831,6 +874,81 @@ export default function TakeExamPage() {
     )
   }
 
+  /**
+   * بطاقة الاطلاع على المحاولات السابقة لهذا الجهاز — تظهر في شاشة البدء
+   * (مع تلميح إعادة المحاولة) وفي شاشة الإغلاق (نتائج فقط؛ الأداء متوقف).
+   * كل محاولة تُفتح للقراءة فقط عبر نافذة المراجعة نفسها وبقواعد الإطلاق ذاتها.
+   */
+  const renderPreviousAttemptsCard = (retryHint: boolean) => {
+    if (previousAttempts.length === 0) return null
+    const adoptedPrev = adoptedAttemptOf(previousAttempts)
+    return (
+      <div className="mb-6 rounded-2xl border-2 border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-4 sm:p-5 space-y-3 text-right">
+        <div className="flex items-center gap-2 text-emerald-900 dark:text-emerald-100">
+          <History className="w-5 h-5 shrink-0" />
+          <h3 className="font-extrabold">
+            لديك {previousAttempts.length > 1 ? `${previousAttempts.length} محاولات سابقة` : "محاولة سابقة"} في هذا الاختبار على جهازك
+          </h3>
+        </div>
+        <p className="text-xs text-emerald-800/80 dark:text-emerald-200/80 leading-relaxed">
+          يمكنك الاطلاع على نتيجتك وإجاباتك بالقراءة فقط — دون بدء محاولة جديدة ودون إمكانية تعديل أي إجابة مسلَّمة.
+          {retryHint && " للمحاولة من جديد (إن تبقّت لك محاولات أو منحك المعلم محاولة إضافية) أكمل بياناتك بالأسفل وابدأ."}
+        </p>
+        <div className="space-y-2">
+          {previousAttempts.map((attempt, index) => {
+            const attemptNo = previousAttempts.length - index
+            const pendingRelease = attemptNeedsResultRelease(attempt)
+            const isAdopted = adoptedPrev?.id === attempt.id
+            return (
+              <div
+                key={attempt.id}
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3 ${
+                  isAdopted
+                    ? "border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/20"
+                    : "border-emerald-100 dark:border-emerald-900 bg-white/70 dark:bg-gray-900/60"
+                }`}
+              >
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-gray-800 dark:text-gray-100 flex flex-wrap items-center gap-2">
+                    المحاولة {attemptNo}
+                    {attempt.submittedAt && (
+                      <span className="text-[11px] font-normal text-gray-400">
+                        {new Date(attempt.submittedAt).toLocaleString("ar-EG", { dateStyle: "short", timeStyle: "short" })}
+                      </span>
+                    )}
+                    {isAdopted && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 px-2 py-0.5 text-[11px] font-extrabold">
+                        <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
+                        اعتمدها المعلم
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {pendingRelease ? (
+                    <span className="text-xs font-bold text-amber-700 dark:text-amber-300">قيد مراجعة المعلم</span>
+                  ) : (
+                    <span className={`font-extrabold text-sm ${effectiveAttemptScore(attempt) >= (attempt.totalMarks || 1) * 0.5 ? "text-emerald-700 dark:text-emerald-300" : "text-red-600"}`} dir="ltr">
+                      {effectiveAttemptScore(attempt)} / {attempt.totalMarks || 0}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-emerald-300 text-emerald-700 dark:text-emerald-300"
+                    onClick={() => setReviewPrevAttempt(attempt)}
+                  >
+                    عرض النتيجة والإجابات
+                  </Button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
   if (step === "load") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950">
@@ -840,17 +958,31 @@ export default function TakeExamPage() {
   }
 
   if (step === "closed") {
+    const hasPrevResults = previousAttempts.length > 0
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
-        <div className="max-w-md text-center space-y-4">
-          <Clock className="w-14 h-14 mx-auto text-amber-500" />
-          <h1 className="text-2xl font-bold">الاختبار مغلق الآن</h1>
-          <p className="text-gray-500">{closedReason || "لم يفت موعد هذا الاختبار بعد — تابع إعلانات المعلم"}</p>
-          {/* الزائر في اختبار مفتوح للجميع يرجع للوحة الإعلانات، والعضو لبوابته */}
-          {accessMode === "public" ? (
-            <Link href="/"><Button variant="outline">الصفحة الرئيسية</Button></Link>
-          ) : (
-            <Link href="/student"><Button variant="outline">بوابة الطالب</Button></Link>
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6" dir="rtl">
+        <div className={`w-full ${hasPrevResults ? "max-w-3xl" : "max-w-md"} space-y-4`}>
+          <div className="text-center space-y-4">
+            <Clock className="w-14 h-14 mx-auto text-amber-500" />
+            <h1 className="text-2xl font-bold">الاختبار مغلق الآن</h1>
+            <p className="text-gray-500">{closedReason || "لم يفت موعد هذا الاختبار بعد — تابع إعلانات المعلم"}</p>
+            {/* الزائر في اختبار مفتوح للجميع يرجع للوحة الإعلانات، والعضو لبوابته */}
+            {accessMode === "public" ? (
+              <Link href="/"><Button variant="outline">الصفحة الرئيسية</Button></Link>
+            ) : (
+              <Link href="/student"><Button variant="outline">بوابة الطالب</Button></Link>
+            )}
+          </div>
+          {/* الإغلاق يوقف الأداء الجديد ولا يحجب نتيجة سابقة: الاطلاع متاح دائماً */}
+          {renderPreviousAttemptsCard(false)}
+          {exam && reviewPrevAttempt && (
+            <ExamReviewDialog
+              open={!!reviewPrevAttempt}
+              onOpenChange={(v) => { if (!v) setReviewPrevAttempt(null) }}
+              exam={exam}
+              attempts={[reviewPrevAttempt]}
+              studentName={reviewPrevAttempt.studentName}
+            />
           )}
           <TeacherSignature />
         </div>
@@ -915,6 +1047,9 @@ export default function TakeExamPage() {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-8">
+        {/* نتائج المحاولات السابقة على هذا الجهاز — اطلاع بلا استهلاك محاولة */}
+        {step === "identify" && renderPreviousAttemptsCard(true)}
+
         {step === "identify" && !portalStudent && accessMode !== "public" && (
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-8 text-center space-y-5">
             <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center mx-auto">
@@ -1311,6 +1446,9 @@ export default function TakeExamPage() {
             })()}
             {!submissionError && (
               <>
+                <p className="text-xs text-gray-500 rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-200 dark:border-gray-700 px-3 py-2">
+                  نتيجتك محفوظة — عُد إلى هذا الرابط لاحقاً من نفس الجهاز وستجد زر الاطلاع عليها ومراجعة إجاباتك (قراءة فقط) دون استهلاك أي محاولة.
+                </p>
                 <p className="text-sm text-gray-400">إعداد {TEACHER_NAME}</p>
                 <Link href={portalStudent ? "/student" : "/"}><Button variant="outline">{portalStudent ? "العودة لبوابة الطالب" : "العودة للصفحة الرئيسية"}</Button></Link>
               </>
@@ -1318,6 +1456,18 @@ export default function TakeExamPage() {
           </div>
           )
         })()}
+
+        {/* مراجعة محاولة سابقة: يعرض المحاولة المعتمدة/المختارة بقواعد الإطلاق نفسها —
+            لا تحرير إطلاقاً، الإجابات المسلمة للقراءة فقط */}
+        {exam && reviewPrevAttempt && (
+          <ExamReviewDialog
+            open={!!reviewPrevAttempt}
+            onOpenChange={(v) => { if (!v) setReviewPrevAttempt(null) }}
+            exam={exam}
+            attempts={[reviewPrevAttempt]}
+            studentName={reviewPrevAttempt.studentName}
+          />
+        )}
 
         <TeacherSignature />
       </main>

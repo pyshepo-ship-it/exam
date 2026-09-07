@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { CheckCircle2, XCircle, Eye, Loader2, Award, Hourglass, MessageSquare, BookOpenCheck } from "lucide-react"
 import type { Exam, ExamAttempt, Question, SubQuestion } from "@/lib/data-storage"
-import { getExams, isEssayQuestionForMode } from "@/lib/data-storage"
+import { getExams, isEssayQuestionForMode, adoptedAttemptOf } from "@/lib/data-storage"
 import { fetchPublicData } from "@/lib/supabase/sync"
 import { isSupabaseConfigured } from "@/lib/supabase/client"
 import { attemptNeedsResultRelease, effectiveAttemptScore } from "@/lib/portal-content"
@@ -74,9 +74,13 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
 
   const theExam = fullExam || exam
 
-  // إن وُجدت نتيجة معلنة نفضّلها دائماً؛ لا تختار محاولة مقالية معلّقة لمجرد أن جزأها الآلي أعلى.
+  // اعتماد المعلم يتقدم على كل قاعدة اختيار: المحاولة المعتمدة هي ما يراه الطالب،
+  // ولو كانت بانتظار الإطلاق أظهرنا حالة الانتظار بدل التبديل لمحاولة أخرى.
   const best = useMemo(() => {
     if (!attempts.length) return null
+    const adopted = adoptedAttemptOf(attempts)
+    if (adopted) return adopted
+    // إن وُجدت نتيجة معلنة نفضّلها دائماً؛ لا تختار محاولة مقالية معلّقة لمجرد أن جزأها الآلي أعلى.
     const visible = attempts.filter(attempt => !attemptNeedsResultRelease(attempt))
     const pool = visible.length > 0 ? visible : attempts
     return pool.reduce((currentBest, attempt) =>
@@ -143,7 +147,11 @@ export function ExamReviewDialog({ open, onOpenChange, exam, attempts, studentNa
               <div className="mt-1 space-y-0.5">
                 {pct !== null && <p className={`text-xl font-extrabold ${scoreColor(pct)}`}>{pct}%</p>}
                 <p className="text-xs text-gray-500">
-                  {attempts.length > 1 ? `أفضل محاولة معلنة من ${attempts.filter(attempt => !attemptNeedsResultRelease(attempt)).length || 1} محاولات — ${studentName}` : studentName}
+                  {best.adoptedAt && attempts.length > 1
+                    ? `المحاولة التي اعتمدها معلمك من ${attempts.length} محاولات — ${studentName}`
+                    : attempts.length > 1
+                    ? `أفضل محاولة معلنة من ${attempts.filter(attempt => !attemptNeedsResultRelease(attempt)).length || 1} محاولات — ${studentName}`
+                    : studentName}
                   {best.manualOverride ? " • درجة معدلة من المعلم" : ""}
                 </p>
               </div>

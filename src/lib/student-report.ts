@@ -37,6 +37,7 @@ import {
   getStudentHistory,
   getSessions,
   getStoredAcademicYear,
+  effectiveReportAttempts,
 } from "./data-storage"
 import { getTeacherName, getTeacherSignatureLine } from "./branding"
 import { DUE_CYCLE_LABELS, dueCycle, duePeriodKey, duePeriodLabel } from "./billing"
@@ -236,7 +237,8 @@ export function buildStudentGradeRows(
       max: m.maxScore,
       pending: false,
     })),
-    ...report.examAttempts.map(a => {
+    // إن اعتمد المعلم محاولةً في اختبار ما ظهرت وحدها هنا وتخفت محاولاته الأخرى فيه
+    ...effectiveReportAttempts(report.examAttempts).map(a => {
       const pending = attemptNeedsResultRelease(a)
       const monthLabel = examAttemptMonthLabel(a)
       const submitted = (a.submittedAt || "").slice(0, 10)
@@ -244,7 +246,7 @@ export function buildStudentGradeRows(
         title: a.examTitle || "اختبار إلكتروني",
         subtitle: pending
           ? `نتيجة بانتظار مراجعة وإطلاق المعلم${monthLabel ? ` — ${monthLabel}` : ""}`
-          : [monthLabel, submitted].filter(Boolean).join(" — "),
+          : [monthLabel, submitted].filter(Boolean).join(" — ") + (a.adoptedAt ? " — معتمدة من المعلم" : ""),
         score: pending ? 0 : effectiveAttemptScore(a),
         max: a.totalMarks,
         pending,
@@ -326,7 +328,8 @@ function gradesBlocks(report: StudentReport): Block[] {
       </tr>
     `)
   }
-  for (const a of report.examAttempts) {
+  // اعتماد المعلم لمحاولة يُظهرها وحدها في درجات هذا الاختبار — باقي المحاولات محفوظة لكنها لا تُطبع
+  for (const a of effectiveReportAttempts(report.examAttempts)) {
     const pendingRelease = attemptNeedsResultRelease(a)
     if (pendingRelease) {
       // لا تُطبع درجة جزئية أو تعليقات المقال في تقرير الطالب قبل قرار الإطلاق.
@@ -347,7 +350,7 @@ function gradesBlocks(report: StudentReport): Block[] {
     rows.push(`
       <tr>
         <td style="${TD}">${esc(dateLabel(a.submittedAt))}</td>
-        <td style="${TD}text-align:right;font-weight:700;">${esc(a.examTitle || "اختبار إلكتروني")}${a.manualOverride ? " <span style=\"background:#f3e8ff;color:#7e22ce;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">درجة معدلة يدوياً</span>" : ""}</td>
+        <td style="${TD}text-align:right;font-weight:700;">${esc(a.examTitle || "اختبار إلكتروني")}${a.manualOverride ? " <span style=\"background:#f3e8ff;color:#7e22ce;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">درجة معدلة يدوياً</span>" : ""}${a.adoptedAt ? " <span style=\"background:#fef3c7;color:#92400e;border-radius:999px;padding:1px 8px;font-size:10.5px;font-weight:800;\">المحاولة المعتمدة</span>" : ""}</td>
         <td style="${TD}">اختبار إلكتروني${examAttemptMonthLabel(a) ? ` — ${esc(examAttemptMonthLabel(a))}` : ""}</td>
         <td style="${TD}white-space:nowrap;font-weight:800;">${finalScore} / ${a.totalMarks}${a.manualOverride ? ` <span style=\"color:#9ca3af;font-size:10.5px;font-weight:600;\">(الآلي: ${a.score})</span>` : ""}</td>
         <td style="${TD}font-weight:800;color:${pct >= 85 ? "#047857" : pct >= 50 ? "#a16207" : "#b91c1c"};">${pct}%</td>

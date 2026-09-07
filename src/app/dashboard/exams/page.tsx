@@ -31,6 +31,7 @@ Timer,
   XCircle,
   AlertCircle,
   Hourglass,
+  Star,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -92,7 +93,7 @@ import {
   ORNAMENT_OPACITY_CHOICES,
   type OrnamentDensity,
 } from "@/lib/exam-templates"
-import { getExamAttempts, saveExamAttempts } from "@/lib/data-storage"
+import { getExamAttempts, saveExamAttempts, adoptExamAttempt, clearExamAttemptAdoption, attemptStudentKey, adoptedAttemptOf } from "@/lib/data-storage"
 import { attemptNeedsResultRelease, effectiveAttemptScore, examAvailability } from "@/lib/portal-content"
 import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 import { grantDeviceAttempt } from "@/lib/supabase/sync"
@@ -2983,7 +2984,10 @@ export default function ExamsPage() {
           </DialogHeader>
 
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 px-3 py-2">
-            <p className="text-xs text-indigo-800 dark:text-indigo-200">تُعرض التعليقات ودرجات المقال للطالب فقط بعد إطلاق النتيجة.</p>
+            <p className="text-xs text-indigo-800 dark:text-indigo-200">
+              تُعرض التعليقات ودرجات المقال للطالب فقط بعد إطلاق النتيجة.
+              كل محاولات الطالب محفوظة ومجمعة تحت اسمه — اعتمادك محاولةً بـ⭐ يجعلها وحدها الظاهرة له، في هذا الاختبار فقط ودون أي أثر على اختباراته الأخرى أو على أي طالب آخر.
+            </p>
             <Button size="sm" variant="outline" onClick={releaseAllReviewed} className="shrink-0 border-indigo-300 text-indigo-700">
               إطلاق كل النتائج المكتملة
             </Button>
@@ -2993,9 +2997,50 @@ export default function ExamsPage() {
             {resultsAttempts.length === 0 ? (
               <p className="text-center text-gray-500 py-8">لا توجد محاولات بعد — تظهر هنا فور أداء الطلاب للاختبار</p>
             ) : (
-              resultsAttempts.slice().reverse().map(a => {
-                // resultsVersion يعيد رسم القائمة فور حفظ مراجعة أو تعليق.
-                void resultsVersion
+              (() => {
+                // تجميع محاولات كل طالب تحت اسمه — السجل كامل محفوظ، ولا يُمسح شيء عند إعادة المحاولة.
+                // الهوية: المسجل بحسابه والزائر بهاتفه/جهازه (attemptStudentKey)، والنطاق هذا الاختبار وحده.
+                const groupsMap = new Map<string, ExamAttempt[]>()
+                for (const att of resultsAttempts) {
+                  const key = attemptStudentKey(att)
+                  const list = groupsMap.get(key) || []
+                  list.push(att)
+                  groupsMap.set(key, list)
+                }
+                const studentGroups = [...groupsMap.entries()]
+                  .map(([key, list]) => ({
+                    key,
+                    attempts: list.slice().sort((x, y) => (y.submittedAt || "").localeCompare(x.submittedAt || "")),
+                  }))
+                  .sort((g1, g2) => (g2.attempts[0]?.submittedAt || "").localeCompare(g1.attempts[0]?.submittedAt || ""))
+                return studentGroups.map(({ key: groupKey, attempts: groupAttempts }) => {
+                  // resultsVersion يعيد رسم القائمة فور حفظ مراجعة أو تعليق أو اعتماد.
+                  void resultsVersion
+                  const groupHead = groupAttempts[0]
+                  const adoptedInGroup = adoptedAttemptOf(groupAttempts)
+                  const adoptedNo = adoptedInGroup ? groupAttempts.length - groupAttempts.indexOf(adoptedInGroup) : 0
+                  return (
+                    <div key={groupKey} className="rounded-2xl border border-gray-300 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/30 p-2.5 sm:p-3 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2 px-1">
+                        <span className="font-extrabold text-gray-900 dark:text-white">{groupHead.studentName}</span>
+                        {!groupHead.studentId && (
+                          <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">زائر — بلا حساب</Badge>
+                        )}
+                        {groupAttempts.length > 1 && (
+                          <Badge className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">عدد المحاولات: {groupAttempts.length}</Badge>
+                        )}
+                        {adoptedInGroup && (
+                          <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                            <Star className="w-3 h-3 ml-1 fill-amber-400 text-amber-500" />
+                            المحاولة {adoptedNo} معتمدة — تظهر للطالب وحدها
+                          </Badge>
+                        )}
+                        {groupAttempts.length > 1 && !adoptedInGroup && (
+                          <span className="text-[11px] text-gray-400">دون اعتماد — يظهر للطالب أفضل نتيجة مُطلقة</span>
+                        )}
+                      </div>
+                      {groupAttempts.map((a, groupIdx) => {
+                const attemptNo = groupAttempts.length - groupIdx
                 const summary = resultsExam ? summarizeAttemptReview(resultsExam, a.answers) : null
                 const finalScore = effectiveAttemptScore(a)
                 const overridden = !!a.manualOverride
@@ -3009,13 +3054,22 @@ export default function ExamsPage() {
                   ? "مراجعة مكتملة — بانتظار الإطلاق"
                   : "النتيجة ظاهرة للطالب"
                 return (
-                  <div key={a.id} className={`rounded-xl border p-3 ${overridden ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20" : "border-gray-200 dark:border-gray-800"}`}>
+                  <div key={a.id} className={`rounded-xl border p-3 ${
+                    a.adoptedAt
+                      ? "border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-950/20"
+                      : overridden
+                      ? "border-purple-300 dark:border-purple-800 bg-purple-50/50 dark:bg-purple-950/20"
+                      : "border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900"
+                  }`}>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
                         <div className="font-bold text-gray-900 dark:text-white">
-                          {a.studentName}
-                          {!a.studentId && (
-                            <Badge className="mr-2 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300">زائر — بلا حساب</Badge>
+                          المحاولة {attemptNo}
+                          {a.adoptedAt && (
+                            <Badge className="mr-2 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                              <Star className="w-3 h-3 ml-1 fill-amber-400 text-amber-500" />
+                              المعتمدة للطالب
+                            </Badge>
                           )}
                           {overridden && (
                             <Badge className="mr-2 bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300">درجة معدلة يدوياً</Badge>
@@ -3058,6 +3112,37 @@ export default function ExamsPage() {
                         <span className={`font-extrabold text-lg ${finalScore >= (a.totalMarks || 1) * 0.5 ? "text-green-600" : "text-red-600"}`}>
                           {finalScore} / {a.totalMarks || 0}
                         </span>
+                        {a.adoptedAt ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-400 text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40"
+                            title="إلغاء الاعتماد — يعود الطالب لرؤية أفضل نتيجة مُطلقة"
+                            onClick={() => {
+                              clearExamAttemptAdoption(a.id)
+                              setResultsVersion(version => version + 1)
+                              toast.success(`أُلغي اعتماد محاولة ${a.studentName} — سيرى أفضل نتيجة مُطلقة`)
+                            }}
+                          >
+                            <Star className="w-4 h-4 fill-amber-400 text-amber-500" />
+                            إلغاء الاعتماد
+                          </Button>
+                        ) : groupAttempts.length > 1 ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-amber-300 text-amber-700 dark:text-amber-300"
+                            title="اعتماد هذه المحاولة لتظهر لهذا الطالب وحده في هذا الاختبار فقط — لا يؤثر على اختباراته الأخرى ولا على أي طالب آخر"
+                            onClick={() => {
+                              adoptExamAttempt(a.id)
+                              setResultsVersion(version => version + 1)
+                              toast.success(`اعتُمدت المحاولة ${attemptNo} لـ ${a.studentName} — ستظهر له وحدها في هذا الاختبار`)
+                            }}
+                          >
+                            <Star className="w-4 h-4" />
+                            اعتمادها للطالب
+                          </Button>
+                        ) : null}
                         <Button
                           variant="outline"
                           size="sm"
@@ -3102,7 +3187,11 @@ export default function ExamsPage() {
                     </div>
                   </div>
                 )
-              })
+                      })}
+                    </div>
+                  )
+                })
+              })()
             )}
           </div>
         </DialogContent>

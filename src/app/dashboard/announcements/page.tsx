@@ -20,6 +20,8 @@ import {
   X,
   CalendarClock,
   ClipboardList,
+  RotateCcw,
+  EyeOff,
 } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -281,23 +283,43 @@ export default function AnnouncementsPage() {
     }
   }
 
+  // إخفاء ناعم: الإزالة من اللوحة لا تمحو التكريم — يبقى مثبتاً في تقرير الطالب.
+  // الحذف النهائي (الذي يمحو التكريم من التقرير أيضاً) خيار منفصل وصريح في قسم المُزالين.
   const deleteHonoree = (id: string) => {
-    if (!confirm("هل تريد إزالة هذا الطالب من لوحة الشرف؟")) return
+    if (!confirm("إزالة هذا الطالب من لوحة الشرف؟\nسيبقى تكريمه محفوظاً ويظهر في تقريره — فقط يختفي من عرض اللوحة.")) return
+    const updated = honorees.map(h => (h.id === id ? { ...h, removedAt: new Date().toISOString() } : h))
+    setHonorees(updated)
+    trySave(() => saveHonorees(updated))
+    toast.success("أُزيل من اللوحة — وتكريمه محفوظ في تقرير الطالب")
+  }
+
+  const restoreHonoree = (id: string) => {
+    const updated = honorees.map(h => (h.id === id ? { ...h, removedAt: undefined } : h))
+    setHonorees(updated)
+    trySave(() => saveHonorees(updated))
+    toast.success("أُعيد عرضه في لوحة الشرف")
+  }
+
+  const deleteHonoreeForever = (id: string, name: string) => {
+    if (!confirm(`حذف نهائي لتكريم ${name}؟\nسيُمحى من اللوحة ومن تقرير الطالب معاً — ولا يمكن التراجع.`)) return
     const updated = honorees.filter(h => h.id !== id)
     setHonorees(updated)
     trySave(() => saveHonorees(updated))
-    toast.success("تمت الإزالة من لوحة الشرف")
+    toast.success("حُذف التكريم نهائياً من اللوحة والتقرير")
   }
 
-  // تجميع المدعوين حسب المجموعة
+  // تجميع المكرَّمين حسب المجموعة — اللوحة تعرض غير المُزالين فقط
   const honoreesByGroup = allGroups
     .map(group => ({
       group,
       items: honorees
-        .filter(h => h.groupId === group.id)
+        .filter(h => h.groupId === group.id && !h.removedAt)
         .sort((a, b) => b.year - a.year || b.month - a.month),
     }))
     .filter(entry => entry.items.length > 0)
+
+  // سجل من أُزيلوا من اللوحة — تكريمهم محفوظ في تقاريرهم ويمكن إرجاعهم بضغطة
+  const removedHonorees = honorees.filter(h => h.removedAt)
 
   // ============ الملفات ============
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -535,7 +557,7 @@ export default function AnnouncementsPage() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <p className="text-sm text-gray-500 dark:text-gray-400">
               تُعرض أسماء المتميزين على الصفحة الرئيسية طوال الشهر الذي تحدده، ويمكن إضافة أكثر من
-              طالب في نفس المجموعة.
+              طالب في نفس المجموعة. إزالة أحدهم من اللوحة لا تمحو تكريمه من تقريره.
             </p>
             <Button
               onClick={openHonorDialog}
@@ -588,10 +610,11 @@ export default function AnnouncementsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            title="إزالة من اللوحة فقط — يبقى التكريم محفوظاً في تقرير الطالب"
                             onClick={() => deleteHonoree(h.id)}
                             className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <EyeOff className="w-4 h-4" />
                           </Button>
                         </div>
                       )
@@ -600,6 +623,55 @@ export default function AnnouncementsPage() {
                 </CardContent>
               </Card>
             ))
+          )}
+
+          {/* من أُزيلوا من اللوحة — تكريمهم لا يزال ظاهراً في تقاريرهم */}
+          {removedHonorees.length > 0 && (
+            <Card className="bg-white dark:bg-gray-900 border-dashed border-gray-300 dark:border-gray-700">
+              <CardContent className="p-5">
+                <h3 className="font-bold text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-2">
+                  <EyeOff className="w-4 h-4 text-gray-400" />
+                  أُزيلوا من اللوحة ({removedHonorees.length})
+                </h3>
+                <p className="text-xs text-gray-400 mb-4">
+                  لا يظهرون في لوحة الشرف، لكن تكريمهم محفوظ ويظهر في تقرير كل طالب («مرات التكريم»).
+                </p>
+                <div className="space-y-2">
+                  {removedHonorees.map(h => (
+                    <div
+                      key={h.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 px-4 py-3"
+                    >
+                      <div className="min-w-0">
+                        <p className="font-bold text-gray-800 dark:text-gray-200">{h.studentName}</p>
+                        <p className="text-xs text-gray-400 truncate">{h.reason} — {MONTHS[h.month - 1]} {h.year}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => restoreHonoree(h.id)}
+                          className="border-emerald-300 text-emerald-700 dark:text-emerald-300"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          استرجاع للّوحة
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="يمحو التكريم من اللوحة ومن تقرير الطالب معاً — لا رجوع"
+                          onClick={() => deleteHonoreeForever(h.id, h.studentName)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          حذف نهائي
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
           )}
         </div>
       )}

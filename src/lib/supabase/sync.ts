@@ -418,6 +418,8 @@ export const toHonoreeRow = (h: any) => ({
   reason: h.reason,
   month: h.month,
   year: h.year,
+  // إخفاء ناعم من لوحة الشرف (028) — عمود اختياري يُتسامح مع غيابه عند الرفع
+  removed_at: h.removedAt || null,
   created_at: h.createdAt,
 });
 
@@ -429,6 +431,7 @@ export const fromHonoreeRow = (row: any) => ({
   reason: row.reason,
   month: row.month,
   year: row.year,
+  removedAt: nil(row.removed_at),
   createdAt: row.created_at,
 });
 
@@ -923,7 +926,24 @@ export function pushAnnouncements(rows: any[]) {
   return pushRows("announcements", rows.map(toAnnouncementRow));
 }
 export function pushHonorees(rows: any[]) {
-  return pushRows("honorees", rows.map(toHonoreeRow));
+  return (async () => {
+    try {
+      await pushRows("honorees", rows.map(toHonoreeRow));
+    } catch (err: any) {
+      // الجدول قد لا يكون مُنشأ بعد — لا نكسر باقي المزامنة
+      if (err?.code === "42P01" || /does not exist/i.test(err?.message || "")) return;
+      // عمود removed_at لم يُرحَّل بعد (028) — نرفع بدونه ولا نوقف المزامنة
+      if (isMissingColumnError(err, "removed_at")) {
+        await pushRows("honorees", rows.map((r) => {
+          const row = toHonoreeRow(r);
+          delete row.removed_at;
+          return row;
+        }));
+        return;
+      }
+      throw err;
+    }
+  })();
 }
 export function pushSharedFiles(rows: any[]) {
   return pushRows("shared_files", rows.map(toSharedFileRow));
@@ -1424,6 +1444,8 @@ const toAttemptRow = (a: any) => {
     ...(a.resultReleasedAt ? { resultReleasedAt: a.resultReleasedAt } : {}),
     ...(a.reviewedAt ? { reviewedAt: a.reviewedAt } : {}),
     ...(a.timedOut === true ? { timedOut: true } : {}),
+    // اعتماد المعلم لمحاولة بعينها — يُحفظ داخل نفس حقيبة JSONB فلا يحتاج عموداً جديداً
+    ...(a.adoptedAt ? { adoptedAt: a.adoptedAt } : {}),
   }
   return {
     id: a.id,
@@ -1473,6 +1495,7 @@ const fromAttemptRow = (row: any) => {
     resultReleasedAt: typeof reviewMeta?.resultReleasedAt === "string" ? reviewMeta.resultReleasedAt : undefined,
     reviewedAt: typeof reviewMeta?.reviewedAt === "string" ? reviewMeta.reviewedAt : undefined,
     timedOut: reviewMeta?.timedOut === true || undefined,
+    adoptedAt: typeof reviewMeta?.adoptedAt === "string" ? reviewMeta.adoptedAt : undefined,
     startedAt: row.started_at,
     submittedAt: row.submitted_at,
     durationSeconds: Number(row.duration_seconds) || 0,
@@ -1954,7 +1977,10 @@ export async function submitOnlineExamTimerSession(
 export async function submitPublicHonoree(h: any): Promise<void> {
   const sb = getSupabase();
   if (!sb) return;
-  const { error } = await sb.from("honorees").insert(toHonoreeRow(h));
+  // تكريم جديد لا يكون مُزالاً قط — نسقط المفتاح حتى لا يفشل الإدراج على قاعدة لم ترحّل 028 بعد
+  const row = toHonoreeRow(h);
+  if (!row.removed_at) delete (row as Record<string, unknown>).removed_at;
+  const { error } = await sb.from("honorees").insert(row);
   if (error && error.code !== "23505") {
     console.warn("submitPublicHonoree:", error);
   }
@@ -2059,7 +2085,8 @@ export async function fetchPublicData(): Promise<PublicData | null> {
 
   return {
     announcements: (ann.data as any[]).map(fromAnnouncementRow),
-    honorees: (hon.data as any[]).map(fromHonoreeRow),
+    // اللوحة العامة تعرض غير المُزالين فقط — المُزال يبقى محفوظاً لتقارير الطلاب
+    honorees: (hon.data as any[]).filter((h: any) => !h.removed_at).map(fromHonoreeRow),
     files: (files.data as any[]).map(fromSharedFileRow),
     links: (links.data as any[]).map(fromLinkRow),
     grades: (grades.data as any[]).map((g) => ({ id: g.id, name: g.name })),
@@ -2479,9 +2506,10 @@ export async function fetchStudentPortalDataResult(token: string): Promise<Stude
         dues: (raw.dues || []).map(fromDueRow),
         payments: (raw.payments || []).map(fromPaymentRow),
         attendance: (raw.attendance || []).map(fromAttendanceRow),
+        // تكريمات الطالب لتقريره: كلها بلا استثناء — الإزالة من اللوحة لا تمحو التكريم
         honorees: hon.filter((h) => h.student_id === student.id).map(fromHonoreeRow),
-        // لوحة شرف صفه: متفوقو مجموعات صفه فقط
-        gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id)).map(fromHonoreeRow),
+        // لوحة شرف صفه: متفوقو مجموعات صفه غير المُزالين من اللوحة فقط
+        gradeHonorees: hon.filter((h) => gradeGroupIds.has(h.group_id) && !h.removed_at).map(fromHonoreeRow),
         history: (raw.history || []).map(fromStudentHistoryRow),
         transferRequests: (raw.transferRequests || []).map(fromGroupTransferRequestRow),
         // إعلانات صفه فقط (المستهدف فارغ = عام)
