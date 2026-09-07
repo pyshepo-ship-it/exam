@@ -622,6 +622,12 @@ export interface ExamAttempt {
     reason?: string
     at: string
   }
+  /**
+   * اعتماد المعلم لهذه المحاولة لتكون هي الظاهرة للطالب (درجة/مراجعة/تقرير).
+   * واحدة كحد أقصى لكل طالب داخل الاختبار الواحد — لا تُلغيها محاولة جديدة،
+   * فالاعتماد قرار صريح من المعلم يبقى حتى يغيّره.
+   */
+  adoptedAt?: string
 }
 
 // ---- الإعلانات ولوحة الشرف والملفات والروابط ----
@@ -672,6 +678,11 @@ export interface Honoree {
   examId?: string
   score?: number
   autoPromoted?: boolean
+  /**
+   * توقيت إزالته من عرض لوحة الشرف (إخفاء ناعم). وجوده يخفيه من اللوحة
+   * ويبقيه ظاهراً في تقرير الطالب — فالتكريم واقعة تاريخية لا تُمحى بإزالة العرض.
+   */
+  removedAt?: string
   createdAt: string
 }
 
@@ -959,6 +970,72 @@ export const saveExamAttempts = (attempts: ExamAttempt[], opts?: { sync?: boolea
   saveToStore(STORAGE_KEYS.EXAM_ATTEMPTS, attempts)
   if (opts?.sync === false) return
   queuePush(() => pushExamAttempts(attempts))
+}
+
+/**
+ * هوية صاحب المحاولة لأغراض التجميع والاعتماد:
+ * الطالب المسجَّل بحسابه، والزائر بهاتفه ثم بصمة جهازه ثم اسمه — بهذا الترتيب.
+ * تُستخدم دائماً مقترنةً بـ examId حتى لا يختلط طالب بآخر عبر الاختبارات،
+ * والمساحات (sid:/phone:/fp:/name:) تمنع تصادم زائر مع طالب مسجل أبداً.
+ */
+export const attemptStudentKey = (a: Pick<ExamAttempt, "studentId" | "phone" | "deviceFp" | "studentName">): string => {
+  if (a.studentId) return `sid:${a.studentId}`
+  if (a.phone && a.phone.trim()) return `phone:${a.phone.trim()}`
+  if (a.deviceFp) return `fp:${a.deviceFp}`
+  return `name:${(a.studentName || "").trim()}`
+}
+
+/**
+ * اعتماد محاولة لتظهر للطالب: تُعتمد هذه المحاولة وحدها ويُلغى اعتماد محاولات
+ * الطالب نفسه في الاختبار نفسه فقط. العزل صارم بالزوج (الاختبار + هوية الطالب):
+ * لا تُمس محاولة في اختبار آخر ولا محاولة لطالب آخر (مسجل أو زائر).
+ */
+export const adoptExamAttempt = (attemptId: string): void => {
+  const all = getExamAttempts()
+  const target = all.find(a => a.id === attemptId)
+  if (!target) return
+  const key = attemptStudentKey(target)
+  const now = new Date().toISOString()
+  const updated = all.map(a =>
+    a.examId === target.examId && attemptStudentKey(a) === key
+      ? { ...a, adoptedAt: a.id === attemptId ? now : undefined }
+      : a
+  )
+  saveExamAttempts(updated)
+}
+
+/** إلغاء اعتماد محاولة واحدة — يعود عرض الطالب للقاعدة الافتراضية (أفضل نتيجة مُطلقة) */
+export const clearExamAttemptAdoption = (attemptId: string): void => {
+  const updated = getExamAttempts().map(a => (a.id === attemptId ? { ...a, adoptedAt: undefined } : a))
+  saveExamAttempts(updated)
+}
+
+/** المحاولة المعتمدة ضمن مجموعة محاولات (طالب واحد/اختبار واحد غالباً) — أو null إن لم يعتمد المعلم شيئاً */
+export const adoptedAttemptOf = <T extends Pick<ExamAttempt, "adoptedAt">>(attempts: T[]): T | null => {
+  const adopted = attempts.filter(a => a.adoptedAt)
+  if (!adopted.length) return null
+  return adopted.reduce((latest, a) => ((a.adoptedAt || "") > (latest.adoptedAt || "") ? a : latest))
+}
+
+/**
+ * محاولات الظهور في تقارير الطالب: إن اعتمد المعلم محاولةً لاختبار ما ظهرت وحدها
+ * وتخفت باقي محاولاته فيه؛ وإن لم يعتمد شيئاً يظهر كل شيء كما كان.
+ * التجميع بالاختبار فقط — كل اختبار عالم مستقل لا يؤثر في غيره.
+ */
+export const effectiveReportAttempts = <T extends { id: string; examId: string; adoptedAt?: string }>(attempts: T[]): T[] => {
+  const byExam = new Map<string, T[]>()
+  for (const a of attempts) {
+    const list = byExam.get(a.examId) || []
+    list.push(a)
+    byExam.set(a.examId, list)
+  }
+  const hidden = new Set<string>()
+  for (const list of byExam.values()) {
+    const adopted = adoptedAttemptOf(list)
+    if (!adopted) continue
+    for (const a of list) if (a.id !== adopted.id) hidden.add(a.id)
+  }
+  return attempts.filter(a => !hidden.has(a.id))
 }
 
 // Announcements

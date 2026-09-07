@@ -69,7 +69,7 @@ import {
   type OnlineExamTimerResultAttempt,
 } from "@/lib/supabase/sync"
 import { getRememberedOnlineExamResultSessions } from "@/lib/online-exam-result-session"
-import { getOnlineExamMode, type Announcement, type Exam, type InquiryThread, type Honoree } from "@/lib/data-storage"
+import { getOnlineExamMode, adoptedAttemptOf, type Announcement, type Exam, type InquiryThread, type Honoree } from "@/lib/data-storage"
 import { ExamReviewDialog } from "@/components/exam-review-dialog"
 import {
   reportFromPortalData,
@@ -574,7 +574,12 @@ export default function StudentPortalPage() {
                       const pendingAttempts = myAttempts.filter(a => attemptNeedsResultRelease(a))
                       // لا تدخل درجات المقال أو التعليقات في أفضل نتيجة قبل إطلاقها الصريح.
                       const releasedAttempts = myAttempts.filter(a => isAttemptResultReleased(a))
-                      const bestAttempt = releasedAttempts.length
+                      // إن اعتمد المعلم محاولةً فهي ما يراه الطالب: درجةً إن كانت مُطلقة،
+                      // وحالة انتظار إن لم تُطلق بعد — لا نستبدلها بمحاولة أخرى.
+                      const adopted = adoptedAttemptOf(myAttempts)
+                      const bestAttempt = adopted
+                        ? (attemptNeedsResultRelease(adopted) ? null : adopted)
+                        : releasedAttempts.length
                         ? releasedAttempts.reduce((best, current) => effectiveAttemptScore(current) >= effectiveAttemptScore(best) ? current : best)
                         : null
                       const best = bestAttempt ? effectiveAttemptScore(bestAttempt) : null
@@ -582,7 +587,9 @@ export default function StudentPortalPage() {
                       const bestPct = best !== null && bestTotal ? Math.round((best / bestTotal) * 100) : null
                       const scoreTone =
                         bestPct === null ? "" : bestPct >= 85 ? "bg-green-500" : bestPct >= 50 ? "bg-amber-500" : "bg-red-500"
-                      const latestPending = pendingAttempts.slice().sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))[0]
+                      const latestPending = adopted && attemptNeedsResultRelease(adopted)
+                        ? adopted
+                        : pendingAttempts.slice().sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))[0]
                       const autoScore = latestPending ? (typeof latestPending.autoScore === "number" ? latestPending.autoScore : latestPending.score) : 0
                       const autoTotal = latestPending?.autoTotal || 0
                       const awaitingRelease = pendingAttempts.some(a => a.gradingStatus === "reviewed")
@@ -653,7 +660,11 @@ export default function StudentPortalPage() {
                                   {bestPct !== null && ` — ${bestPct}%`}
                                 </p>
                                 <p className="text-[11px] text-gray-400">
-                                  {releasedAttempts.length > 1 ? `أفضل نتيجة مُعلنة من ${releasedAttempts.length} محاولات` : "نتيجتك المُعلنة"}
+                                  {bestAttempt?.adoptedAt && myAttempts.length > 1
+                                    ? `الدرجة التي اعتمدها معلمك من ${myAttempts.length} محاولات`
+                                    : releasedAttempts.length > 1
+                                    ? `أفضل نتيجة مُعلنة من ${releasedAttempts.length} محاولات`
+                                    : "نتيجتك المُعلنة"}
                                   {e.reviewOpen && " • المراجعة متاحة"}
                                 </p>
                               </div>
