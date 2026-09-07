@@ -65,10 +65,12 @@ import {
   submitOnlineExamTimerSession,
   getOnlineExamAnswerFeedback,
   getOnlineExamTimerResult,
+  getOnlineExamTimerStatus,
   type OnlineExamTimerSession,
   type OnlineExamTimerResultAttempt,
 } from "@/lib/supabase/sync"
 import { TeacherSignature } from "@/components/teacher-signature"
+import { onlineExamDurationMinutes, remainingExamSeconds, elapsedExamSeconds, type OnlineExamClock } from "@/lib/online-exam-clock"
 import { TEACHER_NAME } from "@/lib/branding"
 import { getPortalSession } from "@/lib/student-accounts"
 import {
@@ -142,8 +144,11 @@ function gradeFromServerAttempt(
 
 export default function TakeExamPage() {
   const params = useParams<{ id: string }>()
-  const examId = params?.id
+  // تغيير الرابط ينشئ مكوّناً جديداً: لا تنتقل إجابات/مؤقت/نتيجة بين اختبارين.
+  return <ExamSessionPage key={params?.id} examId={params?.id} />
+}
 
+function ExamSessionPage({ examId }: { examId?: string }) {
   const [step, setStep] = useState<Step>("load")
   const [exam, setExam] = useState<Exam | null>(null)
   const [grades, setGrades] = useState<Grade[]>([])
@@ -184,6 +189,8 @@ export default function TakeExamPage() {
   // يزيد عند وصول مفتاح تغذية راجعة مصرح به من الخادم ليعاد رسم النص تحت السؤال.
   const [feedbackVersion, setFeedbackVersion] = useState(0)
   const [submissionError, setSubmissionError] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [syncError, setSyncError] = useState("")
   /** مسجَّل الدخول لكن الاختبار المفتوح للجميع ليس لصفه → يدخل كزائر */
   const [memberOtherGrade, setMemberOtherGrade] = useState(false)
   // نتائج المحاولات السابقة المستعادة من كوكي أسرار الجلسات على هذا الجهاز
@@ -194,7 +201,15 @@ export default function TakeExamPage() {
   // المراجع تمنع أن يلتقط مؤقت الخلفية نسخة قديمة من إجابات الطالب عند انتهاء الوقت.
   const answersRef = React.useRef<Record<string, ExamAttemptAnswer>>({})
   const startedAtRef = React.useRef("")
-  const deadlineAtRef = React.useRef(0)
+  const clockRef = React.useRef<OnlineExamClock | null>(null)
+  const mountedRef = React.useRef(true)
+  const previousRequestRef = React.useRef(0)
+  const nextTimerSubmitRef = React.useRef(0)
+  const lastSubmitReasonRef = React.useRef<"manual" | "timer">("manual")
+  const progressInFlightRef = React.useRef<Promise<void> | null>(null)
+  const progressQueuedRef = React.useRef(false)
+  const statusInFlightRef = React.useRef(false)
+  const syncServerClockRef = React.useRef<() => Promise<void>>(async () => undefined)
   const timerSessionRef = React.useRef<OnlineExamTimerSession | null>(null)
   const examIdentityRef = React.useRef<ExamStartIdentity | null>(null)
   const progressSaveTimerRef = React.useRef<number | null>(null)
@@ -207,18 +222,29 @@ export default function TakeExamPage() {
    * يستعيد نتائج محاولات هذا الاختبار التي نفّذها هذا الجهاز سابقاً، عبر أسرار
    * الجلسات المحفوظة في كوكي فقط — لا يقرأ أي جدول عام ولا يبدأ جلسة جديدة
    * ولا يستهلك محاولات. ما يظهر يحكمه البواب الآمن للخادم (الإجابة مملوكة
-   * لصاحبها، والتصحيح اليدوي لا يُكشف قبل إطلاق النتيجة).
+   * لصاحبها، والتصحيح اليدوي لا يُكشف قبل إطلاق النتيجة). محاولة الحساب
+   * تتطلب دخول صاحبها؛ قدرة الزائر مسموحة في الاختبار العام فقط. نفرض ذلك
+   * هنا للعرض، وفي RPC أيضاً حتى لا تتسرب البيانات في استجابة الشبكة.
    */
-  const restorePreviousAttempts = async (targetExamId: string) => {
+  const restorePreviousAttempts = async (targetExamId: string, isPublicExam: boolean) => {
+    const request = ++previousRequestRef.current
+    setPreviousAttempts([])
+    setReviewPrevAttempt(null)
+    const viewer = getPortalSession()
     try {
       const remembered = getRememberedOnlineExamResultSessions()
       if (remembered.length === 0) return
-      const results = await Promise.all(remembered.map(saved => getOnlineExamTimerResult(saved)))
+      const results = await Promise.all(remembered.map(saved => getOnlineExamTimerResult(saved, viewer?.token)))
+      const currentViewer = getPortalSession()
+      // الخروج/تبديل الحساب أو الرابط أثناء الطلب يلغي الرد كله، لا فلتره فقط.
+      if (!mountedRef.current || request !== previousRequestRef.current
+        || viewer?.studentId !== currentViewer?.studentId || viewer?.token !== currentViewer?.token) return
       const mine = results
         .filter((r): r is typeof r & { attempt: OnlineExamTimerResultAttempt } =>
           r.ok && r.state === "submitted" && !!r.attempt && r.attempt.examId === targetExamId
         )
         .map(r => r.attempt)
+        .filter(attempt => attempt.studentId ? attempt.studentId === currentViewer?.studentId : isPublicExam)
       mine.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""))
       setPreviousAttempts(mine)
     } catch {
@@ -227,12 +253,24 @@ export default function TakeExamPage() {
   }
 
   useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (progressSaveTimerRef.current) window.clearTimeout(progressSaveTimerRef.current)
+      progressQueuedRef.current = false
+      timerSessionRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
     const load = async () => {
       let found = getExams().find(e => e.id === examId) || null
       let nextGrades = getGrades()
       let nextStudents = getStudents()
 
-      const publicData = await fetchPublicData()
+      const publicData = await fetchPublicData().catch(() => null)
+      if (cancelled) return
       if (publicData) {
         // في البيئة السحابية تكون هذه النسخة من RPC المنقّى، فتتقدم على أي
         // ذاكرة قديمة ربما احتوت مفاتيح التصحيح من شاشة معلم سابقة.
@@ -273,6 +311,7 @@ export default function TakeExamPage() {
       let me = portal ? nextStudents.find(s => s.id === portal.studentId) || undefined : undefined
       if (portal && !me) {
         const remote = await fetchStudentSelfRecord(portal.token || "").catch(() => null)
+        if (cancelled) return
         if (remote) {
           me = remote as Student
           nextStudents = [...nextStudents.filter(s => s.id !== me!.id), me]
@@ -312,13 +351,17 @@ export default function TakeExamPage() {
         const markClosed = (reason: string) => {
           setClosedReason(reason)
           setExam(sealExamForStudent(found).view)
-          void restorePreviousAttempts(found.id)
+          void restorePreviousAttempts(found.id, mode === "public")
           setStep("closed")
           setGrades(nextGrades)
         }
 
         // بوابة الإتاحة الزمنية (تسري على الأعضاء والزوار معاً)
-        const av = examAvailability(found)
+        const availabilityClock = publicData?.examServerClock
+        const availabilityNow = availabilityClock
+          ? new Date(availabilityClock.serverNow + Math.max(0, performance.now() - availabilityClock.receivedAt))
+          : undefined
+        const av = examAvailability(found, availabilityNow)
         if (!av.open) {
           markClosed(av.reason || "الاختبار مغلق حالياً")
           return
@@ -367,11 +410,26 @@ export default function TakeExamPage() {
       } else {
         setStep("identify")
         // بالتوازي مع نموذج البدء: استرجاع نتائج هذا الجهاز السابقة للاطلاع عليها
-        void restorePreviousAttempts(found.id)
+        void restorePreviousAttempts(found.id, examAccessMode(found) === "public")
       }
     }
-    load()
+    void load()
+    return () => { cancelled = true }
   }, [examId])
+
+  // الكوكي قد يتغير من تبويب آخر. عند العودة لا نبقي نتيجة للحساب السابق.
+  useEffect(() => {
+    if (!exam || (step !== "identify" && step !== "closed")) return
+    const refresh = () => {
+      if (document.visibilityState !== "hidden") void restorePreviousAttempts(exam.id, examAccessMode(exam) === "public")
+    }
+    window.addEventListener("focus", refresh)
+    document.addEventListener("visibilitychange", refresh)
+    return () => {
+      window.removeEventListener("focus", refresh)
+      document.removeEventListener("visibilitychange", refresh)
+    }
+  }, [exam, step])
 
   const groups = getGroupsOfGrade(grades, gradeId)
 
@@ -390,10 +448,13 @@ export default function TakeExamPage() {
   const beginExam = async (identity: ExamStartIdentity): Promise<boolean> => {
     if (!exam) return false
     setEntryError("")
-    const requestedMinutes = exam.duration && exam.duration > 0 ? exam.duration : 60
-    const localNow = Date.now()
-    let started = new Date(localNow).toISOString()
-    let deadline = localNow + requestedMinutes * 60 * 1000
+    const requestedMinutes = onlineExamDurationMinutes(exam.duration)
+    let started = new Date().toISOString()
+    let clock: OnlineExamClock = {
+      deadline: performance.now() + requestedMinutes * 60000,
+      durationMs: requestedMinutes * 60000,
+      serverTime: 0,
+    }
     const sessionId = newExamNonce("session")
     const attemptId = newExamNonce(`attempt-${exam.id}`)
 
@@ -402,11 +463,13 @@ export default function TakeExamPage() {
       attemptId,
       examId: exam.id,
       studentId: identity.studentId,
+      studentToken: identity.studentId ? getPortalSession()?.token : undefined,
       studentName: identity.studentName,
       phone: identity.phone,
       gradeId: identity.gradeId,
       groupId: identity.groupId,
     })
+    if (!mountedRef.current) return false
     if (serverStart.configured && !serverStart.session) {
       setEntryError(`لا يمكن بدء الاختبار بأمان الآن: ${serverStart.error || "تحقق من اتصال الخادم وترحيل جلسات الاختبار"}`)
       return false
@@ -423,7 +486,7 @@ export default function TakeExamPage() {
       // المفرج عنها لاحقاً من RPC المقيد من دون فتح جدول المحاولات للزوار.
       rememberOnlineExamResultSession(serverStart.session)
       started = serverStart.session.startedAt
-      deadline = serverExpiresAt
+      clock = serverStart.session.clock
       setServerTimerActive(true)
     } else {
       // بيئة تطوير بلا Supabase فقط: يبقى عداد الواجهة مفيداً للاختبارات المحلية.
@@ -439,13 +502,14 @@ export default function TakeExamPage() {
     answersRef.current = {}
     examIdentityRef.current = identity
     startedAtRef.current = started
-    deadlineAtRef.current = deadline
+    clockRef.current = clock
+    nextTimerSubmitRef.current = 0
     setAnswers({})
     setResult(null)
     setSubmissionError("")
     setAutoSubmitted(false)
     setStartedAt(started)
-    setRemaining(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)))
+    setRemaining(remainingExamSeconds(clock, performance.now()))
     setCursor(0)
     setStep("exam")
     return true
@@ -462,13 +526,13 @@ export default function TakeExamPage() {
         return
       }
       setStarting(true)
-      await beginExam({
-        studentId: portalStudent.id,
-        studentName: portalStudent.name,
-        gradeId,
-        groupId,
-      })
-      setStarting(false)
+      try {
+        await beginExam({ studentId: portalStudent.id, studentName: portalStudent.name, gradeId, groupId })
+      } catch {
+        setEntryError("تعذر بدء جلسة الاختبار — تحقق من الاتصال وأعد المحاولة")
+      } finally {
+        if (mountedRef.current) setStarting(false)
+      }
       return
     }
 
@@ -510,193 +574,255 @@ export default function TakeExamPage() {
     setGradeId(check.identity.gradeId)
     setGroupId(check.identity.groupId)
     setStarting(true)
-    await beginExam({
-      studentName: check.identity.name,
-      phone: check.identity.phone,
-      gradeId: check.identity.gradeId,
-      groupId: check.identity.groupId,
-    })
-    setStarting(false)
+    try {
+      await beginExam({
+        studentName: check.identity.name, phone: check.identity.phone,
+        gradeId: check.identity.gradeId, groupId: check.identity.groupId,
+      })
+    } catch {
+      setEntryError("تعذر بدء جلسة الاختبار — تحقق من الاتصال وأعد المحاولة")
+    } finally {
+      if (mountedRef.current) setStarting(false)
+    }
   }
 
   /** يطلب مفاتيح الإجابات التي يسمح إعداد الظهور لهذه الجلسة بعرضها فقط. */
   const refreshServerAnswerFeedback = async () => {
     const session = timerSessionRef.current
     if (!session || answerVisibility === "never") return false
-    const feedback = await getOnlineExamAnswerFeedback(session)
+    const feedback = await getOnlineExamAnswerFeedback(session, getPortalSession()?.token)
+    if (!mountedRef.current || session !== timerSessionRef.current) return false
     if (!feedback.ok || !feedback.answers) return false
     specRef.current = feedback.answers
     setFeedbackVersion(previous => previous + 1)
     return true
   }
 
-  /** آخر لقطة إجابات تُرفع للخادم؛ بعد انتهاء الموعد يرجع الخادم state=expired. */
-  const flushServerProgress = async (snapshot = answersRef.current) => {
-    const session = timerSessionRef.current
-    if (!session) return { ok: true, state: undefined as "saved" | "expired" | "submitted" | undefined }
-    const saved = await saveOnlineExamTimerProgress(session, snapshot)
-    if (saved.state === "saved" && answerVisibility === "afterEach") {
-      void refreshServerAnswerFeedback()
-    }
-    if (saved.state === "expired" && !submittedRef.current) {
-      void finishExamRef.current?.("timer")
-    }
-    return saved
+  const applyServerClock = (clock?: OnlineExamClock) => {
+    if (!clock || !mountedRef.current || clock.serverTime < (clockRef.current?.serverTime || 0)) return
+    clockRef.current = clock
+    setRemaining(remainingExamSeconds(clock, performance.now()))
   }
-  flushServerProgressRef.current = () => flushServerProgress()
 
-  const queueServerProgressSave = (snapshot: Record<string, ExamAttemptAnswer>) => {
+  // تسلسل الرفع + قراءة أحدث الإجابات عند الإرسال، لا لقطة debounce قديمة.
+  // يمنع رد حفظ بطيء من إعادة إجابة أقدم فوق الأحدث، ويحدّ عدد الطلبات المتوازية.
+  const flushServerProgress = (): Promise<void> => {
+    if (!timerSessionRef.current || submittedRef.current) return Promise.resolve()
+    progressQueuedRef.current = true
+    if (progressInFlightRef.current) return progressInFlightRef.current
+    const session = timerSessionRef.current
+    const upload = async () => {
+      try {
+        do {
+          progressQueuedRef.current = false
+          const saved = await saveOnlineExamTimerProgress(session, answersRef.current)
+          if (!mountedRef.current || session !== timerSessionRef.current) return
+          applyServerClock(saved.clock)
+          if (saved.state === "saved") {
+            setSyncError("")
+            if (answerVisibility === "afterEach") void refreshServerAnswerFeedback()
+          } else if (saved.state === "expired" || saved.state === "submitted") {
+            void finishExamRef.current?.("timer")
+          } else {
+            setSyncError("تعذر حفظ آخر الإجابات في الخادم. تحقق من الاتصال ولا تغلق الصفحة؛ سنعيد المحاولة.")
+          }
+        } while (progressQueuedRef.current && !submittedRef.current)
+      } finally {
+        progressInFlightRef.current = null
+      }
+    }
+    progressInFlightRef.current = upload()
+    return progressInFlightRef.current
+  }
+  flushServerProgressRef.current = flushServerProgress
+
+  const syncServerClock = async () => {
+    const session = timerSessionRef.current
+    if (!session || submittedRef.current || statusInFlightRef.current) return
+    statusInFlightRef.current = true
+    try {
+      const status = await getOnlineExamTimerStatus(session)
+      if (!mountedRef.current || session !== timerSessionRef.current || submittedRef.current) return
+      if (!status.ok) {
+        setSyncError("تعذر التحقق من وقت الخادم. تحقق من الاتصال ولا تغلق الصفحة.")
+        return
+      }
+      applyServerClock(status.clock)
+      if (status.state === "expired" || status.state === "submitted") void finishExamRef.current?.("timer")
+    } finally {
+      statusInFlightRef.current = false
+    }
+  }
+  syncServerClockRef.current = syncServerClock
+
+  const queueServerProgressSave = () => {
     if (!timerSessionRef.current) return
     if (progressSaveTimerRef.current) window.clearTimeout(progressSaveTimerRef.current)
     progressSaveTimerRef.current = window.setTimeout(() => {
       progressSaveTimerRef.current = null
-      void flushServerProgress(snapshot)
+      void flushServerProgressRef.current()
     }, 450)
   }
 
   const setAnswer = (id: string, patch: ExamAttemptAnswer) => {
+    if (submittedRef.current || remainingExamSeconds(clockRef.current, performance.now()) <= 0) return
     const next = { ...answersRef.current, [id]: { ...answersRef.current[id], ...patch } }
     answersRef.current = next
     setAnswers(next)
-    queueServerProgressSave(next)
+    queueServerProgressSave()
   }
 
   const finishExam = async (reason: "manual" | "timer" = "manual") => {
-    if (!exam || (step === "result" && !submissionError) || submittedRef.current) return
+    if (!mountedRef.current || !exam || step !== "exam" || submittedRef.current) return
     submittedRef.current = true
-    if (submissionError) setSubmissionError("")
-    const timedOut = reason === "timer" || (deadlineAtRef.current > 0 && Date.now() >= deadlineAtRef.current)
-    if (timedOut) {
-      setAutoSubmitted(true)
-      setRemaining(0)
-    }
-
-    // التصحيح الآلي لا يشمل المقال في الأنماط الجديدة؛ تبقى درجة المقال صفراً حتى مراجعة المعلم.
-    const submittedAnswers = answersRef.current
-    let finalAnswers = submittedAnswers
-    let graded = sealRef.current
-      ? gradeSealedExam(exam, sealRef.current, finalAnswers)
-      : gradeExam(exam, finalAnswers)
-    const identity = examIdentityRef.current || {
-      studentId: portalStudent?.id,
-      studentName: (portalStudent?.name || guestIdentity?.name || studentName).trim(),
-      phone: portalStudent ? undefined : guestIdentity?.phone,
-      gradeId,
-      groupId,
-    }
-    const activeTimerSession = timerSessionRef.current
-    const totalMarks = Math.round((graded.autoTotal + graded.manualTotal) * 100) / 100
-    let attempt: ExamAttempt = {
-      id: activeTimerSession?.attemptId || newExamNonce(`attempt-${exam.id}`),
-      examId: exam.id,
-      studentId: identity.studentId,
-      studentName: identity.studentName,
-      phone: identity.phone,
-      groupId: identity.groupId,
-      gradeId: identity.gradeId,
-      answers: finalAnswers,
-      // يبقى score مرادفاً للجزء الآلي للتوافق مع السجلات والتقارير القديمة.
-      score: graded.score,
-      totalMarks,
-      autoScore: graded.score,
-      autoTotal: graded.autoTotal,
-      manualScore: 0,
-      manualTotal: graded.manualTotal,
-      gradingStatus: graded.manualTotal > 0 ? "pending_review" : "reviewed",
-      startedAt: startedAtRef.current || startedAt || new Date().toISOString(),
-      submittedAt: new Date().toISOString(),
-      // لا نمنح وقتاً إضافياً لو عاد المتصفح من الخلفية بعد الموعد النهائي.
-      durationSeconds: Math.min(
-        (exam.duration && exam.duration > 0 ? exam.duration : 60) * 60,
-        Math.max(0, Math.round((Date.now() - new Date(startedAtRef.current || startedAt || Date.now()).getTime()) / 1000))
-      ),
-      timedOut,
-    }
-
-    if (activeTimerSession) {
-      if (progressSaveTimerRef.current) {
-        window.clearTimeout(progressSaveTimerRef.current)
-        progressSaveTimerRef.current = null
-      }
-      const serverSubmission = await submitOnlineExamTimerSession(activeTimerSession, submittedAnswers)
-      if (!serverSubmission.ok || !serverSubmission.attempt) {
-        // لا نلجأ إلى إدراج مباشر عند وجود جلسة خادم: ذلك سيلتف على ساعة الخادم.
-        submittedRef.current = false
-        setSubmissionError(serverSubmission.error || "لم يؤكد الخادم تسليم إجاباتك")
-        setResult(graded)
-        setStep("result")
-        return
-      }
-      const remote = serverSubmission.attempt as Partial<ExamAttempt>
-      finalAnswers = remote.answers && typeof remote.answers === "object"
-        ? remote.answers as Record<string, ExamAttemptAnswer>
-        : submittedAnswers
-      // عند انتهاء الوقت قد يستعمل الخادم آخر لقطة قبلها؛ اعرض هذه اللقطة
-      // الفعلية في شاشة النتيجة ولا تعرض إجابة محلية لم تُقبل.
-      answersRef.current = finalAnswers
-      setAnswers(finalAnswers)
-      // عند «في نهاية الاختبار» لا تصل المفاتيح إلا الآن وبعد تسليم الخادم.
-      if (answerVisibility === "atEnd") await refreshServerAnswerFeedback()
-      graded = gradeFromServerAttempt(exam, finalAnswers, remote, specRef.current)
-      attempt = {
-        ...attempt,
-        ...remote,
-        id: typeof remote.id === "string" ? remote.id : attempt.id,
-        examId: typeof remote.examId === "string" ? remote.examId : attempt.examId,
-        studentId: typeof remote.studentId === "string" ? remote.studentId : undefined,
-        studentName: typeof remote.studentName === "string" ? remote.studentName : attempt.studentName,
-        phone: typeof remote.phone === "string" ? remote.phone : undefined,
-        groupId: typeof remote.groupId === "string" ? remote.groupId : attempt.groupId,
-        gradeId: typeof remote.gradeId === "string" ? remote.gradeId : attempt.gradeId,
-        answers: finalAnswers,
-        answerFeedback: Object.keys(specRef.current).length > 0 ? { ...specRef.current } : undefined,
-        score: typeof remote.score === "number" ? remote.score : graded.score,
-        totalMarks: typeof remote.totalMarks === "number" ? remote.totalMarks : Math.round((graded.autoTotal + graded.manualTotal) * 100) / 100,
-        autoScore: typeof remote.autoScore === "number" ? remote.autoScore : graded.score,
-        autoTotal: typeof remote.autoTotal === "number" ? remote.autoTotal : graded.autoTotal,
-        manualScore: typeof remote.manualScore === "number" ? remote.manualScore : 0,
-        manualTotal: typeof remote.manualTotal === "number" ? remote.manualTotal : graded.manualTotal,
-        gradingStatus: remote.gradingStatus === "pending_review" || remote.gradingStatus === "reviewed"
-          ? remote.gradingStatus
-          : graded.manualTotal > 0 ? "pending_review" : "reviewed",
-        startedAt: typeof remote.startedAt === "string" ? remote.startedAt : attempt.startedAt,
-        submittedAt: typeof remote.submittedAt === "string" ? remote.submittedAt : attempt.submittedAt,
-        durationSeconds: typeof remote.durationSeconds === "number" ? remote.durationSeconds : attempt.durationSeconds,
-        timedOut: remote.timedOut === true || timedOut,
-      }
-      if (serverSubmission.timedOut) setAutoSubmitted(true)
-    }
-
-    setResult(graded)
+    setSubmitting(true)
+    lastSubmitReasonRef.current = reason
     setSubmissionError("")
-    const all = [...getExamAttempts().filter(existing => existing.id !== attempt.id), attempt]
-    // إذا أنشأ الخادم المحاولة، نحدّث ذاكرة التبويب للعرض فقط ولا نعيد إدراجها كزائر.
-    saveExamAttempts(all, activeTimerSession ? { sync: false } : undefined)
+    try {
+      // الصفر المحلي لا يعني انتهاء جلسة خادم؛ له بوابة مستقلة في RPC التسليم.
+      const timedOut = !timerSessionRef.current && remainingExamSeconds(clockRef.current, performance.now()) <= 0
 
-    // لا تدخل المحاولة المختلطة أو المقالية لوحة الشرف قبل اكتمال التصحيح اليدوي وإطلاق النتيجة.
-    const honorScore = attempt.autoScore ?? graded.score
-    const honorTotal = attempt.autoTotal ?? graded.autoTotal
-    const canPromote = graded.manualTotal === 0 &&
-      shouldPromoteToHonor(exam, {
-        autoTotal: honorTotal,
-        percent: honorTotal > 0 ? (honorScore / honorTotal) * 100 : 0,
-      })
-    if (canPromote) {
-      const honoree = maybeAutoHonor({
-        exam,
-        studentName: attempt.studentName,
-        groupId: attempt.groupId,
-        studentId: attempt.studentId,
-        score: honorScore,
-        totalMarks: honorTotal,
-        sync: false,
-      })
-      if (honoree) {
-        setHonored(true)
-        submitPublicHonoree(honoree).catch(() => {})
+      // التصحيح الآلي لا يشمل المقال في الأنماط الجديدة؛ تبقى درجة المقال صفراً حتى مراجعة المعلم.
+      const submittedAnswers = answersRef.current
+      let finalAnswers = submittedAnswers
+      let graded = sealRef.current
+        ? gradeSealedExam(exam, sealRef.current, finalAnswers)
+        : gradeExam(exam, finalAnswers)
+      const identity = examIdentityRef.current || {
+        studentId: portalStudent?.id,
+        studentName: (portalStudent?.name || guestIdentity?.name || studentName).trim(),
+        phone: portalStudent ? undefined : guestIdentity?.phone,
+        gradeId,
+        groupId,
       }
+      const activeTimerSession = timerSessionRef.current
+      const totalMarks = Math.round((graded.autoTotal + graded.manualTotal) * 100) / 100
+      let attempt: ExamAttempt = {
+        id: activeTimerSession?.attemptId || newExamNonce(`attempt-${exam.id}`),
+        examId: exam.id,
+        studentId: identity.studentId,
+        studentName: identity.studentName,
+        phone: identity.phone,
+        groupId: identity.groupId,
+        gradeId: identity.gradeId,
+        answers: finalAnswers,
+        // يبقى score مرادفاً للجزء الآلي للتوافق مع السجلات والتقارير القديمة.
+        score: graded.score,
+        totalMarks,
+        autoScore: graded.score,
+        autoTotal: graded.autoTotal,
+        manualScore: 0,
+        manualTotal: graded.manualTotal,
+        gradingStatus: graded.manualTotal > 0 ? "pending_review" : "reviewed",
+        startedAt: startedAtRef.current || startedAt || new Date().toISOString(),
+        submittedAt: new Date().toISOString(),
+        // لا نمنح وقتاً إضافياً لو عاد المتصفح من الخلفية بعد الموعد النهائي.
+        durationSeconds: clockRef.current ? elapsedExamSeconds(clockRef.current, performance.now()) : 0,
+        timedOut,
+      }
+
+      if (activeTimerSession) {
+        if (progressSaveTimerRef.current) {
+          window.clearTimeout(progressSaveTimerRef.current)
+          progressSaveTimerRef.current = null
+        }
+        const serverSubmission = await submitOnlineExamTimerSession(activeTimerSession, submittedAnswers, {
+          onlyIfExpired: reason === "timer", studentToken: getPortalSession()?.token,
+        })
+        if (!mountedRef.current || activeTimerSession !== timerSessionRef.current) return
+        if (serverSubmission.ok && serverSubmission.state === "in_progress") {
+          applyServerClock(serverSubmission.clock)
+          submittedRef.current = false
+          // التقدير سبق الخادم (مثلاً بسبب بطء الشبكة): لا إغلاق ولا نتيجة كاذبة.
+          return
+        }
+        if (!serverSubmission.ok || !serverSubmission.attempt) {
+          // لا نلجأ إلى إدراج مباشر عند وجود جلسة خادم: ذلك سيلتف على ساعة الخادم.
+          submittedRef.current = false
+          setSubmissionError(serverSubmission.error || "لم يؤكد الخادم تسليم إجاباتك")
+          // تبقى الورقة وإجاباتها أمام الطالب. الفشل ليس تسليماً ولا نتيجة.
+          nextTimerSubmitRef.current = performance.now() + 5000
+          return
+        }
+        const remote = serverSubmission.attempt as Partial<ExamAttempt>
+        finalAnswers = remote.answers && typeof remote.answers === "object"
+          ? remote.answers as Record<string, ExamAttemptAnswer>
+          : submittedAnswers
+        // عند انتهاء الوقت قد يستعمل الخادم آخر لقطة قبلها؛ اعرض هذه اللقطة
+        // الفعلية في شاشة النتيجة ولا تعرض إجابة محلية لم تُقبل.
+        answersRef.current = finalAnswers
+        setAnswers(finalAnswers)
+        // عند «في نهاية الاختبار» لا تصل المفاتيح إلا الآن وبعد تسليم الخادم.
+        if (answerVisibility === "atEnd") await refreshServerAnswerFeedback()
+        if (!mountedRef.current || activeTimerSession !== timerSessionRef.current) return
+        graded = gradeFromServerAttempt(exam, finalAnswers, remote, specRef.current)
+        attempt = {
+          ...attempt,
+          ...remote,
+          id: typeof remote.id === "string" ? remote.id : attempt.id,
+          examId: typeof remote.examId === "string" ? remote.examId : attempt.examId,
+          studentId: typeof remote.studentId === "string" ? remote.studentId : undefined,
+          studentName: typeof remote.studentName === "string" ? remote.studentName : attempt.studentName,
+          phone: typeof remote.phone === "string" ? remote.phone : undefined,
+          groupId: typeof remote.groupId === "string" ? remote.groupId : attempt.groupId,
+          gradeId: typeof remote.gradeId === "string" ? remote.gradeId : attempt.gradeId,
+          answers: finalAnswers,
+          answerFeedback: Object.keys(specRef.current).length > 0 ? { ...specRef.current } : undefined,
+          score: typeof remote.score === "number" ? remote.score : graded.score,
+          totalMarks: typeof remote.totalMarks === "number" ? remote.totalMarks : Math.round((graded.autoTotal + graded.manualTotal) * 100) / 100,
+          autoScore: typeof remote.autoScore === "number" ? remote.autoScore : graded.score,
+          autoTotal: typeof remote.autoTotal === "number" ? remote.autoTotal : graded.autoTotal,
+          manualScore: typeof remote.manualScore === "number" ? remote.manualScore : 0,
+          manualTotal: typeof remote.manualTotal === "number" ? remote.manualTotal : graded.manualTotal,
+          gradingStatus: remote.gradingStatus === "pending_review" || remote.gradingStatus === "reviewed"
+            ? remote.gradingStatus
+            : graded.manualTotal > 0 ? "pending_review" : "reviewed",
+          startedAt: typeof remote.startedAt === "string" ? remote.startedAt : attempt.startedAt,
+          submittedAt: typeof remote.submittedAt === "string" ? remote.submittedAt : attempt.submittedAt,
+          durationSeconds: typeof remote.durationSeconds === "number" ? remote.durationSeconds : attempt.durationSeconds,
+          timedOut: serverSubmission.timedOut === true,
+        }
+        setAutoSubmitted(serverSubmission.timedOut === true)
+      }
+
+      if (!activeTimerSession) setAutoSubmitted(timedOut)
+      setResult(graded)
+      setSubmissionError("")
+      const all = [...getExamAttempts().filter(existing => existing.id !== attempt.id), attempt]
+      // إذا أنشأ الخادم المحاولة، نحدّث ذاكرة التبويب للعرض فقط ولا نعيد إدراجها كزائر.
+      saveExamAttempts(all, activeTimerSession ? { sync: false } : undefined)
+
+      // لا تدخل المحاولة المختلطة أو المقالية لوحة الشرف قبل اكتمال التصحيح اليدوي وإطلاق النتيجة.
+      const honorScore = attempt.autoScore ?? graded.score
+      const honorTotal = attempt.autoTotal ?? graded.autoTotal
+      const canPromote = graded.manualTotal === 0 &&
+        shouldPromoteToHonor(exam, {
+          autoTotal: honorTotal,
+          percent: honorTotal > 0 ? (honorScore / honorTotal) * 100 : 0,
+        })
+      if (canPromote) {
+        const honoree = maybeAutoHonor({
+          exam,
+          studentName: attempt.studentName,
+          groupId: attempt.groupId,
+          studentId: attempt.studentId,
+          score: honorScore,
+          totalMarks: honorTotal,
+          sync: false,
+        })
+        if (honoree) {
+          setHonored(true)
+          submitPublicHonoree(honoree).catch(() => {})
+        }
+      }
+      setStep("result")
+    } catch {
+      submittedRef.current = false
+      if (mountedRef.current) setSubmissionError("تعذر تأكيد التسليم — إجاباتك باقية في هذه الصفحة، أعد المحاولة")
+      nextTimerSubmitRef.current = performance.now() + 5000
+    } finally {
+      if (mountedRef.current) setSubmitting(false)
     }
-    setStep("result")
   }
 
   // لا يعتمد المؤقت على نسخة قديمة من finishExam أو answers عند وضع المتصفح في الخلفية.
@@ -705,30 +831,44 @@ export default function TakeExamPage() {
   useEffect(() => {
     if (step !== "exam") return
     const tick = () => {
-      const deadline = deadlineAtRef.current
-      const next = deadline ? Math.max(0, Math.ceil((deadline - Date.now()) / 1000)) : 0
+      const now = performance.now()
+      const next = remainingExamSeconds(clockRef.current, now)
       setRemaining(next)
-      if (next <= 0) void finishExamRef.current?.("timer")
+      if (next <= 0 && now >= nextTimerSubmitRef.current && !submittedRef.current) {
+        nextTimerSubmitRef.current = now + 5000
+        void finishExamRef.current?.("timer")
+      }
     }
     tick()
     const timer = window.setInterval(tick, 1000)
     return () => window.clearInterval(timer)
   }, [step])
 
-  // لقطة إضافية عند انتقال التبويب للخلفية؛ الخادم يرفضها تلقائياً بعد الموعد.
+  // لا إغلاق عند مغادرة التبويب. نحفظ قبل الخلفية ونعيد المزامنة عند العودة/
+  // استيقاظ الهاتف أو عودة الإنترنت؛ نبضة دورية تمنع تجويع الحفظ عند كتابة مقال.
   useEffect(() => {
     if (step !== "exam") return
     const flush = () => { void flushServerProgressRef.current() }
+    const resume = () => { void syncServerClockRef.current(); flush() }
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") flush()
+      else resume()
     }
+    // رد الحفظ يحمل الساعة أيضاً؛ لا نضاعف RPC بنبضة حالة منفصلة كل مرة.
+    const heartbeat = window.setInterval(flush, 15000)
     document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("pagehide", flush)
+    window.addEventListener("pageshow", resume)
+    window.addEventListener("online", resume)
+    window.addEventListener("focus", resume)
     return () => {
+      window.clearInterval(heartbeat)
       document.removeEventListener("visibilitychange", onVisibilityChange)
       window.removeEventListener("pagehide", flush)
+      window.removeEventListener("pageshow", resume)
+      window.removeEventListener("online", resume)
+      window.removeEventListener("focus", resume)
     }
-    // نحتاج أحدث الإجابات من ref فقط، ولا نعيد تركيب المستمع مع كل ضغطة.
   }, [step])
 
   // نص الإجابة الصحيحة لسؤال فرعي (من المفتاح المفكوك — يُستخدم في afterEach/atEnd فقط)
@@ -1015,7 +1155,7 @@ export default function TakeExamPage() {
             <div className="min-w-0">
               <h1 className="font-bold truncate">{exam.title}</h1>
               <p className="text-xs text-gray-500">
-                {exam.duration || 60} دقيقة
+                {onlineExamDurationMinutes(exam.duration)} دقيقة
                 {exam.totalMarks ? ` • ${exam.totalMarks} درجة` : ""}
               </p>
               <span
@@ -1217,7 +1357,7 @@ export default function TakeExamPage() {
             )}
 
             <p className="text-xs text-gray-500">
-              بعد البدء يبدأ العدّ التنازلي ({exam.duration || 60} دقيقة) من وقت جلسة الاختبار ولا يمكن إيقافه —
+              بعد البدء يبدأ العدّ التنازلي ({onlineExamDurationMinutes(exam.duration)} دقيقة) من وقت جلسة الاختبار ولا يمكن إيقافه —
               تُحفظ إجاباتك للمعلم مباشرة باسمك ومجموعتك.
             </p>
 
@@ -1247,7 +1387,7 @@ export default function TakeExamPage() {
           <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
             <h2 className="text-xl font-bold">تأكيد بدء الاختبار</h2>
             <p className="text-sm text-gray-500">
-              بعد البدء يبدأ العدّ التنازلي ({exam.duration || 60} دقيقة) من وقت الجلسة ولا يمكن إيقافه.
+              بعد البدء يبدأ العدّ التنازلي ({onlineExamDurationMinutes(exam.duration)} دقيقة) من وقت الجلسة ولا يمكن إيقافه.
             </p>
             <div className="rounded-xl border-2 border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30 p-4 space-y-3">
               <div className="flex items-center justify-between gap-3">
@@ -1302,6 +1442,17 @@ export default function TakeExamPage() {
           const pct = Math.round(((safeCursor + (answered ? 1 : 0)) / items.length) * 100)
           return (
             <div className="space-y-4" data-feedback-version={feedbackVersion}>
+              {(submissionError || syncError || submitting || remaining === 0) && (
+                <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm text-amber-900 dark:text-amber-100 space-y-2">
+                  <p>{submitting ? "جارٍ التحقق من الخادم وتأكيد التسليم…" : submissionError || syncError || "جارٍ التحقق من انتهاء الوقت على الخادم…"}</p>
+                  {(submissionError || syncError) && <p>لا تغلق هذه الصفحة ولا تحدّثها حتى يؤكد الخادم الحفظ أو التسليم.</p>}
+                  {submissionError && (
+                    <Button size="sm" variant="outline" disabled={submitting} onClick={() => void finishExam(lastSubmitReasonRef.current)}>
+                      إعادة محاولة التسليم
+                    </Button>
+                  )}
+                </div>
+              )}
               {/* شريط التقدم */}
               <div className="bg-white dark:bg-gray-900 rounded-2xl border p-4">
                 <div className="flex items-center justify-between text-sm font-bold mb-2">
@@ -1314,7 +1465,7 @@ export default function TakeExamPage() {
               </div>
 
               {/* السؤال الحالي فقط */}
-              <section className="bg-white dark:bg-gray-900 rounded-2xl border p-5 space-y-4">
+              <fieldset disabled={submitting || remaining === 0} className="bg-white dark:bg-gray-900 rounded-2xl border p-5 space-y-4">
                 <h3 className="font-extrabold flex items-center gap-2">
                   <span className="text-white text-xs px-2 py-1 rounded" style={{ background: meta.accent }}>
                     {meta.paperMark}
@@ -1322,7 +1473,7 @@ export default function TakeExamPage() {
                   السؤال {ARABIC_ORDINALS[cur.qi] || cur.qi + 1}: {getQuestionHeader(cur.q)}
                 </h3>
                 {renderSubQuestion(cur.q, cur.sq)}
-              </section>
+              </fieldset>
 
               {/* التنقل: السابق / التالي (يُفتح بعد الإجابة) / إنهاء عند الأخير */}
               <div className="sticky bottom-4 bg-white/95 dark:bg-gray-900/95 backdrop-blur rounded-2xl border p-4 flex items-center justify-between gap-3">
@@ -1333,7 +1484,7 @@ export default function TakeExamPage() {
                   {isLast ? "آخر سؤال — راجع إجابتك ثم أنهِ الاختبار" : "أجب على السؤال ليظهر التالي"}
                 </p>
                 {isLast ? (
-                  <Button onClick={() => void finishExam("manual")} className="bg-gradient-to-r from-emerald-500 to-teal-600">
+                  <Button disabled={submitting || remaining === 0} onClick={() => void finishExam("manual")} className="bg-gradient-to-r from-emerald-500 to-teal-600">
                     إنهاء الاختبار وإظهار النتيجة
                   </Button>
                 ) : (
@@ -1363,15 +1514,6 @@ export default function TakeExamPage() {
               <p className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 text-sm font-bold text-amber-800 dark:text-amber-200">
                 انتهى الوقت المخصص، فحُفظت إجاباتك تلقائياً.
               </p>
-            )}
-            {submissionError && (
-              <div className="rounded-xl border border-rose-300 bg-rose-50 dark:bg-rose-950/30 dark:border-rose-800 p-3 text-sm text-rose-800 dark:text-rose-200">
-                <p className="font-extrabold">لم يؤكد الخادم تسليم المحاولة بعد</p>
-                <p className="mt-1 text-xs">{submissionError}</p>
-                <Button size="sm" variant="outline" onClick={() => void finishExam("timer")} className="mt-2 border-rose-300 text-rose-700">
-                  إعادة محاولة التسليم
-                </Button>
-              </div>
             )}
             {!hasManualReview && !submissionError && (
               <>

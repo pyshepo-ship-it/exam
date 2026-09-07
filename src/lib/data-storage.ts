@@ -614,7 +614,7 @@ export interface ExamAttempt {
   startedAt: string
   submittedAt: string
   durationSeconds: number
-  /** انتهى الوقت وفق ساعة الخادم/المؤقت قبل تسليم المحاولة. */
+  /** انتهى الوقت وفق ساعة الخادم/المؤقت. false صريح، والغائب مجهول في السجلات القديمة. */
   timedOut?: boolean
   /** تعديل يدوي من المعلم لتقدير الدرجة إذا شعر أن التصحيح الآلي غير عادل */
   manualOverride?: {

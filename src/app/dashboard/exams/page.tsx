@@ -94,6 +94,7 @@ import {
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { getExamAttempts, saveExamAttempts, adoptExamAttempt, clearExamAttemptAdoption, attemptStudentKey, adoptedAttemptOf } from "@/lib/data-storage"
+import { onlineExamDurationMinutes, MAX_ONLINE_EXAM_MINUTES } from "@/lib/online-exam-clock"
 import { attemptNeedsResultRelease, effectiveAttemptScore, examAvailability } from "@/lib/portal-content"
 import { BanDeviceButton, DeviceOwnerBadge } from "@/components/devices/device-actions"
 import { grantDeviceAttempt } from "@/lib/supabase/sync"
@@ -357,6 +358,7 @@ export default function ExamsPage() {
         ? {
             ...e,
             deliveryMode: "online",
+            duration: onlineExamDurationMinutes(e.duration),
             allowOnline: panelForm.allowOnline,
             accessMode: panelForm.accessMode,
             availabilityMode: panelForm.availabilityMode,
@@ -847,7 +849,8 @@ export default function ExamsPage() {
       form.availableFrom,
       form.availableUntil
     )
-    const canPublish = online && form.allowOnline && readiness.ready && !scheduleIssue
+    const validDuration = Number.isInteger(form.duration) && form.duration >= 1 && form.duration <= MAX_ONLINE_EXAM_MINUTES
+    const canPublish = online && form.allowOnline && readiness.ready && !scheduleIssue && validDuration
     return {
       id,
       gradeId: form.gradeId === "__all" ? "" : form.gradeId,
@@ -857,7 +860,7 @@ export default function ExamsPage() {
       month: form.month,
       unit: form.unit || undefined,
       academicYear: form.academicYear,
-      duration: form.duration,
+      duration: online ? onlineExamDurationMinutes(form.duration) : form.duration,
       totalMarks: getExamTotalMarks(form.questions),
       questions: form.questions,
       templateId: form.templateId,
@@ -970,7 +973,7 @@ export default function ExamsPage() {
       month: exam.month || new Date().getMonth() + 1,
       unit: exam.unit || "",
       academicYear: exam.academicYear,
-      duration: exam.duration || 60,
+      duration: isOnlineExam(exam) ? onlineExamDurationMinutes(exam.duration) : exam.duration || 60,
       questions: exam.questions,
       templateId: exam.templateId || "classic" as ExamTemplateId,
       showDecorations: exam.showDecorations !== false,
@@ -1039,6 +1042,10 @@ export default function ExamsPage() {
     }
 
     const online = examForm.deliveryMode === "online"
+    if (online && (!Number.isInteger(examForm.duration) || examForm.duration < 1 || examForm.duration > MAX_ONLINE_EXAM_MINUTES)) {
+      toast.error(`مدة الاختبار الإلكتروني يجب أن تكون من 1 إلى ${MAX_ONLINE_EXAM_MINUTES} دقيقة`)
+      return
+    }
     const readiness = getOnlineExamReadiness({
       questions: examForm.questions,
       onlineExamMode: examForm.onlineExamMode,
@@ -1856,8 +1863,11 @@ export default function ExamsPage() {
                     <Label>المدة (د)</Label>
                     <Input
                       type="number"
+                      min={examForm.deliveryMode === "online" ? 1 : 0}
+                      max={examForm.deliveryMode === "online" ? MAX_ONLINE_EXAM_MINUTES : undefined}
+                      step={1}
                       value={examForm.duration}
-                      onChange={(e) => setExamForm(prev => ({ ...prev, duration: parseInt(e.target.value) || 0 }))}
+                      onChange={(e) => setExamForm(prev => ({ ...prev, duration: Number(e.target.value) }))}
                       className="mt-1"
                     />
                   </div>
