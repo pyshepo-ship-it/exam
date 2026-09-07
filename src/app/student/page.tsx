@@ -161,7 +161,7 @@ export default function StudentPortalPage() {
     // يملك هذا المتصفح أسرار جلساتها العشوائية؛ لا تُسحب أي نتائج خام عامة.
     const resultSessions = getRememberedOnlineExamResultSessions()
     const resultRows = await Promise.all(resultSessions.map(async saved => {
-      const result = await getOnlineExamTimerResult(saved)
+      const result = await getOnlineExamTimerResult(saved, s.token)
       return result.ok && result.state === "submitted" && result.attempt?.studentId === s.studentId
         ? result.attempt
         : null
@@ -174,6 +174,9 @@ export default function StudentPortalPage() {
       examAttempts: [...attemptsById.values()],
     }
 
+    // لا تعرض رداً بدأ بحساب سابق إذا تبدل/انتهى الدخول أثناء الطلب.
+    const viewer = getPortalSession()
+    if (viewer?.studentId !== s.studentId || viewer?.token !== s.token) return
     setReport(reportFromPortalData(portalDataWithSecureAttempts))
     setGradeHonorees(portalData.gradeHonorees || [])
     setGradeGroups(portalData.gradeGroups || [])

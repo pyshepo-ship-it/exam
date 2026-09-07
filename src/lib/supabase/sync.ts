@@ -8,6 +8,7 @@
 // ============================================================
 
 import { createClient, isSupabaseConfigured } from "./client";
+import { clockFromServer, onlineExamDurationMinutes, type OnlineExamClock, type OnlineExamServerTime } from "../online-exam-clock";
 import {
   readRows as storeRows,
   writeRows as setStore,
@@ -261,7 +262,7 @@ export const toExamRow = (e: any) => ({
   unit: e.unit || null,
   // academic_year عمود NOT NULL — نضمن وجود قيمة دائماً
   academic_year: e.academicYear || "",
-  duration: e.duration ?? null,
+  duration: persistedExamDeliveryMode(e) === "online" ? onlineExamDurationMinutes(e.duration) : e.duration ?? null,
   total_marks: e.totalMarks ?? null,
   // نغلّف الأسئلة مع إعدادات القالب داخل JSONB حتى لا نحتاج عموداً جديداً
   questions: {
@@ -759,7 +760,8 @@ function isMissingColumnError(err: any, column: string): boolean {
  *
  * PostgREST يبحث عن الدالة بأسماء الوسائط المرسلة، فإن أُضيف وسيط جديد في
  * ترحيل لم يُشغَّل بعد يعود الخطأ PGRST202 «Could not find the function ...».
- * نكتشفه لنعيد المحاولة بالتوقيع القديم بدل أن تضيع إجابة الطالب.
+ * بعض مسارات الاستبيانات تتراجع عنده للتوافق. أما الاختبارات (029) فترفض
+ * الدالة القديمة بأمان لأنها لا تتحقق من التوقيت/الملكية المطلوبة.
  */
 function isMissingRpcArgError(err: any): boolean {
   const code = String(err?.code || "")
@@ -1443,7 +1445,9 @@ const toAttemptRow = (a: any) => {
     ...(a.gradingStatus ? { gradingStatus: a.gradingStatus } : {}),
     ...(a.resultReleasedAt ? { resultReleasedAt: a.resultReleasedAt } : {}),
     ...(a.reviewedAt ? { reviewedAt: a.reviewedAt } : {}),
-    ...(a.timedOut === true ? { timedOut: true } : {}),
+    // false معلومة خادمية صريحة، لا تُسقط عند حفظ مراجعة/اعتماد المعلم.
+    // الغائب يبقى مجهولاً؛ لا نستنتج false من سجل قديم ناقص.
+    ...(typeof a.timedOut === "boolean" ? { timedOut: a.timedOut } : {}),
     // اعتماد المعلم لمحاولة بعينها — يُحفظ داخل نفس حقيبة JSONB فلا يحتاج عموداً جديداً
     ...(a.adoptedAt ? { adoptedAt: a.adoptedAt } : {}),
   }
@@ -1494,7 +1498,7 @@ const fromAttemptRow = (row: any) => {
       : undefined,
     resultReleasedAt: typeof reviewMeta?.resultReleasedAt === "string" ? reviewMeta.resultReleasedAt : undefined,
     reviewedAt: typeof reviewMeta?.reviewedAt === "string" ? reviewMeta.reviewedAt : undefined,
-    timedOut: reviewMeta?.timedOut === true || undefined,
+    timedOut: typeof reviewMeta?.timedOut === "boolean" ? reviewMeta.timedOut : undefined,
     adoptedAt: typeof reviewMeta?.adoptedAt === "string" ? reviewMeta.adoptedAt : undefined,
     startedAt: row.started_at,
     submittedAt: row.submitted_at,
@@ -1762,11 +1766,13 @@ export interface PublicData {
   settings: Record<string, string>;
   /** false = Supabase متصل لكن ترحيل API الآمن للاختبارات غير موجود/فشل. */
   examsAvailable: boolean;
+  /** مرساة قراءة عامة لبوابة الإتاحة، في ذاكرة الطلب فقط لا في سجل الاختبار. */
+  examServerClock?: { serverNow: number; receivedAt: number };
   exams: ReturnType<typeof fromExamRow>[];
 }
 
 // ============================================================
-// جلسة الاختبار ذات ساعة الخادم (Migration 015)
+// جلسة الاختبار ذات ساعة الخادم (015 + إصلاح التوقيت والخصوصية 029)
 // ============================================================
 // لا تحمل هذه الدوال مفتاح التصحيح إلى الخادم من العميل. الخادم يحدد بداية
 // الجلسة ونهايتها، ولا يقبل حفظ إجابات جديدة بعد expiresAt.
@@ -1776,18 +1782,18 @@ export interface OnlineExamSessionInput {
   attemptId: string;
   examId: string;
   studentId?: string;
+  studentToken?: string;
   studentName: string;
   phone?: string;
   gradeId: string;
   groupId: string;
 }
 
-export interface OnlineExamTimerSession {
+export interface OnlineExamTimerSession extends OnlineExamServerTime {
   id: string;
   secret: string;
   attemptId: string;
-  startedAt: string;
-  expiresAt: string;
+  clock: OnlineExamClock;
 }
 
 export interface OnlineExamTimerStartResult {
@@ -1797,82 +1803,100 @@ export interface OnlineExamTimerStartResult {
   error?: string;
 }
 
-/** يبدأ المؤقت من PostgreSQL. في موقع مهيأ لا نسمح بالبدء إن لم يُشغّل ترحيل 015. */
-export async function startOnlineExamTimerSession(input: OnlineExamSessionInput): Promise<OnlineExamTimerStartResult> {
+/** لا استثناء شبكة يفلت إلى مؤقت الصفحة أو يترك زر البدء/التسليم معلقاً. */
+async function onlineExamRpc(name: string, args: Record<string, unknown>): Promise<{
+  row?: Record<string, unknown>;
+  clock?: OnlineExamClock;
+  error?: string;
+}> {
   const sb = getSupabase();
-  if (!sb) {
-    return isSupabaseConfigured()
-      ? { configured: true, error: "تعذر الاتصال بخدمة جلسات الاختبار" }
-      : { configured: false };
+  if (!sb) return { error: "Supabase غير متصل" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  const requestStarted = performance.now();
+  try {
+    const request = sb.rpc(name, args);
+    const { data, error } = await (typeof request.abortSignal === "function"
+      ? request.abortSignal(controller.signal) : request);
+    const receivedAt = performance.now();
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) {
+      return { error: error && isMissingRpcArgError(error)
+        ? "يلزم تحديث دوال الاختبار في الخادم (الترحيل 029) ثم إعادة المحاولة"
+        : error?.message || "تعذر الاتصال بخادم الاختبار — حاول مجدداً" };
+    }
+    const row = data as Record<string, unknown>;
+    const timing = typeof row.startedAt === "string" && typeof row.expiresAt === "string" && typeof row.serverNow === "string"
+      ? { startedAt: row.startedAt, expiresAt: row.expiresAt, serverNow: row.serverNow } : null;
+    return { row, clock: timing ? clockFromServer(timing, requestStarted, receivedAt) || undefined : undefined };
+  } catch {
+    return { error: "تعذر الاتصال بخادم الاختبار — تحقق من الشبكة وأعد المحاولة" };
+  } finally {
+    clearTimeout(timeout);
   }
-  // هوية الجهاز: بها يُحسب حد المحاولات ويُرفض الجهاز المحظور (027)
+}
+
+/** بدء آمن: لا رجوع إلى دالة قديمة لا تتحقق من هوية الطالب أو ساعة الخادم. */
+export async function startOnlineExamTimerSession(input: OnlineExamSessionInput): Promise<OnlineExamTimerStartResult> {
+  if (!isSupabaseConfigured()) return { configured: false };
   const card = getDeviceCard();
   const fp = await getDeviceFingerprint().catch(() => "");
-  const args: Record<string, unknown> = {
+  const { row, clock, error } = await onlineExamRpc("start_online_exam_session", {
     p_session_id: input.sessionId,
     p_attempt_id: input.attemptId,
     p_exam_id: input.examId,
     p_student_id: input.studentId || null,
+    p_student_token: input.studentToken || null,
     p_student_name: input.studentName,
     p_phone: input.phone || null,
     p_grade_id: input.gradeId,
     p_group_id: input.groupId,
     p_device_card: isValidDeviceCard(card) ? card : null,
     p_device_fp: isValidFingerprint(fp) ? fp : null,
-  };
-  let { data, error } = await sb.rpc("start_online_exam_session", args);
-  if (error && isMissingRpcArgError(error)) {
-    // قاعدة لم تُرقَّ إلى 027: نبدأ الجلسة بلا هوية جهاز بدل منع الطالب
-    console.warn(
-      "⚠️ دالة start_online_exam_session قديمة (بلا p_device_card) — شغّل supabase/migrations/027_device_identity_and_bans.sql"
-    );
-    delete args.p_device_card;
-    delete args.p_device_fp;
-    ({ data, error } = await sb.rpc("start_online_exam_session", args));
-  }
-  if (error || !data || typeof data !== "object") {
-    console.warn("startOnlineExamTimerSession:", error);
-    return { configured: true, error: error?.message || "تعذر بدء جلسة الاختبار الآمنة" };
-  }
-  const row = data as Record<string, unknown>;
-  if (typeof row.id !== "string" || typeof row.secret !== "string" ||
-      typeof row.attemptId !== "string" || typeof row.startedAt !== "string" ||
-      typeof row.expiresAt !== "string") {
-    return { configured: true, error: "استجابة جلسة الاختبار غير صالحة" };
+  });
+  if (!row) return { configured: true, error };
+  if (!clock || typeof row.id !== "string" || typeof row.secret !== "string" || typeof row.attemptId !== "string") {
+    return { configured: true, error: "استجابة توقيت الجلسة غير صالحة — تحقق من ترحيل 029" };
   }
   return {
     configured: true,
     session: {
-      id: row.id,
-      secret: row.secret,
-      attemptId: row.attemptId,
-      startedAt: row.startedAt,
-      expiresAt: row.expiresAt,
+      id: row.id, secret: row.secret, attemptId: row.attemptId,
+      startedAt: row.startedAt as string, expiresAt: row.expiresAt as string, serverNow: row.serverNow as string,
+      clock,
     },
   };
 }
 
-/** يحفظ آخر إجابات الطالب في جلسة الخادم. */
+/** حفظ التقدم قبل الموعد فقط. كل رد يحمل مرساة جديدة لساعة العرض. */
 export async function saveOnlineExamTimerProgress(
   session: Pick<OnlineExamTimerSession, "id" | "secret">,
   answers: Record<string, unknown>
-): Promise<{ ok: boolean; state?: "saved" | "expired" | "submitted"; error?: string }> {
-  const sb = getSupabase();
-  if (!sb) return { ok: false, error: "Supabase غير متصل" };
-  const { data, error } = await sb.rpc("save_online_exam_progress", {
+): Promise<{ ok: boolean; state?: "saved" | "expired" | "submitted"; clock?: OnlineExamClock; error?: string }> {
+  const { row, clock, error } = await onlineExamRpc("save_online_exam_progress", {
     p_session_id: session.id,
     p_session_secret: session.secret,
     p_answers: answers,
   });
-  if (error || !data || typeof data !== "object") {
-    console.warn("saveOnlineExamTimerProgress:", error);
-    return { ok: false, error: error?.message || "تعذر حفظ تقدم الاختبار" };
-  }
-  const state = (data as Record<string, unknown>).state;
+  if (!row) return { ok: false, error };
+  const state = row.state;
   if (state !== "saved" && state !== "expired" && state !== "submitted") {
     return { ok: false, error: "استجابة حفظ التقدم غير صالحة" };
   }
-  return { ok: state === "saved", state };
+  return { ok: state === "saved", state, clock };
+}
+
+/** نبضة قراءة فقط: لا تحفظ إجابة ولا تبدأ/تُسلّم محاولة. */
+export async function getOnlineExamTimerStatus(
+  session: Pick<OnlineExamTimerSession, "id" | "secret">
+): Promise<{ ok: boolean; state?: "in_progress" | "expired" | "submitted"; clock?: OnlineExamClock; error?: string }> {
+  const { row, clock, error } = await onlineExamRpc("get_online_exam_session_status", {
+    p_session_id: session.id, p_session_secret: session.secret,
+  });
+  if (!row) return { ok: false, error };
+  if (!clock || (row.state !== "in_progress" && row.state !== "expired" && row.state !== "submitted")) {
+    return { ok: false, error: "تعذر التحقق من وقت جلسة الاختبار" };
+  }
+  return { ok: true, state: row.state, clock };
 }
 
 export interface OnlineExamAnswerFeedback {
@@ -1881,21 +1905,16 @@ export interface OnlineExamAnswerFeedback {
   isTrue?: boolean;
 }
 
-/** مفاتيح مسموح بإظهارها لجلسة الطالب فقط بحسب إعداد afterEach / atEnd. */
+/** مفاتيح مسموح بإظهارها لجلسة صاحبها فقط بحسب إعداد afterEach / atEnd. */
 export async function getOnlineExamAnswerFeedback(
-  session: Pick<OnlineExamTimerSession, "id" | "secret">
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  studentToken?: string
 ): Promise<{ ok: boolean; answers?: Record<string, OnlineExamAnswerFeedback>; error?: string }> {
-  const sb = getSupabase();
-  if (!sb) return { ok: false, error: "Supabase غير متصل" };
-  const { data, error } = await sb.rpc("get_online_exam_answer_feedback", {
-    p_session_id: session.id,
-    p_session_secret: session.secret,
+  const { row, error } = await onlineExamRpc("get_online_exam_answer_feedback", {
+    p_session_id: session.id, p_session_secret: session.secret, p_student_token: studentToken || null,
   });
-  if (error || !data || typeof data !== "object") {
-    console.warn("getOnlineExamAnswerFeedback:", error);
-    return { ok: false, error: error?.message || "تعذر جلب تغذية الإجابة الراجعة" };
-  }
-  const answers = (data as Record<string, unknown>).answers;
+  if (!row) return { ok: false, error };
+  const answers = row.answers;
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
     return { ok: false, error: "استجابة تغذية الإجابة غير صالحة" };
   }
@@ -1908,11 +1927,12 @@ export type OnlineExamTimerResultAttempt = ReturnType<typeof fromAttemptRow> & {
 }
 
 /**
- * يستعيد محاولة واحدة بالسر العشوائي الذي أصدره الخادم عند البدء. الدالة لا
- * تقرأ exam_attempts مباشرة؛ التعليقات ودرجات المقال لا تصل قبل الإطلاق.
+ * سر الاختبار وحده يكفي للزائر في اختبار عام فقط. محاولة الحساب تتطلب أيضاً
+ * جلسة دخول سارية لصاحبها؛ لا رجوع إلى RPC قديم يسرب نتيجته على جهاز مشترك.
  */
 export async function getOnlineExamTimerResult(
-  session: Pick<OnlineExamTimerSession, "id" | "secret">
+  session: Pick<OnlineExamTimerSession, "id" | "secret">,
+  studentToken?: string
 ): Promise<{
   ok: boolean
   state?: "in_progress" | "submitted"
@@ -1920,58 +1940,48 @@ export async function getOnlineExamTimerResult(
   feedback?: Record<string, OnlineExamAnswerFeedback>
   error?: string
 }> {
-  const sb = getSupabase()
-  if (!sb) return { ok: false, error: "Supabase غير متصل" }
-  const { data, error } = await sb.rpc("get_online_exam_result", {
-    p_session_id: session.id,
-    p_session_secret: session.secret,
+  const { row, error } = await onlineExamRpc("get_online_exam_result", {
+    p_session_id: session.id, p_session_secret: session.secret, p_student_token: studentToken || null,
   })
-  if (error || !data || typeof data !== "object" || Array.isArray(data)) {
-    console.warn("getOnlineExamTimerResult:", error)
-    return { ok: false, error: error?.message || "تعذر استعادة نتيجة الاختبار" }
-  }
-  const row = data as Record<string, unknown>
+  if (!row) return { ok: false, error }
   if (row.state === "in_progress") return { ok: true, state: "in_progress" }
   if (row.state !== "submitted" || !row.attempt || typeof row.attempt !== "object" || Array.isArray(row.attempt)) {
     return { ok: false, error: "استجابة نتيجة الاختبار غير صالحة" }
   }
   const rawFeedback = row.feedback
   const feedback = rawFeedback && typeof rawFeedback === "object" && !Array.isArray(rawFeedback)
-    ? rawFeedback as Record<string, OnlineExamAnswerFeedback>
-    : {}
+    ? rawFeedback as Record<string, OnlineExamAnswerFeedback> : {}
   return {
-    ok: true,
-    state: "submitted",
-    attempt: {
-      ...fromAttemptRow(row.attempt),
-      answerFeedback: feedback,
-    },
-    feedback,
+    ok: true, state: "submitted",
+    attempt: { ...fromAttemptRow(row.attempt), answerFeedback: feedback }, feedback,
   }
 }
 
-/** يسلم الجلسة المعتمدة؛ يرجع المحاولة التي حسب الخادم جزأها الموضوعي. */
+/**
+ * التسليم الآلي مشروط بانتهاء الوقت على الخادم، لا ببلوغ شاشة الطالب صفراً.
+ * in_progress رد سليم يحدّث العداد فقط؛ لا يمثل تسليماً أو نتيجة.
+ */
 export async function submitOnlineExamTimerSession(
   session: Pick<OnlineExamTimerSession, "id" | "secret">,
-  answers: Record<string, unknown>
-): Promise<{ ok: boolean; attempt?: any; timedOut?: boolean; error?: string }> {
-  const sb = getSupabase();
-  if (!sb) return { ok: false, error: "Supabase غير متصل" };
-  const { data, error } = await sb.rpc("submit_online_exam_session", {
+  answers: Record<string, unknown>,
+  options: { onlyIfExpired?: boolean; studentToken?: string } = {}
+): Promise<{ ok: boolean; state?: "submitted" | "in_progress"; attempt?: any; timedOut?: boolean; clock?: OnlineExamClock; error?: string }> {
+  const { row, clock, error } = await onlineExamRpc("submit_online_exam_session", {
     p_session_id: session.id,
     p_session_secret: session.secret,
     p_answers: answers,
+    p_only_if_expired: options.onlyIfExpired === true,
+    p_student_token: options.studentToken || null,
   });
-  if (error || !data || typeof data !== "object") {
-    console.warn("submitOnlineExamTimerSession:", error);
-    return { ok: false, error: error?.message || "تعذر تسليم الاختبار إلى الخادم" };
-  }
-  const row = data as Record<string, any>;
-  const attempt = row.attempt;
+  if (!row) return { ok: false, error };
+  if (row.state === "in_progress" && clock) return { ok: true, state: "in_progress", clock };
+  const attempt = row.attempt as Record<string, unknown> | undefined;
   if (row.state !== "submitted" || !attempt || typeof attempt !== "object" || typeof attempt.id !== "string") {
     return { ok: false, error: "لم يؤكد الخادم تسليم الاختبار" };
   }
-  return { ok: true, attempt, timedOut: row.timedOut === true || attempt.timedOut === true };
+  // أول تسليم ورجوع الطلب المكرر يمران كلاهما من بوابة النتيجة المنقّاة.
+  const normalized = typeof attempt.exam_id === "string" ? fromAttemptRow(attempt) : attempt;
+  return { ok: true, state: "submitted", attempt: normalized, timedOut: row.timedOut === true || normalized.timedOut === true };
 }
 
 export async function submitPublicHonoree(h: any): Promise<void> {
@@ -2070,7 +2080,7 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     sb.from("groups").select("id,grade_id,name,days,start_time,end_time"),
     sb.from("app_settings").select("key,value"),
     // Migration 015: RPC تُنقّي مفاتيح الإجابات داخل PostgreSQL قبل الشبكة.
-    sb.rpc("get_public_online_exams"),
+    sb.rpc("get_public_online_exams").then(result => ({ ...result, receivedAt: performance.now() })),
   ]);
 
   if (ann.error || hon.error || files.error || links.error || grades.error || groups.error || settings.error) {
@@ -2078,6 +2088,9 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     return null;
   }
 
+  const rawServerNow = Array.isArray(exams.data)
+    ? exams.data.find(row => row && typeof row.server_now === "string")?.server_now : undefined;
+  const serverNow = typeof rawServerNow === "string" ? Date.parse(rawServerNow) : NaN;
   const settingsMap: Record<string, string> = {};
   for (const s of (settings.data as any[]) || []) {
     settingsMap[s.key] = s.value;
@@ -2100,6 +2113,7 @@ export async function fetchPublicData(): Promise<PublicData | null> {
     })),
     settings: settingsMap,
     examsAvailable: !exams.error && Array.isArray(exams.data),
+    examServerClock: !exams.error && Number.isFinite(serverNow) ? { serverNow, receivedAt: exams.receivedAt } : undefined,
     exams: exams.error || !Array.isArray(exams.data) ? [] : (exams.data as any[])
       .map(fromExamRow)
       .filter((e: any) => e.deliveryMode === "online" && e.allowOnline),

@@ -854,9 +854,51 @@ check(
     /p_device_fp: isValidFingerprint\(deviceFp\) \? deviceFp : null/.test(syncSrcDevices)
 )
 check(
-  "الواجهة: تراجع آمن لقاعدة لم تُرقَّ إلى 027 (لا يفشل بدء الاختبار)",
-  /delete args\.p_device_card;\s*\n\s*delete args\.p_device_fp;/.test(syncSrcDevices)
+  "الواجهة: لا تراجع إلى بدء قديم يتجاوز هوية الطالب وتوقيت الخادم (029 إلزامي)",
+  /p_student_token: input\.studentToken \|\| null/.test(syncSrcDevices) &&
+    !/delete args\.p_device_card/.test(syncSrcDevices) && syncSrcDevices.includes("الترحيل 029")
 )
+
+section("2-ي) ترحيل 029: منع التسليم المبكر وفرض خصوصية النتائج على الخادم")
+const sql029 = byName("029_exam_clock_and_result_privacy.sql")
+const start029 = sql029.slice(sql029.indexOf("CREATE OR REPLACE FUNCTION public.start_online_exam_session"), sql029.indexOf("CREATE OR REPLACE FUNCTION public.get_online_exam_session_status"))
+const save029 = sql029.slice(sql029.indexOf("CREATE OR REPLACE FUNCTION public.save_online_exam_progress"), sql029.indexOf("CREATE OR REPLACE FUNCTION public.get_online_exam_answer_feedback"))
+const submit029 = sql029.slice(sql029.indexOf("CREATE OR REPLACE FUNCTION public.submit_online_exam_session"))
+check("029: ورقة الطالب تحمل مرساة الإتاحة العامة دون إعادة مفاتيح التصحيح",
+  sql029.includes("'server_now', clock_timestamp()") && sql029.includes("choice.value - 'isCorrect'") &&
+  sql029.includes("sq.value - 'correctAnswer' - 'isTrue' - 'corrections'"))
+check("029: الصفر/السالب/الفارغ = 60 دقيقة وليس دقيقة واحدة",
+  /v_minutes := CASE WHEN v_exam\.duration > 0 THEN LEAST\(v_exam\.duration, 1440\) ELSE 60 END/.test(start029))
+check("029: وقت بدء الجلسة يُحدَّد بعد انتظار القفل",
+  start029.indexOf("v_now := clock_timestamp()") > start029.indexOf("pg_advisory_xact_lock"))
+check("029: التحقق من الانتهاء في الحفظ والتسليم يأتي بعد FOR UPDATE",
+  save029.indexOf("v_now := clock_timestamp()") > save029.indexOf("FOR UPDATE") &&
+  submit029.indexOf("v_now := clock_timestamp()") > submit029.indexOf("FOR UPDATE"))
+check("029: التسليم الآلي المبكر يرجع in_progress قبل لمس الإجابات أو إنشاء محاولة",
+  /IF p_only_if_expired AND v_now < v_session\.expires_at THEN/.test(submit029) &&
+  submit029.indexOf("IF p_only_if_expired") < submit029.indexOf("v_answers := v_session.answers"))
+check("029: استعادة النتيجة والمفاتيح والتسليم تمر كلها من بوابة الملكية",
+  (sql029.match(/public\.authorize_online_exam_session\(p_session_id, p_session_secret, p_student_token\)/g) || []).length === 3)
+check("029: ملكية الحساب من توكين خادمي ساري لا من studentId في الكوكي",
+  /ss\.token_hash = encode\(digest\(p_student_token, 'sha256'\), 'hex'\)/.test(sql029) &&
+  /ss\.expires_at > to_char\(clock_timestamp\(\)/.test(sql029) &&
+  /v_session\.student_id IS DISTINCT FROM public\.online_exam_student_id\(p_student_token\)/.test(sql029))
+check("029: الزائر يحتاج اختباراً عاماً حتى عند استخدام سر قديم",
+  /COALESCE\(e\.questions->>'accessMode', 'members'\) = 'public'/.test(sql029))
+check("029: المساعد الداخلي لا يمنح المتصفح صف الجلسة أو سرها",
+  /REVOKE ALL ON FUNCTION public\.authorize_online_exam_session\(TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/.test(sql029) &&
+  /REVOKE ALL ON FUNCTION public\.online_exam_student_id\(TEXT\) FROM PUBLIC, anon, authenticated/.test(sql029))
+check("029: حذف التواقيع القديمة يمنع الالتفاف على التحقق الجديد",
+  ["get_online_exam_result(TEXT, TEXT)", "get_online_exam_answer_feedback(TEXT, TEXT)", "submit_online_exam_session(TEXT, TEXT, JSONB)"]
+    .every(signature => sql029.includes(`DROP FUNCTION IF EXISTS public.${signature};`)))
+check("029: إعادة التسليم لا تكشف درجات/تعليقات المراجعة غير المطلقة",
+  (submit029.match(/v_result := public\.get_online_exam_result\(/g) || []).length === 2 &&
+  !submit029.includes("'answers', v_existing_attempt.answers") && sql029.includes("v_answer_value - 'review'"))
+check("029: الحظر وحد المحاولات والاستثناءات واعتماد المحاولة لا تضيع مع إعادة تعريف الدوال",
+  start029.includes("public.device_is_banned(v_card, v_fp)") && start029.includes("v_limit + v_extra") &&
+  start029.includes("public.device_attempt_grants") && sql029.includes("'adoptedAt', v_meta->'adoptedAt'"))
+
+
 
 section("3) توافق مزامنة الواجهة مع المخطط")
 

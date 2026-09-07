@@ -143,6 +143,7 @@ const rewrite = (src) =>
     .replace(/from "\.\.\/surveys"/g, 'from "../surveys.mjs"')
     .replace(/from "\.\.\/survey-device"/g, 'from "../survey-device.mjs"')
     .replace(/from "\.\.\/device-identity"/g, 'from "../device-identity.mjs"')
+    .replace(/from "\.\.\/online-exam-clock"/g, 'from "../online-exam-clock.mjs"')
     .replace(/from "\.\/supabase\/sync"/g, 'from "./supabase/sync.mjs"')
     .replace(/from "\.\/([\w-]+)"/g, 'from "./$1.mjs"')
 
@@ -155,6 +156,7 @@ export { STORAGE_KEYS };
 const STORAGE_KEYS_INTERNAL = STORAGE_KEYS;`
 files["weekdays.mjs"] = weekdays
 files["utils.mjs"] = rewrite(utils)
+files["online-exam-clock.mjs"] = readFileSync("src/lib/online-exam-clock.ts", "utf8")
 
 {
   let ds = readFileSync("src/lib/data-storage.ts", "utf8")
