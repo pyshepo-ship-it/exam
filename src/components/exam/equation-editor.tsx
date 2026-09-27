@@ -18,11 +18,11 @@ export function EquationDisplay({ equation, aboveArrow }: { equation?: string; a
   const arrow = equation.includes("⇌") ? "⇌" : equation.includes("⟶") ? "⟶" : ""
   if (!arrow || !aboveArrow) return <span dir="ltr" className="inline-block font-bold tracking-wide">{equation}</span>
   const [before, ...after] = equation.split(arrow)
-  return <span dir="ltr" className="inline-flex items-end justify-center gap-1 font-bold tracking-wide max-w-full">
+  return <span dir="ltr" className="inline-flex items-end justify-center gap-1.5 font-bold tracking-wide max-w-full">
     <span>{before}</span>
-    <span className="relative inline-flex min-w-12 justify-center pt-4">
-      <span className="absolute -top-1 left-1/2 -translate-x-1/2 whitespace-nowrap text-[.72em] font-semibold">{aboveArrow}</span>
-      <span>{arrow}</span>
+    <span className="relative inline-flex min-w-24 justify-center pt-2.5 px-1">
+      <span className="absolute top-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[.68em] leading-none font-semibold">{aboveArrow}</span>
+      <span className="inline-block origin-center scale-x-[2.25] leading-none">{arrow}</span>
     </span>
     <span>{after.join(arrow)}</span>
   </span>

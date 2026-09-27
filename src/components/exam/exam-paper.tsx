@@ -226,6 +226,12 @@ function SubQuestionBody({
   const answerLines = compact
     ? Math.min(Math.max(sq.answerLines ?? 1, 1), 2)
     : (sq.answerLines ?? 1)
+  // تُعرض المعادلة مباشرة تحت نص السؤال وقبل الاختيارات/نقاط الإجابة.
+  const equationEl = sq.equation ? (
+    <div className="-mt-0.5 mb-0.5 flex justify-center px-2 text-base sm:text-lg" dir="ltr">
+      <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
+    </div>
+  ) : null
 
   return (
     <div className={`exam-sub ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
@@ -236,6 +242,7 @@ function SubQuestionBody({
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
+          {equationEl}
           <div className={`flex flex-wrap items-center gap-x-8 sm:gap-x-12 gap-y-2 pr-4 pt-0.5 text-xs sm:text-[14px] ${compact ? "gap-y-1" : ""}`}>
             {sq.choices?.map(choice => (
               <span key={choice.id} className="text-gray-800 dark:text-gray-200 inline-flex items-center">
@@ -249,22 +256,28 @@ function SubQuestionBody({
 
       {/* 2. أكمل العبارات الآتية */}
       {question.questionType === 2 && (
-        <p className="font-medium text-right leading-loose">
-          <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-          <CompleteLine sq={sq} />
-        </p>
+        <div>
+          <p className="font-medium text-right leading-loose">
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+            <CompleteLine sq={sq} />
+          </p>
+          {equationEl}
+        </div>
       )}
 
       {/* 3. صح أو خطأ */}
       {question.questionType === 3 && (
-        <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
-          <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-          </p>
-          <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
-            (&nbsp;&nbsp;&nbsp;&nbsp;)
-          </span>
+        <div>
+          <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
+            <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+            <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
+              (&nbsp;&nbsp;&nbsp;&nbsp;)
+            </span>
+          </div>
+          {equationEl}
         </div>
       )}
 
@@ -275,6 +288,7 @@ function SubQuestionBody({
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
+          {equationEl}
           {Array.from({ length: answerLines }).map((_, li) => (
             <p key={li} className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>
               {DOTS_LINE}
@@ -290,6 +304,7 @@ function SubQuestionBody({
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             <CorrectionLine sq={sq} />
           </p>
+          {equationEl}
           <p className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>{DOTS_LINE}</p>
         </div>
       )}
