@@ -55,6 +55,8 @@ interface ExamPaperProps {
   scienceStamps?: PlacedScienceStamp[]
   stampEditor?: boolean
   selectedStampId?: string | null
+  pendingStampSymbolId?: string | null
+  onStampPlace?: (page: number, x: number, y: number) => void
   onStampChange?: (stamp: PlacedScienceStamp) => void
   onStampSelect?: (id: string) => void
 }
@@ -634,6 +636,8 @@ export function ExamPaper({
   scienceStamps = [],
   stampEditor,
   selectedStampId,
+  pendingStampSymbolId,
+  onStampPlace,
   onStampChange,
   onStampSelect,
 }: ExamPaperProps) {
@@ -707,6 +711,8 @@ export function ExamPaper({
             page={page.pageNumber}
             editable={stampEditor}
             selectedId={selectedStampId}
+            pendingSymbolId={pendingStampSymbolId}
+            onPlace={onStampPlace}
             onChange={onStampChange}
             onSelect={onStampSelect}
           />

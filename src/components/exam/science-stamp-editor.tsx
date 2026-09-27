@@ -3,16 +3,30 @@
 import React, { useState } from "react"
 import { SCIENCE_STAMPS, SCIENCE_STAMP_GROUPS, type PlacedScienceStamp } from "@/lib/science-stamps"
 
-export function ScienceStampLayer({ stamps, page, editable, onChange, onSelect, selectedId }: {
+export function ScienceStampLayer({ stamps, page, editable, pendingSymbolId, onPlace, onChange, onSelect, selectedId }: {
   stamps: PlacedScienceStamp[]
   page: number
   editable?: boolean
+  pendingSymbolId?: string | null
+  onPlace?: (page: number, x: number, y: number) => void
   onChange?: (stamp: PlacedScienceStamp) => void
   onSelect?: (id: string) => void
   selectedId?: string | null
 }) {
   const byId = new Map(SCIENCE_STAMPS.map(symbol => [symbol.id, symbol]))
-  return <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden rounded-[inherit]" aria-hidden={!editable}>
+  return <div
+    className={`absolute inset-0 z-20 overflow-hidden rounded-[inherit] ${pendingSymbolId ? "pointer-events-auto cursor-crosshair" : "pointer-events-none"}`}
+    aria-hidden={!editable}
+    title={pendingSymbolId ? "اضغط هنا لوضع الرمز" : undefined}
+    onPointerDown={event => {
+      if (!pendingSymbolId || !onPlace || event.target !== event.currentTarget) return
+      event.preventDefault()
+      const rect = event.currentTarget.getBoundingClientRect()
+      const x = Math.max(2, Math.min(98, ((event.clientX - rect.left) / rect.width) * 100))
+      const y = Math.max(2, Math.min(98, ((event.clientY - rect.top) / rect.height) * 100))
+      onPlace(page, x, y)
+    }}
+  >
     {stamps.filter(stamp => stamp.page === page).map(stamp => {
       const symbol = byId.get(stamp.symbolId)
       if (!symbol) return null

@@ -258,6 +258,7 @@ export default function ExamsPage() {
   const [previewStampGroup, setPreviewStampGroup] = useState("chemistry")
   const [previewStampEditor, setPreviewStampEditor] = useState(false)
   const [selectedStampId, setSelectedStampId] = useState<string | null>(null)
+  const [pendingStampSymbolId, setPendingStampSymbolId] = useState<string | null>(null)
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -2936,11 +2937,11 @@ export default function ExamsPage() {
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-extrabold text-indigo-900 dark:text-indigo-100">محرر الرموز العلمية — 100 رمز</p>
-                    <p className="text-[11px] text-gray-600 dark:text-gray-400">اختر رمزاً ثم اسحبه بإصبعك أو بالفأرة داخل الورقة. الموضع يثبت في PDF.</p>
+                    <p className="text-[11px] text-gray-600 dark:text-gray-400">اختر رمزاً، ثم حرّك المؤشر واضغط في المكان المطلوب داخل الورقة. يمكنك بعد ذلك سحبه وتعديله، ويثبت موضعه في PDF.</p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <button type="button" onClick={() => setPreviewStampEditor(value => !value)} className={`rounded-lg px-3 py-2 text-xs font-bold ${previewStampEditor ? "bg-indigo-600 text-white" : "border bg-white dark:bg-gray-900"}`}>{previewStampEditor ? "إنهاء التحريك" : "التوزيع اليدوي"}</button>
-                    <button type="button" onClick={() => { setPreviewStamps(makeRandomStamps(previewStampGroup, previewOrnamentDensity === "low" ? 6 : previewOrnamentDensity === "medium" ? 10 : 14, 2)); setPreviewStampEditor(true) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">توزيع عشوائي من المجموعة</button>
+                    <button type="button" onClick={() => { setPreviewStampEditor(value => !value); setPendingStampSymbolId(null) }} className={`rounded-lg px-3 py-2 text-xs font-bold ${previewStampEditor ? "bg-indigo-600 text-white" : "border bg-white dark:bg-gray-900"}`}>{previewStampEditor ? "إنهاء التحريك" : "التوزيع اليدوي"}</button>
+                    <button type="button" onClick={() => { setPendingStampSymbolId(null); setPreviewStamps(makeRandomStamps(previewStampGroup, previewOrnamentDensity === "low" ? 6 : previewOrnamentDensity === "medium" ? 10 : 14, 2)); setPreviewStampEditor(true) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">توزيع عشوائي من المجموعة</button>
                     <button type="button" onClick={() => { setPreviewStamps([]); setSelectedStampId(null) }} className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-bold text-red-600 dark:bg-gray-900">مسح الرموز</button>
                   </div>
                 </div>
@@ -2948,13 +2949,15 @@ export default function ExamsPage() {
                   group={previewStampGroup}
                   onGroup={setPreviewStampGroup}
                   onAdd={symbolId => {
-                    const index = previewStamps.length
-                    const stamp: PlacedScienceStamp = { id: `manual-${Date.now()}`, symbolId, page: index % 2 + 1, x: 50, y: 18 + (index % 5) * 14, size: previewOrnamentSize, rotation: 0, opacity: Math.max(0.2, previewOrnamentOpacity) }
-                    setPreviewStamps(items => [...items, stamp])
-                    setSelectedStampId(stamp.id)
+                    setPendingStampSymbolId(symbolId)
+                    setSelectedStampId(null)
                     setPreviewStampEditor(true)
                   }}
                 />
+                {pendingStampSymbolId && <div className="flex items-center justify-between gap-2 rounded-lg border border-indigo-300 bg-indigo-100 px-3 py-2 text-xs font-bold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
+                  <span>الرمز جاهز — اضغط في أي مكان داخل الصفحة الأولى أو الثانية لوضعه.</span>
+                  <button type="button" onClick={() => setPendingStampSymbolId(null)} className="rounded bg-white px-2 py-1 text-gray-700 dark:bg-gray-900 dark:text-gray-200">إلغاء</button>
+                </div>}
                 {selectedStampId && (() => {
                   const selected = previewStamps.find(stamp => stamp.id === selectedStampId)
                   if (!selected) return null
@@ -2984,6 +2987,14 @@ export default function ExamsPage() {
                   scienceStamps={previewStamps}
                   stampEditor={previewStampEditor}
                   selectedStampId={selectedStampId}
+                  pendingStampSymbolId={pendingStampSymbolId}
+                  onStampPlace={(page, x, y) => {
+                    if (!pendingStampSymbolId) return
+                    const stamp: PlacedScienceStamp = { id: `manual-${Date.now()}`, symbolId: pendingStampSymbolId, page, x, y, size: previewOrnamentSize, rotation: 0, opacity: Math.max(0.2, previewOrnamentOpacity) }
+                    setPreviewStamps(items => [...items, stamp])
+                    setSelectedStampId(stamp.id)
+                    setPendingStampSymbolId(null)
+                  }}
                   onStampSelect={setSelectedStampId}
                   onStampChange={changed => setPreviewStamps(items => items.map(stamp => stamp.id === changed.id ? changed : stamp))}
                 />
