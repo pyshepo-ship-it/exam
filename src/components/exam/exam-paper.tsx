@@ -211,6 +211,24 @@ function CorrectionLine({ sq }: { sq: SubQuestion }) {
   )
 }
 
+function PromptEquationLayout({ sq, children }: { sq: SubQuestion; children: React.ReactNode }) {
+  if (!sq.equation) return <>{children}</>
+  const equation = (
+    <div className="my-0.5 flex shrink-0 justify-center px-2 text-base sm:text-lg" dir="ltr">
+      <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
+    </div>
+  )
+  switch (sq.equationPosition || "below") {
+    case "above":
+      return <>{equation}{children}</>
+    case "inline":
+      return <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{children}{equation}</div>
+    case "below":
+    default:
+      return <>{children}{equation}</>
+  }
+}
+
 function SubQuestionBody({
   question,
   sq,
@@ -226,33 +244,17 @@ function SubQuestionBody({
   const answerLines = compact
     ? Math.min(Math.max(sq.answerLines ?? 1, 1), 2)
     : (sq.answerLines ?? 1)
-  // موضع واحد صريح للمعادلة يمنع تكرارها، مع دعم وضعها بجانب الجملة.
-  const equationPosition = sq.equationPosition || "below"
-  const equationEl = sq.equation ? (
-    <div className="my-0.5 flex justify-center px-2 text-base sm:text-lg" dir="ltr">
-      <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
-    </div>
-  ) : null
-  const equationAbove = equationPosition === "above" ? equationEl : null
-  const equationBelow = equationPosition === "below" ? equationEl : null
-  const equationInline = equationPosition === "inline" && sq.equation ? (
-    <span className="inline-flex max-w-full align-middle mx-2 text-base sm:text-lg" dir="ltr">
-      <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
-    </span>
-  ) : null
-
   return (
     <div className={`exam-sub ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
       {/* 1. اختيار من متعدد مع مسافات مريحة وواضحة بين الخيارات */}
       {question.questionType === 1 && (
         <div className={compact ? "space-y-1" : "space-y-2"}>
-          {equationAbove}
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-            {equationInline}
-          </p>
-          {equationBelow}
+          <PromptEquationLayout sq={sq}>
+            <p className="font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+          </PromptEquationLayout>
           <div className={`flex flex-wrap items-center gap-x-8 sm:gap-x-12 gap-y-2 pr-4 pt-0.5 text-xs sm:text-[14px] ${compact ? "gap-y-1" : ""}`}>
             {sq.choices?.map(choice => (
               <span key={choice.id} className="text-gray-800 dark:text-gray-200 inline-flex items-center">
@@ -266,45 +268,38 @@ function SubQuestionBody({
 
       {/* 2. أكمل العبارات الآتية */}
       {question.questionType === 2 && (
-        <div>
-          {equationAbove}
+        <PromptEquationLayout sq={sq}>
           <p className="font-medium text-right leading-loose">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             <CompleteLine sq={sq} />
-            {equationInline}
           </p>
-          {equationBelow}
-        </div>
+        </PromptEquationLayout>
       )}
 
       {/* 3. صح أو خطأ */}
       {question.questionType === 3 && (
-        <div>
-          {equationAbove}
-          <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
+        <PromptEquationLayout sq={sq}>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
             <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
               <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
               {sq.questionText}
-              {equationInline}
             </p>
             <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
               (&nbsp;&nbsp;&nbsp;&nbsp;)
             </span>
           </div>
-          {equationBelow}
-        </div>
+        </PromptEquationLayout>
       )}
 
-      {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
+      {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر */}
       {(question.questionType === 4 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
-          {equationAbove}
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-            {equationInline}
-          </p>
-          {equationBelow}
+          <PromptEquationLayout sq={sq}>
+            <p className="min-w-0 flex-1 font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+          </PromptEquationLayout>
           {Array.from({ length: answerLines }).map((_, li) => (
             <p key={li} className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>
               {DOTS_LINE}
@@ -316,13 +311,12 @@ function SubQuestionBody({
       {/* 5. صحح ما تحته خط */}
       {question.questionType === 5 && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
-          {equationAbove}
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            <CorrectionLine sq={sq} />
-            {equationInline}
-          </p>
-          {equationBelow}
+          <PromptEquationLayout sq={sq}>
+            <p className="min-w-0 flex-1 font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              <CorrectionLine sq={sq} />
+            </p>
+          </PromptEquationLayout>
           <p className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>{DOTS_LINE}</p>
         </div>
       )}
@@ -443,9 +437,6 @@ function QuestionBlock({
               />
             )}
             <SubQuestionBody question={question} sq={sq} index={si} compact={compact} />
-            {sq.equation && <div className="my-2 flex justify-center px-3 text-base sm:text-lg" dir="ltr">
-              <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
-            </div>}
           </React.Fragment>
         ))}
       </div>
