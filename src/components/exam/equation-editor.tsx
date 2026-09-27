@@ -4,9 +4,11 @@ import React, { useEffect, useRef, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { PERIODIC_ELEMENTS } from "@/lib/periodic-elements"
+import { checkEquationBalance, suggestChemicalTypography, type BalanceResult } from "@/lib/chemistry-equation"
 
 const GROUPS = [
   { name: "العناصر الأكثر استخدامًا", tokens: ["H","O","N","C","Na","Cl","Ca","K","Mg","Fe","Al","Zn","Cu","Ag","S","P","F","Br","I","Si"] },
+  { name: "أيونات ومجموعات شائعة", tokens: ["OH⁻","SO₄²⁻","SO₃²⁻","NO₃⁻","NO₂⁻","CO₃²⁻","HCO₃⁻","PO₄³⁻","NH₄⁺","MnO₄⁻","Cr₂O₇²⁻","CN⁻"] },
   { name: "الأرقام السفلية", tokens: ["₀","₁","₂","₃","₄","₅","₆","₇","₈","₉"] },
   { name: "الشحنات العلوية", tokens: ["⁰","¹","²","³","⁴","⁵","⁶","⁷","⁸","⁹","⁺","⁻","²⁺","²⁻","³⁺","³⁻"] },
   { name: "التفاعل والحالات", tokens: [" + "," ⟶ "," ⇌ "," ↑"," ↓","(s)","(l)","(g)","(aq)","Δ","hν","cat.","·","(",")","[","]"] },
@@ -40,8 +42,10 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
   const [aboveArrow, setAboveArrow] = useState("")
   const [elementSearch, setElementSearch] = useState("")
   const [showAllElements, setShowAllElements] = useState(false)
+  const [formatSuggestion, setFormatSuggestion] = useState<string | null>(null)
+  const [balanceResult, setBalanceResult] = useState<BalanceResult | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => { if (open) { setEquation(initialEquation || ""); setAboveArrow(initialAboveArrow || "") } }, [open, initialEquation, initialAboveArrow])
+  useEffect(() => { if (open) { setEquation(initialEquation || ""); setAboveArrow(initialAboveArrow || ""); setFormatSuggestion(null); setBalanceResult(null) } }, [open, initialEquation, initialAboveArrow])
   const insert = (token: string) => {
     const input = inputRef.current
     const start = input?.selectionStart ?? equation.length
@@ -58,7 +62,24 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
     >
       <DialogHeader><DialogTitle>⚗️ محرر المعادلات العلمية</DialogTitle></DialogHeader>
       <p className="text-xs text-gray-500">لن يُمسح نص السؤال. اكتب أو اختر الرموز، وحدد ما يظهر فوق السهم مثل الحرارة أو العامل الحفاز.</p>
-      <textarea ref={inputRef} dir="ltr" value={equation} onChange={event => setEquation(event.target.value)} placeholder="NaCl + H₂O ⟶ NaOH + H₂↑" className="min-h-20 w-full rounded-xl border p-3 text-left text-lg font-bold" />
+      <textarea ref={inputRef} dir="ltr" value={equation} onChange={event => { setEquation(event.target.value); setFormatSuggestion(null); setBalanceResult(null) }} placeholder="NaCl + H₂O ⟶ NaOH + H₂↑" className="min-h-20 w-full rounded-xl border p-3 text-left text-lg font-bold" />
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={() => {
+          const suggestion = suggestChemicalTypography(equation)
+          setFormatSuggestion(suggestion !== equation ? suggestion : null)
+        }} className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-xs font-bold text-violet-700 dark:bg-violet-950/30 dark:text-violet-300">✨ اقتراح تنسيق الأرقام</button>
+        <button type="button" onClick={() => setBalanceResult(checkEquationBalance(equation))} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">⚖️ فحص التوازن اختياريًا</button>
+      </div>
+      {formatSuggestion && <div className="rounded-xl border border-violet-200 bg-violet-50 p-3 text-xs dark:bg-violet-950/30">
+        <p className="font-bold">اقتراح فقط — لن نغيّر المعادلة دون موافقتك:</p>
+        <p dir="ltr" className="my-2 text-left text-base font-bold">{formatSuggestion}</p>
+        <div className="flex gap-2"><button type="button" onClick={() => { setEquation(formatSuggestion); setFormatSuggestion(null) }} className="rounded-lg bg-violet-600 px-3 py-1.5 font-bold text-white">تطبيق الاقتراح</button><button type="button" onClick={() => setFormatSuggestion(null)} className="rounded-lg border px-3 py-1.5">اتركها كما كتبتها</button></div>
+      </div>}
+      {balanceResult && <div className={`rounded-xl border p-3 text-xs ${balanceResult.status === "balanced" ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200" : balanceResult.status === "unbalanced" ? "border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200" : "border-gray-300 bg-gray-50 dark:bg-gray-900"}`}>
+        <p className="font-bold">{balanceResult.message}</p>
+        <p className="mt-1 opacity-80">هذا فحص إرشادي فقط، ولن يصحح أو يمنع حفظ المعادلة.</p>
+        <button type="button" onClick={() => setBalanceResult(null)} className="mt-2 rounded-lg border bg-white px-3 py-1.5 font-bold text-gray-700 dark:bg-gray-900 dark:text-gray-200">حسنًا، اترك المعادلة كما هي</button>
+      </div>}
       <div className="rounded-xl border bg-gray-50 p-3 text-center text-lg dark:bg-gray-900"><EquationDisplay equation={equation} aboveArrow={aboveArrow} /></div>
       <label className="block text-xs font-bold">العلامة أو الشرط فوق السهم
         <input value={aboveArrow} onChange={event => setAboveArrow(event.target.value)} placeholder="مثال: Δ أو حرارة أو MnO₂" dir="ltr" className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-left" maxLength={30} />
