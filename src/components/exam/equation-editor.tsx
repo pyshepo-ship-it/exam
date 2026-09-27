@@ -45,14 +45,27 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
   const [formatSuggestion, setFormatSuggestion] = useState<string | null>(null)
   const [balanceResult, setBalanceResult] = useState<BalanceResult | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
-  useEffect(() => { if (open) { setEquation(initialEquation || ""); setAboveArrow(initialAboveArrow || ""); setFormatSuggestion(null); setBalanceResult(null) } }, [open, initialEquation, initialAboveArrow])
+  const cursorRef = useRef({ start: 0, end: 0 })
+  useEffect(() => {
+    if (open) {
+      const initial = initialEquation || ""
+      setEquation(initial)
+      setAboveArrow(initialAboveArrow || "")
+      setFormatSuggestion(null)
+      setBalanceResult(null)
+      cursorRef.current = { start: initial.length, end: initial.length }
+    }
+  }, [open, initialEquation, initialAboveArrow])
   const insert = (token: string) => {
-    const input = inputRef.current
-    const start = input?.selectionStart ?? equation.length
-    const end = input?.selectionEnd ?? start
-    const next = equation.slice(0, start) + token + equation.slice(end)
+    // لا نعيد التركيز إلى حقل الكتابة هنا؛ focus كان يصعد نافذة الهاتف إلى بدايتها
+    // عند كل ضغطة. نحفظ موضع المؤشر من دون تحريك موضع التمرير.
+    const { start, end } = cursorRef.current
+    const safeStart = Math.min(start, equation.length)
+    const safeEnd = Math.min(end, equation.length)
+    const next = equation.slice(0, safeStart) + token + equation.slice(safeEnd)
+    const nextCursor = safeStart + token.length
+    cursorRef.current = { start: nextCursor, end: nextCursor }
     setEquation(next)
-    requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(start + token.length, start + token.length) })
   }
   return <Dialog open={open} onOpenChange={value => { if (!value) onClose() }}>
     <DialogContent
@@ -62,7 +75,22 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
     >
       <DialogHeader><DialogTitle>⚗️ محرر المعادلات العلمية</DialogTitle></DialogHeader>
       <p className="text-xs text-gray-500">لن يُمسح نص السؤال. اكتب أو اختر الرموز، وحدد ما يظهر فوق السهم مثل الحرارة أو العامل الحفاز.</p>
-      <textarea ref={inputRef} dir="ltr" value={equation} onChange={event => { setEquation(event.target.value); setFormatSuggestion(null); setBalanceResult(null) }} placeholder="NaCl + H₂O ⟶ NaOH + H₂↑" className="min-h-20 w-full rounded-xl border p-3 text-left text-lg font-bold" />
+      <textarea
+        ref={inputRef}
+        dir="ltr"
+        value={equation}
+        onChange={event => {
+          setEquation(event.target.value)
+          cursorRef.current = { start: event.target.selectionStart, end: event.target.selectionEnd }
+          setFormatSuggestion(null)
+          setBalanceResult(null)
+        }}
+        onSelect={event => {
+          cursorRef.current = { start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd }
+        }}
+        placeholder="NaCl + H₂O ⟶ NaOH + H₂↑"
+        className="min-h-20 w-full rounded-xl border p-3 text-left text-lg font-bold"
+      />
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={() => {
           const suggestion = suggestChemicalTypography(equation)
@@ -80,7 +108,10 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
         <p className="mt-1 opacity-80">هذا فحص إرشادي فقط، ولن يصحح أو يمنع حفظ المعادلة.</p>
         <button type="button" onClick={() => setBalanceResult(null)} className="mt-2 rounded-lg border bg-white px-3 py-1.5 font-bold text-gray-700 dark:bg-gray-900 dark:text-gray-200">حسنًا، اترك المعادلة كما هي</button>
       </div>}
-      <div className="rounded-xl border bg-gray-50 p-3 text-center text-lg dark:bg-gray-900"><EquationDisplay equation={equation} aboveArrow={aboveArrow} /></div>
+      <div className="sticky top-0 z-20 rounded-xl border border-indigo-200 bg-white/95 p-3 text-center text-lg shadow-sm backdrop-blur dark:border-indigo-900 dark:bg-gray-950/95">
+        <p className="mb-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-300">معاينة حية</p>
+        <EquationDisplay equation={equation} aboveArrow={aboveArrow} />
+      </div>
       <label className="block text-xs font-bold">العلامة أو الشرط فوق السهم
         <input value={aboveArrow} onChange={event => setAboveArrow(event.target.value)} placeholder="مثال: Δ أو حرارة أو MnO₂" dir="ltr" className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-left" maxLength={30} />
       </label>
