@@ -21,6 +21,8 @@ import {
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
+import { ScienceStampLayer } from "./science-stamp-editor"
+import type { PlacedScienceStamp } from "@/lib/science-stamps"
 import {
   DEFAULT_TEACHER_NAME,
   DEFAULT_TEACHER_SIGNATURE_LINE,
@@ -49,6 +51,12 @@ interface ExamPaperProps {
   ornamentDensity?: OrnamentDensity
   /** شفافية الزخارف (0..1) — خفيفة دائماً حتى لا تغطي كلام الاختبار */
   ornamentOpacity?: number
+  /** رموز حرة محفوظة بإحداثيات نسبية، فتظل في موضعها عند الطباعة ومن الهاتف */
+  scienceStamps?: PlacedScienceStamp[]
+  stampEditor?: boolean
+  selectedStampId?: string | null
+  onStampChange?: (stamp: PlacedScienceStamp) => void
+  onStampSelect?: (id: string) => void
 }
 
 /** لوحة ألوان كل قالب — تُستخدم للحدود والخلفيات برمجياً */
@@ -623,6 +631,11 @@ export function ExamPaper({
   ornamentSize,
   ornamentDensity,
   ornamentOpacity,
+  scienceStamps = [],
+  stampEditor,
+  selectedStampId,
+  onStampChange,
+  onStampSelect,
 }: ExamPaperProps) {
   const template: ExamTemplateId = templateId || exam.templateId || "classic"
   const decorations = showDecorations ?? exam.showDecorations !== false
@@ -647,6 +660,8 @@ export function ExamPaper({
     ornamentOpacity ?? exam.ornamentOpacity ?? preset.opacity,
     effOrnamentDensity
   )
+  const twoPagePaper = maxPages === 2 || (compact && maxPages == null)
+  const visualCompact = compact && !twoPagePaper
 
   const shellBase: React.CSSProperties =
     template === "classic"
@@ -660,13 +675,15 @@ export function ExamPaper({
       : template === "modern"
       ? { background: "#ffffff", color: "#1f2937", border: "1px solid #1f2937", padding: "14px 16px", borderRadius: 8 }
       : template === "parchment"
-      ? { background: "#fdf7ea", color: "#5a4326", border: `1.5px solid ${pal.accent}`, padding: `${compact ? "12px" : "16px"} 18px`, borderRadius: 10, boxShadow: `inset 0 0 40px rgba(201,162,75,0.18)` }
-      : { background: pal.bg, color: pal.color, border: `2.5px solid ${pal.accent}`, padding: `${compact ? "12px" : "16px"} 18px`, borderRadius: pal.radius, boxShadow: template === "royal" || template === "wedding" ? `0 0 0 3px #fff, 0 0 0 4px ${pal.accent}44` : undefined }
+      ? { background: "#fdf7ea", color: "#5a4326", border: `1.5px solid ${pal.accent}`, padding: `${visualCompact ? "12px" : "16px"} 18px`, borderRadius: 10, boxShadow: `inset 0 0 40px rgba(201,162,75,0.18)` }
+      : { background: pal.bg, color: pal.color, border: `2.5px solid ${pal.accent}`, padding: `${visualCompact ? "12px" : "16px"} 18px`, borderRadius: pal.radius, boxShadow: template === "royal" || template === "wedding" ? `0 0 0 3px #fff, 0 0 0 4px ${pal.accent}44` : undefined }
 
-  // التقسيم: وضع الضغط يفرض صفحتين (أو حسب maxPages) بحشو أضيق
+  // وضع الصفحتين يغيّر التوزيع فقط، ولا يصغّر السؤال أو أسطر الإجابة.
+  // `compact` باقٍ للتوافق مع إعداد المعاينة القديم، لكن لا نطبّق الضغط البصري
+  // عندما يكون المطلوب ورقة من صفحتين؛ منع التشويه أهم من تقليل المسافات.
   const partition = partitionExamQuestions(exam.questions, {
     maxPages: maxPages ?? (compact ? 2 : undefined),
-    compact,
+    compact: visualCompact,
   })
 
   return (
@@ -680,11 +697,19 @@ export function ExamPaper({
               : page.isLastPage
               ? "exam-page-last"
               : "exam-page-middle"
-          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto ${compact ? "min-h-[250mm]" : "min-h-[270mm]"}`}
+          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto ${visualCompact ? "min-h-[250mm]" : "min-h-[270mm]"}`}
           dir="rtl"
           lang="ar"
           style={{ ...shellBase, fontFamily, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
         >
+          <ScienceStampLayer
+            stamps={scienceStamps}
+            page={page.pageNumber}
+            editable={stampEditor}
+            selectedId={selectedStampId}
+            onChange={onStampChange}
+            onSelect={onStampSelect}
+          />
           {decorations && (
             <PaperCornerOrnaments
               gradeName={gradeName}
@@ -714,7 +739,7 @@ export function ExamPaper({
               />
             )}
 
-            <div className={`flex-1 flex flex-col w-full my-2 ${compact ? "justify-between gap-2" : "justify-around gap-3.5"}`}>
+            <div className={`flex-1 flex flex-col w-full my-2 ${visualCompact ? "justify-between gap-2" : "justify-around gap-3.5"}`}>
               {page.questions.map(({ question, globalIndex }) => (
                 <QuestionBlock
                   key={question.id}
@@ -723,7 +748,7 @@ export function ExamPaper({
                   template={template}
                   gradeName={gradeName}
                   showDecorations={decorations}
-                  compact={compact}
+                  compact={visualCompact}
                   ornamentSize={effOrnamentSize}
                   ornamentDensity={effOrnamentDensity}
                   ornamentOpacity={effOrnamentOpacity}

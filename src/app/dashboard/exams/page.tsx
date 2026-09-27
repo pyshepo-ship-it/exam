@@ -48,6 +48,8 @@ import {
 } from "@/components/ui/dialog"
 import toast from "react-hot-toast"
 import { exportToPDF, printElement } from "@/lib/pdf-utils"
+import { ScienceStampPicker } from "@/components/exam/science-stamp-editor"
+import { makeRandomStamps, type PlacedScienceStamp } from "@/lib/science-stamps"
 import {
   Select,
   SelectContent,
@@ -252,6 +254,10 @@ export default function ExamsPage() {
   const [previewOrnamentSize, setPreviewOrnamentSize] = useState(32)
   const [previewOrnamentDensity, setPreviewOrnamentDensity] = useState<OrnamentDensity>("medium")
   const [previewOrnamentOpacity, setPreviewOrnamentOpacity] = useState<number>(ORNAMENT_OPACITY_CHOICES[1].value)
+  const [previewStamps, setPreviewStamps] = useState<PlacedScienceStamp[]>([])
+  const [previewStampGroup, setPreviewStampGroup] = useState("chemistry")
+  const [previewStampEditor, setPreviewStampEditor] = useState(false)
+  const [selectedStampId, setSelectedStampId] = useState<string | null>(null)
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -2867,7 +2873,7 @@ export default function ExamsPage() {
                           setPreviewMaxPages(e.target.checked ? 2 : undefined)
                         }}
                       />
-                      صفحتان فقط (ضغط)
+                      صفحتان فقط (توزيع متوازن بلا ضغط)
                     </label>
                   </div>
                 </div>
@@ -2926,6 +2932,43 @@ export default function ExamsPage() {
                   </div>
                 </div>
               </div>
+              <div className="no-print mb-3 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/20">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-extrabold text-indigo-900 dark:text-indigo-100">محرر الرموز العلمية — 100 رمز</p>
+                    <p className="text-[11px] text-gray-600 dark:text-gray-400">اختر رمزاً ثم اسحبه بإصبعك أو بالفأرة داخل الورقة. الموضع يثبت في PDF.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button type="button" onClick={() => setPreviewStampEditor(value => !value)} className={`rounded-lg px-3 py-2 text-xs font-bold ${previewStampEditor ? "bg-indigo-600 text-white" : "border bg-white dark:bg-gray-900"}`}>{previewStampEditor ? "إنهاء التحريك" : "التوزيع اليدوي"}</button>
+                    <button type="button" onClick={() => { setPreviewStamps(makeRandomStamps(previewStampGroup, previewOrnamentDensity === "low" ? 6 : previewOrnamentDensity === "medium" ? 10 : 14, 2)); setPreviewStampEditor(true) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">توزيع عشوائي من المجموعة</button>
+                    <button type="button" onClick={() => { setPreviewStamps([]); setSelectedStampId(null) }} className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-bold text-red-600 dark:bg-gray-900">مسح الرموز</button>
+                  </div>
+                </div>
+                <ScienceStampPicker
+                  group={previewStampGroup}
+                  onGroup={setPreviewStampGroup}
+                  onAdd={symbolId => {
+                    const index = previewStamps.length
+                    const stamp: PlacedScienceStamp = { id: `manual-${Date.now()}`, symbolId, page: index % 2 + 1, x: 50, y: 18 + (index % 5) * 14, size: previewOrnamentSize, rotation: 0, opacity: Math.max(0.2, previewOrnamentOpacity) }
+                    setPreviewStamps(items => [...items, stamp])
+                    setSelectedStampId(stamp.id)
+                    setPreviewStampEditor(true)
+                  }}
+                />
+                {selectedStampId && (() => {
+                  const selected = previewStamps.find(stamp => stamp.id === selectedStampId)
+                  if (!selected) return null
+                  const update = (patch: Partial<PlacedScienceStamp>) => setPreviewStamps(items => items.map(stamp => stamp.id === selected.id ? { ...stamp, ...patch } : stamp))
+                  return <div className="flex flex-wrap items-center gap-2 rounded-lg bg-white p-2 text-xs dark:bg-gray-900">
+                    <b>الرمز المحدد:</b>
+                    <label>الحجم <input type="range" min="18" max="90" value={selected.size} onChange={e => update({ size: Number(e.target.value) })} /></label>
+                    <label>الدوران <input type="range" min="-180" max="180" value={selected.rotation} onChange={e => update({ rotation: Number(e.target.value) })} /></label>
+                    <label>الشفافية <input type="range" min="10" max="100" value={selected.opacity * 100} onChange={e => update({ opacity: Number(e.target.value) / 100 })} /></label>
+                    <button type="button" onClick={() => update({ page: selected.page === 1 ? 2 : 1 })} className="rounded border px-2 py-1">نقل للصفحة {selected.page === 1 ? 2 : 1}</button>
+                    <button type="button" onClick={() => { setPreviewStamps(items => items.filter(stamp => stamp.id !== selected.id)); setSelectedStampId(null) }} className="rounded bg-red-600 px-2 py-1 text-white">حذف</button>
+                  </div>
+                })()}
+              </div>
               <div id="exam-preview-content" className="w-full max-w-full mx-auto bg-white dark:bg-gray-950 rounded-lg overflow-hidden py-1">
                 <ExamPaper
                   exam={previewExam}
@@ -2938,6 +2981,11 @@ export default function ExamsPage() {
                   ornamentSize={previewOrnamentSize}
                   ornamentDensity={previewOrnamentDensity}
                   ornamentOpacity={previewOrnamentOpacity}
+                  scienceStamps={previewStamps}
+                  stampEditor={previewStampEditor}
+                  selectedStampId={selectedStampId}
+                  onStampSelect={setSelectedStampId}
+                  onStampChange={changed => setPreviewStamps(items => items.map(stamp => stamp.id === changed.id ? changed : stamp))}
                 />
               </div>
             </>

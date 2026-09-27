@@ -607,33 +607,40 @@ export function partitionExamQuestions(
   }
 
   const twoPageBalancedPartition = (): ExamPartition => {
-    // إن كان الامتحان يتسع فعلاً لصفحة واحدة نُبقيه صفحة واحدة (أفضل من صفحة فاضية)
+    // إن كان الامتحان يتسع فعلاً لصفحة واحدة نُبقيه صفحة واحدة (أفضل من صفحة فارغة).
     if (totalQuestionsWeight <= SINGLE_PAGE_MAX_WEIGHT) {
       return singlePagePartition()
     }
-    const half = Math.ceil(totalQuestionsWeight / 2)
-    let first: { question: Question; globalIndex: number }[] = []
-    let second: { question: Question; globalIndex: number }[] = []
-    let acc = 0
-    let switched = false
-    for (const item of sortedIndexed) {
-      if (!switched) {
-        // لا نضع في الصفحة الأولى سؤالاً أثقل من نصف الميزان إن أمكن؛ ننتقل للثانية
-        if (first.length > 0 && acc + item.weight > half) {
-          switched = true
-        } else {
-          first.push({ question: item.question, globalIndex: item.globalIndex })
-          acc += item.weight
-          continue
-        }
-      }
-      second.push({ question: item.question, globalIndex: item.globalIndex })
-    }
-    if (first.length === 0) {
-      first = second
-      second = []
-    }
-    if (second.length === 0) return singlePagePartition()
+
+    /*
+     * التوازن هنا توازن في عدد الأسئلة أولاً، لا في الوزن فقط. كان الاعتماد على
+     * نصف الوزن يجعل سؤالين كبيرين في الأولى وأربعة أسئلة مضغوطة في الثانية.
+     * نبقي ترتيب الأسئلة متصلاً ونفحص نقطتي المنتصف فقط؛ لذلك 6 أسئلة تكون 3/3،
+     * والعدد الفردي يختلف سؤالاً واحداً كحد أقصى. ثم نختار من نقطتي المنتصف
+     * الأقرب في الارتفاع التقديري مع احتساب أن ترويسة الصفحة الأولى أكبر.
+     */
+    const lowerMiddle = Math.floor(n / 2)
+    const upperMiddle = Math.ceil(n / 2)
+    const candidates = [...new Set([lowerMiddle, upperMiddle])].filter(split => split > 0 && split < n)
+    if (candidates.length === 0) return singlePagePartition()
+
+    const normalizedLoad = (start: number, end: number, capacity: number) =>
+      weights.slice(start, end).reduce((sum, weight) => sum + weight, 0) / capacity
+
+    const splitAt = candidates.reduce((best, split) => {
+      const imbalance = Math.abs(
+        normalizedLoad(0, split, PAGE1_MAX_CAPACITY) -
+        normalizedLoad(split, n, SUBSEQUENT_PAGE_MAX_CAPACITY)
+      )
+      const bestImbalance = Math.abs(
+        normalizedLoad(0, best, PAGE1_MAX_CAPACITY) -
+        normalizedLoad(best, n, SUBSEQUENT_PAGE_MAX_CAPACITY)
+      )
+      return imbalance < bestImbalance ? split : best
+    }, candidates[0])
+
+    const first = sortedIndexed.slice(0, splitAt).map(({ question, globalIndex }) => ({ question, globalIndex }))
+    const second = sortedIndexed.slice(splitAt).map(({ question, globalIndex }) => ({ question, globalIndex }))
     return buildPages([first, second])
   }
 
