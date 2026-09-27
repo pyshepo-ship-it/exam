@@ -232,17 +232,20 @@ function SubQuestionBody({
       <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
     </div>
   ) : null
+  const equationAbove = sq.equationPosition === "above" ? equationEl : null
+  const equationBelow = sq.equationPosition !== "above" ? equationEl : null
 
   return (
     <div className={`exam-sub ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
       {/* 1. اختيار من متعدد مع مسافات مريحة وواضحة بين الخيارات */}
       {question.questionType === 1 && (
         <div className={compact ? "space-y-1" : "space-y-2"}>
+          {equationAbove}
           <p className="font-medium text-right leading-relaxed">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
-          {equationEl}
+          {equationBelow}
           <div className={`flex flex-wrap items-center gap-x-8 sm:gap-x-12 gap-y-2 pr-4 pt-0.5 text-xs sm:text-[14px] ${compact ? "gap-y-1" : ""}`}>
             {sq.choices?.map(choice => (
               <span key={choice.id} className="text-gray-800 dark:text-gray-200 inline-flex items-center">
@@ -257,17 +260,19 @@ function SubQuestionBody({
       {/* 2. أكمل العبارات الآتية */}
       {question.questionType === 2 && (
         <div>
+          {equationAbove}
           <p className="font-medium text-right leading-loose">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             <CompleteLine sq={sq} />
           </p>
-          {equationEl}
+          {equationBelow}
         </div>
       )}
 
       {/* 3. صح أو خطأ */}
       {question.questionType === 3 && (
         <div>
+          {equationAbove}
           <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
             <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
               <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
@@ -277,18 +282,19 @@ function SubQuestionBody({
               (&nbsp;&nbsp;&nbsp;&nbsp;)
             </span>
           </div>
-          {equationEl}
+          {equationBelow}
         </div>
       )}
 
       {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
       {(question.questionType === 4 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
+          {equationAbove}
           <p className="font-medium text-right leading-relaxed">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             {sq.questionText}
           </p>
-          {equationEl}
+          {equationBelow}
           {Array.from({ length: answerLines }).map((_, li) => (
             <p key={li} className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>
               {DOTS_LINE}
@@ -300,11 +306,12 @@ function SubQuestionBody({
       {/* 5. صحح ما تحته خط */}
       {question.questionType === 5 && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
+          {equationAbove}
           <p className="font-medium text-right leading-relaxed">
             <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
             <CorrectionLine sq={sq} />
           </p>
-          {equationEl}
+          {equationBelow}
           <p className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>{DOTS_LINE}</p>
         </div>
       )}

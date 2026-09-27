@@ -2451,6 +2451,14 @@ export default function ExamsPage() {
                                       >
                                         ⚗️ {sq.equation ? "تعديل المعادلة" : "إضافة معادلة"}
                                       </button>
+                                      {sq.equation && <button
+                                        type="button"
+                                        onClick={() => updateSubQuestion(question.id, sq.id, "equationPosition", sq.equationPosition === "above" ? "below" : "above")}
+                                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"
+                                        title="تبديل مكان المعادلة بضغطة واحدة"
+                                      >
+                                        {sq.equationPosition === "above" ? "↓ ضعها تحت السؤال" : "↑ ضعها فوق السؤال"}
+                                      </button>}
                                       <Label className="text-[11px] text-gray-500">الدرجة</Label>
                                       <Input
                                         type="number"
