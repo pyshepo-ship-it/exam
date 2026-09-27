@@ -21,11 +21,23 @@ export function EquationDisplay({ equation, aboveArrow }: { equation?: string; a
   const arrow = equation.includes("⇌") ? "⇌" : equation.includes("⟶") ? "⟶" : ""
   if (!arrow || !aboveArrow) return <span dir="ltr" className="inline-block whitespace-pre-wrap font-bold tracking-wide">{equation}</span>
   const [before, ...after] = equation.split(arrow)
+  // يتسع السهم تلقائياً للنص المكتوب فوقه، بدل أن يخرج النص خارج حدوده.
+  const arrowWidth = Math.max(104, Array.from(aboveArrow.trim()).length * 10 + 32)
   return <span dir="ltr" className="inline-flex max-w-full items-end justify-center font-bold tracking-wide">
     <span className="whitespace-pre-wrap">{before}</span>
-    <span className="relative inline-flex min-w-24 justify-center pt-2.5 px-1">
-      <span className="absolute top-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[.68em] leading-none font-semibold">{aboveArrow}</span>
-      <span className="inline-block origin-center scale-x-[2.25] leading-none">{arrow}</span>
+    <span className="relative inline-flex shrink-0 justify-center px-1 pt-3.5" style={{ width: `${arrowWidth}px` }}>
+      <span className="absolute top-0 left-1/2 w-full -translate-x-1/2 whitespace-nowrap px-1 text-center text-[.68em] leading-none font-semibold">{aboveArrow}</span>
+      <svg aria-hidden="true" viewBox="0 0 100 14" preserveAspectRatio="none" className="h-3.5 w-full overflow-visible text-current">
+        {arrow === "⇌" ? <>
+          <line x1="3" y1="4" x2="94" y2="4" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M94 4 L87 1 M94 4 L87 7" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <line x1="97" y1="10" x2="6" y2="10" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M6 10 L13 7 M6 10 L13 13" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        </> : <>
+          <line x1="3" y1="7" x2="94" y2="7" stroke="currentColor" strokeWidth="2" />
+          <path d="M94 7 L86 2 M94 7 L86 12" fill="none" stroke="currentColor" strokeWidth="2" />
+        </>}
+      </svg>
     </span>
     <span className="whitespace-pre-wrap">{after.join(arrow)}</span>
   </span>

@@ -598,7 +598,7 @@ export default function ExamsPage() {
       orderNumber: questionNumber,
       headerText: defaultHeader,
       reasoningType: type === 4 ? reasoningType || "علل" : undefined,
-      subQuestions: [0, 1, 2, 3].map(i => makeSubQuestion(type, i)),
+      subQuestions: [0, 1, 2].map(i => makeSubQuestion(type, i)),
     }
     setExamForm(prev => ({ ...prev, questions: [...prev.questions, newQuestion] }))
     setExpandedQuestions(prev => [...prev, newQuestion.id])
@@ -913,7 +913,13 @@ export default function ExamsPage() {
     const current = examsRef.current
     const previous = current.find(exam => exam.id === id)
     const createdAt = previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString()
-    const draft = buildExamFromForm(form, id, createdAt, true, previous)
+    const draft = buildExamFromForm(
+      { ...form, questions: pruneEmptyQuestions(form.questions).questions },
+      id,
+      createdAt,
+      true,
+      previous
+    )
     // الحفظ التلقائي يخفي اختباراً منشوراً صار ناقصاً — نُخبر المعلم مرة واحدة
     // حتى لا يختفي الاختبار من البوابة بلا سبب مفهوم.
     if (
@@ -1047,6 +1053,26 @@ export default function ExamsPage() {
     setExamForm(prev => ({ ...prev, onlineExamMode: mode }))
   }
 
+  function pruneEmptyQuestions(questions: Question[]): { questions: Question[]; removed: number } {
+    let removed = 0
+    const cleaned = questions.flatMap((question, questionIndex) => {
+      const subQuestions = question.subQuestions.filter(sub => {
+        const writtenText = question.questionType === 2
+          ? (sub.parts || []).some(part => Boolean(part.partText.trim()))
+          : Boolean(sub.questionText.trim())
+        const hasEquation = Boolean(sub.equation?.trim())
+        if (!writtenText && !hasEquation) removed++
+        return writtenText || hasEquation
+      }).map((sub, subIndex) => ({ ...sub, orderNumber: subIndex + 1 }))
+      if (subQuestions.length === 0) return []
+      return [{ ...question, questionNumber: questionIndex + 1, orderNumber: questionIndex + 1, subQuestions }]
+    })
+    return {
+      questions: cleaned.map((question, index) => ({ ...question, questionNumber: index + 1, orderNumber: index + 1 })),
+      removed,
+    }
+  }
+
   const saveExam = () => {
     if (!examForm.title.trim()) {
       toast.error("يرجى إدخال عنوان الاختبار")
@@ -1058,8 +1084,10 @@ export default function ExamsPage() {
       toast.error(`مدة الاختبار الإلكتروني يجب أن تكون من 1 إلى ${MAX_ONLINE_EXAM_MINUTES} دقيقة`)
       return
     }
+    const { questions: cleanedQuestions, removed: removedEmptyQuestions } = pruneEmptyQuestions(examForm.questions)
+    const cleanedForm = { ...examForm, questions: cleanedQuestions }
     const readiness = getOnlineExamReadiness({
-      questions: examForm.questions,
+      questions: cleanedQuestions,
       onlineExamMode: examForm.onlineExamMode,
     })
     // يمكن حفظ مسودة أونلاين في أي وقت، لكن لا نسمح بنشر اختبار ناقص للطلاب.
@@ -1080,7 +1108,7 @@ export default function ExamsPage() {
     const id = editorExamIdRef.current || editingExam?.id || `exam-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const previous = examsRef.current.find(exam => exam.id === id)
     const examData = buildExamFromForm(
-      examForm,
+      cleanedForm,
       id,
       previous?.createdAt || editorCreatedAtRef.current || new Date().toISOString(),
       false,
@@ -1093,7 +1121,10 @@ export default function ExamsPage() {
     examsRef.current = updatedExams
     setExams(updatedExams)
     saveExams(updatedExams)
-    editorInitialFingerprintRef.current = JSON.stringify(examForm)
+    editorInitialFingerprintRef.current = JSON.stringify(cleanedForm)
+    if (removedEmptyQuestions > 0) {
+      toast.success(`تم تجاهل ${removedEmptyQuestions} سؤال فارغ تلقائياً`)
+    }
     setCreateDialogOpen(false)
     setEditingExam(null)
     setAutoSaveState("saved")
