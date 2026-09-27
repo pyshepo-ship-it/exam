@@ -48,7 +48,11 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
     requestAnimationFrame(() => { input?.focus(); input?.setSelectionRange(start + token.length, start + token.length) })
   }
   return <Dialog open={open} onOpenChange={value => { if (!value) onClose() }}>
-    <DialogContent className="w-[96vw] max-w-2xl max-h-[92vh] overflow-y-auto p-4" dir="rtl">
+    <DialogContent
+      overlayClassName="!z-[100]"
+      className="!z-[101] !fixed !inset-x-2 !bottom-2 !top-auto !left-auto !w-auto !max-w-none !translate-x-0 !translate-y-0 max-h-[92dvh] overflow-y-auto rounded-2xl p-4 sm:!inset-auto sm:!left-1/2 sm:!top-1/2 sm:!bottom-auto sm:!w-[96vw] sm:!max-w-2xl sm:!-translate-x-1/2 sm:!-translate-y-1/2"
+      dir="rtl"
+    >
       <DialogHeader><DialogTitle>⚗️ محرر المعادلات العلمية</DialogTitle></DialogHeader>
       <p className="text-xs text-gray-500">لن يُمسح نص السؤال. اكتب أو اختر الرموز، وحدد ما يظهر فوق السهم مثل الحرارة أو العامل الحفاز.</p>
       <textarea ref={inputRef} dir="ltr" value={equation} onChange={event => setEquation(event.target.value)} placeholder="NaCl + H₂O ⟶ NaOH + H₂↑" className="min-h-20 w-full rounded-xl border p-3 text-left text-lg font-bold" />
