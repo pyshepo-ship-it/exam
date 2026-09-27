@@ -2492,7 +2492,7 @@ export default function ExamsPage() {
                                     return <div className="rounded-lg border border-teal-200 bg-white p-3 dark:bg-gray-900">
                                       <p className="mb-1 text-[10px] font-bold text-teal-700 dark:text-teal-300">معاينة حية — {position === "above" ? "فوق السؤال" : position === "inline" ? "بجانب الجملة" : "تحت السؤال"}</p>
                                       {position === "above" && <div className="flex justify-center">{equationPreview}</div>}
-                                      <div className="text-sm font-medium" dir="rtl">
+                                      <div className="whitespace-pre-wrap text-sm font-medium" dir="rtl">
                                         <span>{sq.questionText || "نص السؤال سيظهر هنا"}</span>
                                         {position === "inline" && equationPreview}
                                       </div>
@@ -2671,6 +2671,7 @@ export default function ExamsPage() {
                                         >
                                           <SelectTrigger className="w-36 h-8"><SelectValue /></SelectTrigger>
                                           <SelectContent>
+                                            <SelectItem value="0">بدون سطور</SelectItem>
                                             <SelectItem value="1">سطر واحد (افتراضي)</SelectItem>
                                             <SelectItem value="2">سطران</SelectItem>
                                             <SelectItem value="3">3 أسطر</SelectItem>

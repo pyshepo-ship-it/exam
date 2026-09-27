@@ -241,11 +241,15 @@ function SubQuestionBody({
   compact?: boolean
 }) {
   // وضع الضغط: نُقلّل سطور النقاط المفتوحة دون إزالتها كلياً حتى لا يُشوَّه السؤال
-  const answerLines = compact
-    ? Math.min(Math.max(sq.answerLines ?? 1, 1), 2)
-    : (sq.answerLines ?? 1)
+  const requestedAnswerLines = sq.answerLines ?? 1
+  // الصفر اختيار مقصود: سؤال بلا أسطر إجابة، ولا يعيده وضع الصفحتين إلى سطر واحد.
+  const answerLines = requestedAnswerLines === 0
+    ? 0
+    : compact
+      ? Math.min(Math.max(requestedAnswerLines, 1), 2)
+      : requestedAnswerLines
   return (
-    <div className={`exam-sub ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
+    <div className={`exam-sub whitespace-pre-wrap ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
       {/* 1. اختيار من متعدد مع مسافات مريحة وواضحة بين الخيارات */}
       {question.questionType === 1 && (
         <div className={compact ? "space-y-1" : "space-y-2"}>
@@ -374,7 +378,7 @@ function QuestionBlock({
     >
       <div className="flex items-center gap-2 min-w-0 flex-1 flex-nowrap">
         <TypeSeal question={question} />
-        <h3 className="font-extrabold text-sm sm:text-[14.5px] m-0 leading-tight min-w-0 break-words">
+        <h3 className="whitespace-pre-wrap font-extrabold text-sm sm:text-[14.5px] m-0 leading-tight min-w-0 break-words">
           السؤال {ordinal}: {header}
         </h3>
       </div>

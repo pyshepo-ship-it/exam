@@ -560,9 +560,12 @@ export function partitionExamQuestions(
     let subWeight = compact ? 30 : 34
     if (q.questionType === 1) subWeight = compact ? 38 : 42 // MCQ مع خيارات ومسافات واسعة
     if (q.questionType === 4 || q.questionType === 6 || q.questionType === 7 || q.questionType === 8) {
-      const lines = compact
-        ? Math.min(Math.max(q.subQuestions[0]?.answerLines ?? 1, 1), 2) // ضغط أسطر النقاط
-        : (q.subQuestions[0]?.answerLines ?? 1)
+      const requestedLines = q.subQuestions[0]?.answerLines ?? 1
+      const lines = requestedLines === 0
+        ? 0
+        : compact
+          ? Math.min(Math.max(requestedLines, 1), 2) // ضغط أسطر النقاط مع احترام خيار «بدون سطور»
+          : requestedLines
       subWeight = (compact ? 24 : 28) + lines * (compact ? 13 : 16)
     }
     if (q.questionType === 5) subWeight = compact ? 32 : 36 // تصحيح

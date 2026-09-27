@@ -19,15 +19,15 @@ const TEMPLATES = ["…… + …… ⟶ ……","…… ⟶ …… + ……","A 
 export function EquationDisplay({ equation, aboveArrow }: { equation?: string; aboveArrow?: string }) {
   if (!equation) return null
   const arrow = equation.includes("⇌") ? "⇌" : equation.includes("⟶") ? "⟶" : ""
-  if (!arrow || !aboveArrow) return <span dir="ltr" className="inline-block font-bold tracking-wide">{equation}</span>
+  if (!arrow || !aboveArrow) return <span dir="ltr" className="inline-block whitespace-pre-wrap font-bold tracking-wide">{equation}</span>
   const [before, ...after] = equation.split(arrow)
-  return <span dir="ltr" className="inline-flex items-end justify-center gap-1.5 font-bold tracking-wide max-w-full">
-    <span>{before}</span>
+  return <span dir="ltr" className="inline-flex max-w-full items-end justify-center font-bold tracking-wide">
+    <span className="whitespace-pre-wrap">{before}</span>
     <span className="relative inline-flex min-w-24 justify-center pt-2.5 px-1">
       <span className="absolute top-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[.68em] leading-none font-semibold">{aboveArrow}</span>
       <span className="inline-block origin-center scale-x-[2.25] leading-none">{arrow}</span>
     </span>
-    <span>{after.join(arrow)}</span>
+    <span className="whitespace-pre-wrap">{after.join(arrow)}</span>
   </span>
 }
 
