@@ -21,6 +21,9 @@ import {
   type OrnamentDensity,
 } from "@/lib/exam-templates"
 import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
+import { ScienceStampLayer } from "./science-stamp-editor"
+import { EquationDisplay } from "./equation-editor"
+import type { PlacedScienceStamp } from "@/lib/science-stamps"
 import {
   DEFAULT_TEACHER_NAME,
   DEFAULT_TEACHER_SIGNATURE_LINE,
@@ -49,6 +52,14 @@ interface ExamPaperProps {
   ornamentDensity?: OrnamentDensity
   /** شفافية الزخارف (0..1) — خفيفة دائماً حتى لا تغطي كلام الاختبار */
   ornamentOpacity?: number
+  /** رموز حرة محفوظة بإحداثيات نسبية، فتظل في موضعها عند الطباعة ومن الهاتف */
+  scienceStamps?: PlacedScienceStamp[]
+  stampEditor?: boolean
+  selectedStampId?: string | null
+  pendingStampSymbolId?: string | null
+  onStampPlace?: (page: number, x: number, y: number) => void
+  onStampChange?: (stamp: PlacedScienceStamp) => void
+  onStampSelect?: (id: string) => void
 }
 
 /** لوحة ألوان كل قالب — تُستخدم للحدود والخلفيات برمجياً */
@@ -200,6 +211,24 @@ function CorrectionLine({ sq }: { sq: SubQuestion }) {
   )
 }
 
+function PromptEquationLayout({ sq, children }: { sq: SubQuestion; children: React.ReactNode }) {
+  if (!sq.equation) return <>{children}</>
+  const equation = (
+    <div className="my-0.5 flex shrink-0 justify-center px-2 text-base sm:text-lg" dir="ltr">
+      <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
+    </div>
+  )
+  switch (sq.equationPosition || "below") {
+    case "above":
+      return <>{equation}{children}</>
+    case "inline":
+      return <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{children}{equation}</div>
+    case "below":
+    default:
+      return <>{children}{equation}</>
+  }
+}
+
 function SubQuestionBody({
   question,
   sq,
@@ -212,19 +241,24 @@ function SubQuestionBody({
   compact?: boolean
 }) {
   // وضع الضغط: نُقلّل سطور النقاط المفتوحة دون إزالتها كلياً حتى لا يُشوَّه السؤال
-  const answerLines = compact
-    ? Math.min(Math.max(sq.answerLines ?? 1, 1), 2)
-    : (sq.answerLines ?? 1)
-
+  const requestedAnswerLines = sq.answerLines ?? 1
+  // الصفر اختيار مقصود: سؤال بلا أسطر إجابة، ولا يعيده وضع الصفحتين إلى سطر واحد.
+  const answerLines = requestedAnswerLines === 0
+    ? 0
+    : compact
+      ? Math.min(Math.max(requestedAnswerLines, 1), 2)
+      : requestedAnswerLines
   return (
-    <div className={`exam-sub ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
+    <div className={`exam-sub whitespace-pre-wrap ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed ${compact ? "py-0.5" : "py-1"}`}>
       {/* 1. اختيار من متعدد مع مسافات مريحة وواضحة بين الخيارات */}
       {question.questionType === 1 && (
         <div className={compact ? "space-y-1" : "space-y-2"}>
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-          </p>
+          <PromptEquationLayout sq={sq}>
+            <p className="font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+          </PromptEquationLayout>
           <div className={`flex flex-wrap items-center gap-x-8 sm:gap-x-12 gap-y-2 pr-4 pt-0.5 text-xs sm:text-[14px] ${compact ? "gap-y-1" : ""}`}>
             {sq.choices?.map(choice => (
               <span key={choice.id} className="text-gray-800 dark:text-gray-200 inline-flex items-center">
@@ -238,32 +272,38 @@ function SubQuestionBody({
 
       {/* 2. أكمل العبارات الآتية */}
       {question.questionType === 2 && (
-        <p className="font-medium text-right leading-loose">
-          <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-          <CompleteLine sq={sq} />
-        </p>
+        <PromptEquationLayout sq={sq}>
+          <p className="font-medium text-right leading-loose">
+            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+            <CompleteLine sq={sq} />
+          </p>
+        </PromptEquationLayout>
       )}
 
       {/* 3. صح أو خطأ */}
       {question.questionType === 3 && (
-        <div className="flex items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
-          <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-          </p>
-          <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
-            (&nbsp;&nbsp;&nbsp;&nbsp;)
-          </span>
-        </div>
+        <PromptEquationLayout sq={sq}>
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-4 w-full py-0.5 flex-nowrap">
+            <p className={`min-w-0 flex-1 text-right ${compact ? "text-[13.5px]" : "text-[14px] sm:text-[15px]"} leading-relaxed break-words font-medium`}>
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+            <span className="shrink-0 whitespace-nowrap inline-flex items-center justify-center min-w-[3.6rem] h-6 px-1.5 text-xs font-bold border border-current/80 rounded tracking-widest text-center self-center">
+              (&nbsp;&nbsp;&nbsp;&nbsp;)
+            </span>
+          </div>
+        </PromptEquationLayout>
       )}
 
-      {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر (افتراضياً سطر نقاط واحد مريح، وقابل للزيادة) */}
+      {/* 4 و 6 و 7 و 8: علل / المصطلح العلمي / ما المقصود / سؤال حر */}
       {(question.questionType === 4 || question.questionType === 6 || question.questionType === 7 || question.questionType === 8) && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            {sq.questionText}
-          </p>
+          <PromptEquationLayout sq={sq}>
+            <p className="min-w-0 flex-1 font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              {sq.questionText}
+            </p>
+          </PromptEquationLayout>
           {Array.from({ length: answerLines }).map((_, li) => (
             <p key={li} className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>
               {DOTS_LINE}
@@ -275,10 +315,12 @@ function SubQuestionBody({
       {/* 5. صحح ما تحته خط */}
       {question.questionType === 5 && (
         <div className={compact ? "space-y-1" : "space-y-1.5"}>
-          <p className="font-medium text-right leading-relaxed">
-            <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
-            <CorrectionLine sq={sq} />
-          </p>
+          <PromptEquationLayout sq={sq}>
+            <p className="min-w-0 flex-1 font-medium text-right leading-relaxed">
+              <span className="font-bold text-gray-900 dark:text-gray-100">{index + 1} – </span>
+              <CorrectionLine sq={sq} />
+            </p>
+          </PromptEquationLayout>
           <p className={`pr-4 tracking-wider opacity-60 ${compact ? "text-xs leading-7" : "text-xs sm:text-sm leading-8"} select-none`}>{DOTS_LINE}</p>
         </div>
       )}
@@ -336,7 +378,7 @@ function QuestionBlock({
     >
       <div className="flex items-center gap-2 min-w-0 flex-1 flex-nowrap">
         <TypeSeal question={question} />
-        <h3 className="font-extrabold text-sm sm:text-[14.5px] m-0 leading-tight min-w-0 break-words">
+        <h3 className="whitespace-pre-wrap font-extrabold text-sm sm:text-[14.5px] m-0 leading-tight min-w-0 break-words">
           السؤال {ordinal}: {header}
         </h3>
       </div>
@@ -623,6 +665,13 @@ export function ExamPaper({
   ornamentSize,
   ornamentDensity,
   ornamentOpacity,
+  scienceStamps = [],
+  stampEditor,
+  selectedStampId,
+  pendingStampSymbolId,
+  onStampPlace,
+  onStampChange,
+  onStampSelect,
 }: ExamPaperProps) {
   const template: ExamTemplateId = templateId || exam.templateId || "classic"
   const decorations = showDecorations ?? exam.showDecorations !== false
@@ -647,6 +696,8 @@ export function ExamPaper({
     ornamentOpacity ?? exam.ornamentOpacity ?? preset.opacity,
     effOrnamentDensity
   )
+  const twoPagePaper = maxPages === 2 || (compact && maxPages == null)
+  const visualCompact = compact && !twoPagePaper
 
   const shellBase: React.CSSProperties =
     template === "classic"
@@ -660,13 +711,15 @@ export function ExamPaper({
       : template === "modern"
       ? { background: "#ffffff", color: "#1f2937", border: "1px solid #1f2937", padding: "14px 16px", borderRadius: 8 }
       : template === "parchment"
-      ? { background: "#fdf7ea", color: "#5a4326", border: `1.5px solid ${pal.accent}`, padding: `${compact ? "12px" : "16px"} 18px`, borderRadius: 10, boxShadow: `inset 0 0 40px rgba(201,162,75,0.18)` }
-      : { background: pal.bg, color: pal.color, border: `2.5px solid ${pal.accent}`, padding: `${compact ? "12px" : "16px"} 18px`, borderRadius: pal.radius, boxShadow: template === "royal" || template === "wedding" ? `0 0 0 3px #fff, 0 0 0 4px ${pal.accent}44` : undefined }
+      ? { background: "#fdf7ea", color: "#5a4326", border: `1.5px solid ${pal.accent}`, padding: `${visualCompact ? "12px" : "16px"} 18px`, borderRadius: 10, boxShadow: `inset 0 0 40px rgba(201,162,75,0.18)` }
+      : { background: pal.bg, color: pal.color, border: `2.5px solid ${pal.accent}`, padding: `${visualCompact ? "12px" : "16px"} 18px`, borderRadius: pal.radius, boxShadow: template === "royal" || template === "wedding" ? `0 0 0 3px #fff, 0 0 0 4px ${pal.accent}44` : undefined }
 
-  // التقسيم: وضع الضغط يفرض صفحتين (أو حسب maxPages) بحشو أضيق
+  // وضع الصفحتين يغيّر التوزيع فقط، ولا يصغّر السؤال أو أسطر الإجابة.
+  // `compact` باقٍ للتوافق مع إعداد المعاينة القديم، لكن لا نطبّق الضغط البصري
+  // عندما يكون المطلوب ورقة من صفحتين؛ منع التشويه أهم من تقليل المسافات.
   const partition = partitionExamQuestions(exam.questions, {
     maxPages: maxPages ?? (compact ? 2 : undefined),
-    compact,
+    compact: visualCompact,
   })
 
   return (
@@ -680,11 +733,21 @@ export function ExamPaper({
               : page.isLastPage
               ? "exam-page-last"
               : "exam-page-middle"
-          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto ${compact ? "min-h-[250mm]" : "min-h-[270mm]"}`}
+          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto ${visualCompact ? "min-h-[250mm]" : "min-h-[270mm]"}`}
           dir="rtl"
           lang="ar"
           style={{ ...shellBase, fontFamily, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
         >
+          <ScienceStampLayer
+            stamps={scienceStamps}
+            page={page.pageNumber}
+            editable={stampEditor}
+            selectedId={selectedStampId}
+            pendingSymbolId={pendingStampSymbolId}
+            onPlace={onStampPlace}
+            onChange={onStampChange}
+            onSelect={onStampSelect}
+          />
           {decorations && (
             <PaperCornerOrnaments
               gradeName={gradeName}
@@ -714,7 +777,7 @@ export function ExamPaper({
               />
             )}
 
-            <div className={`flex-1 flex flex-col w-full my-2 ${compact ? "justify-between gap-2" : "justify-around gap-3.5"}`}>
+            <div className={`flex-1 flex flex-col w-full my-2 ${visualCompact ? "justify-between gap-2" : "justify-around gap-3.5"}`}>
               {page.questions.map(({ question, globalIndex }) => (
                 <QuestionBlock
                   key={question.id}
@@ -723,7 +786,7 @@ export function ExamPaper({
                   template={template}
                   gradeName={gradeName}
                   showDecorations={decorations}
-                  compact={compact}
+                  compact={visualCompact}
                   ornamentSize={effOrnamentSize}
                   ornamentDensity={effOrnamentDensity}
                   ornamentOpacity={effOrnamentOpacity}
