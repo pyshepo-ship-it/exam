@@ -322,7 +322,7 @@ export interface SubQuestion {
   /** شرط/عامل يُعرض فوق سهم التفاعل، مثل Δ أو MnO₂ أو حرارة */
   equationAboveArrow?: string
   /** موضع المعادلة بالنسبة إلى نص السؤال */
-  equationPosition?: "above" | "below"
+  equationPosition?: "above" | "inline" | "below"
 }
 
 /**

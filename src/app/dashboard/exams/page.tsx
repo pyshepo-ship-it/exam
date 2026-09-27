@@ -2451,14 +2451,21 @@ export default function ExamsPage() {
                                       >
                                         ⚗️ {sq.equation ? "تعديل المعادلة" : "إضافة معادلة"}
                                       </button>
-                                      {sq.equation && <button
-                                        type="button"
-                                        onClick={() => updateSubQuestion(question.id, sq.id, "equationPosition", sq.equationPosition === "above" ? "below" : "above")}
-                                        className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-bold text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"
-                                        title="تبديل مكان المعادلة بضغطة واحدة"
-                                      >
-                                        {sq.equationPosition === "above" ? "↓ ضعها تحت السؤال" : "↑ ضعها فوق السؤال"}
-                                      </button>}
+                                      {sq.equation && <div className="inline-flex overflow-hidden rounded-lg border border-indigo-300" aria-label="مكان المعادلة">
+                                        {([
+                                          { value: "above", label: "فوق" },
+                                          { value: "inline", label: "بجانب" },
+                                          { value: "below", label: "تحت" },
+                                        ] as const).map(position => {
+                                          const active = (sq.equationPosition || "below") === position.value
+                                          return <button
+                                            key={position.value}
+                                            type="button"
+                                            onClick={() => updateSubQuestion(question.id, sq.id, "equationPosition", position.value)}
+                                            className={`px-2.5 py-1.5 text-[11px] font-bold transition-colors ${active ? "bg-indigo-600 text-white" : "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:text-indigo-300"}`}
+                                          >{position.label}</button>
+                                        })}
+                                      </div>}
                                       <Label className="text-[11px] text-gray-500">الدرجة</Label>
                                       <Input
                                         type="number"
@@ -2479,9 +2486,19 @@ export default function ExamsPage() {
                                       )}
                                     </div>
                                   </div>
-                                  {sq.equation && <div className="flex justify-center rounded-lg border border-teal-200 bg-white p-3 text-lg dark:bg-gray-900" dir="ltr">
-                                    <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
-                                  </div>}
+                                  {sq.equation && (() => {
+                                    const position = sq.equationPosition || "below"
+                                    const equationPreview = <span className="inline-flex justify-center px-2 text-lg" dir="ltr"><EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} /></span>
+                                    return <div className="rounded-lg border border-teal-200 bg-white p-3 dark:bg-gray-900">
+                                      <p className="mb-1 text-[10px] font-bold text-teal-700 dark:text-teal-300">معاينة حية — {position === "above" ? "فوق السؤال" : position === "inline" ? "بجانب الجملة" : "تحت السؤال"}</p>
+                                      {position === "above" && <div className="flex justify-center">{equationPreview}</div>}
+                                      <div className="text-sm font-medium" dir="rtl">
+                                        <span>{sq.questionText || "نص السؤال سيظهر هنا"}</span>
+                                        {position === "inline" && equationPreview}
+                                      </div>
+                                      {position === "below" && <div className="flex justify-center">{equationPreview}</div>}
+                                    </div>
+                                  })()}
 
                                   {/* 1. اختر الإجابة الصحيحة */}
                                   {question.questionType === 1 && (
