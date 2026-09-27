@@ -2936,7 +2936,7 @@ export default function ExamsPage() {
               <div className="no-print mb-3 space-y-2 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 dark:border-indigo-900 dark:bg-indigo-950/20">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <p className="text-sm font-extrabold text-indigo-900 dark:text-indigo-100">محرر الرموز العلمية — 100 رمز</p>
+                    <p className="text-sm font-extrabold text-indigo-900 dark:text-indigo-100">محرر الرموز العلمية — 200 رمز ثلاثي الأبعاد</p>
                     <p className="text-[11px] text-gray-600 dark:text-gray-400">اختر رمزاً، ثم حرّك المؤشر واضغط في المكان المطلوب داخل الورقة. يمكنك بعد ذلك سحبه وتعديله، ويثبت موضعه في PDF.</p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">

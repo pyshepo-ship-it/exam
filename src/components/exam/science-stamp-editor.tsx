@@ -35,7 +35,7 @@ export function ScienceStampLayer({ stamps, page, editable, pendingSymbolId, onP
         type="button"
         title={editable ? `${symbol.name} — اسحب لتحريك الرمز` : symbol.name}
         className={`absolute -translate-x-1/2 -translate-y-1/2 select-none touch-none leading-none bg-transparent border-0 p-1 ${editable ? "pointer-events-auto cursor-move" : "pointer-events-none"} ${selectedId === stamp.id ? "outline-2 outline-dashed outline-indigo-500 rounded" : ""}`}
-        style={{ left: `${stamp.x}%`, top: `${stamp.y}%`, fontSize: stamp.size, opacity: stamp.opacity, transform: `translate(-50%,-50%) rotate(${stamp.rotation}deg)` }}
+        style={{ left: `${stamp.x}%`, top: `${stamp.y}%`, fontSize: stamp.size, opacity: stamp.opacity, filter: "drop-shadow(0 3px 2px rgba(15,23,42,.28)) drop-shadow(0 1px 0 rgba(255,255,255,.8))", textShadow: "0 2px 2px rgba(15,23,42,.2)", transform: `translate(-50%,-50%) rotate(${stamp.rotation}deg)` }}
         onPointerDown={event => {
           if (!editable || !onChange) return
           event.preventDefault()
