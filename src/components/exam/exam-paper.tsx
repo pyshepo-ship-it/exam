@@ -22,6 +22,7 @@ import {
 } from "@/lib/exam-templates"
 import { PaperCornerOrnaments, QuestionOrnaments } from "./science-ornaments"
 import { ScienceStampLayer } from "./science-stamp-editor"
+import { EquationDisplay } from "./equation-editor"
 import type { PlacedScienceStamp } from "@/lib/science-stamps"
 import {
   DEFAULT_TEACHER_NAME,
@@ -409,6 +410,9 @@ function QuestionBlock({
               />
             )}
             <SubQuestionBody question={question} sq={sq} index={si} compact={compact} />
+            {sq.equation && <div className="my-2 flex justify-center px-3 text-base sm:text-lg" dir="ltr">
+              <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
+            </div>}
           </React.Fragment>
         ))}
       </div>

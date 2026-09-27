@@ -8,6 +8,8 @@ export interface ScienceStampSymbol {
 export interface PlacedScienceStamp {
   id: string
   symbolId: string
+  /** الرمز النصي المخصص؛ الرموز المدمجة تُقرأ من المكتبة عبر symbolId */
+  glyph?: string
   page: number
   x: number
   y: number

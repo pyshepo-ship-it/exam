@@ -49,6 +49,7 @@ import {
 import toast from "react-hot-toast"
 import { exportToPDF, printElement } from "@/lib/pdf-utils"
 import { ScienceStampPicker } from "@/components/exam/science-stamp-editor"
+import { EquationEditor, EquationDisplay } from "@/components/exam/equation-editor"
 import { makeRandomStamps, type PlacedScienceStamp } from "@/lib/science-stamps"
 import {
   Select,
@@ -258,7 +259,11 @@ export default function ExamsPage() {
   const [previewStampGroup, setPreviewStampGroup] = useState("chemistry")
   const [previewStampEditor, setPreviewStampEditor] = useState(false)
   const [selectedStampId, setSelectedStampId] = useState<string | null>(null)
-  const [pendingStampSymbolId, setPendingStampSymbolId] = useState<string | null>(null)
+  const [pendingStamp, setPendingStamp] = useState<{ symbolId: string; glyph?: string } | null>(null)
+  const [customStampSymbols, setCustomStampSymbols] = useState<string[]>([])
+  const [stampToolSize, setStampToolSize] = useState(40)
+  const [stampToolOpacity, setStampToolOpacity] = useState(1)
+  const [equationTarget, setEquationTarget] = useState<{ questionId: string; subQuestionId: string } | null>(null)
   const [examForm, setExamForm] = useState({
     gradeId: "",
     groupId: "",
@@ -2438,7 +2443,14 @@ export default function ExamsPage() {
                                     <Badge variant="outline" className={`text-xs ${meta.badge}`}>
                                       السؤال الفرعي {index + 1}
                                     </Badge>
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex flex-wrap items-center justify-end gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setEquationTarget({ questionId: question.id, subQuestionId: sq.id })}
+                                        className="rounded-lg border border-teal-300 bg-teal-50 px-2.5 py-1.5 text-[11px] font-bold text-teal-700 hover:bg-teal-100 dark:bg-teal-950/40 dark:text-teal-300"
+                                      >
+                                        ⚗️ {sq.equation ? "تعديل المعادلة" : "إضافة معادلة"}
+                                      </button>
                                       <Label className="text-[11px] text-gray-500">الدرجة</Label>
                                       <Input
                                         type="number"
@@ -2459,6 +2471,9 @@ export default function ExamsPage() {
                                       )}
                                     </div>
                                   </div>
+                                  {sq.equation && <div className="flex justify-center rounded-lg border border-teal-200 bg-white p-3 text-lg dark:bg-gray-900" dir="ltr">
+                                    <EquationDisplay equation={sq.equation} aboveArrow={sq.equationAboveArrow} />
+                                  </div>}
 
                                   {/* 1. اختر الإجابة الصحيحة */}
                                   {question.questionType === 1 && (
@@ -2843,6 +2858,23 @@ export default function ExamsPage() {
         </section>
       )}
 
+      <EquationEditor
+        open={Boolean(equationTarget)}
+        initialEquation={equationTarget ? examForm.questions.find(question => question.id === equationTarget.questionId)?.subQuestions.find(sub => sub.id === equationTarget.subQuestionId)?.equation : ""}
+        initialAboveArrow={equationTarget ? examForm.questions.find(question => question.id === equationTarget.questionId)?.subQuestions.find(sub => sub.id === equationTarget.subQuestionId)?.equationAboveArrow : ""}
+        onClose={() => setEquationTarget(null)}
+        onSave={(equation, equationAboveArrow) => {
+          if (!equationTarget) return
+          setExamForm(previous => ({
+            ...previous,
+            questions: previous.questions.map(question => question.id !== equationTarget.questionId ? question : {
+              ...question,
+              subQuestions: question.subQuestions.map(sub => sub.id !== equationTarget.subQuestionId ? sub : { ...sub, equation, equationAboveArrow }),
+            }),
+          }))
+        }}
+      />
+
       {/* Preview */}
       <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
         <DialogContent className="w-[96vw] max-w-4xl max-h-[92vh] overflow-y-auto p-3 sm:p-6 mx-auto">
@@ -2940,23 +2972,36 @@ export default function ExamsPage() {
                     <p className="text-[11px] text-gray-600 dark:text-gray-400">اختر رمزاً، ثم حرّك المؤشر واضغط في المكان المطلوب داخل الورقة. يمكنك بعد ذلك سحبه وتعديله، ويثبت موضعه في PDF.</p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <button type="button" onClick={() => { setPreviewStampEditor(value => !value); setPendingStampSymbolId(null) }} className={`rounded-lg px-3 py-2 text-xs font-bold ${previewStampEditor ? "bg-indigo-600 text-white" : "border bg-white dark:bg-gray-900"}`}>{previewStampEditor ? "إنهاء التحريك" : "التوزيع اليدوي"}</button>
-                    <button type="button" onClick={() => { setPendingStampSymbolId(null); setPreviewStamps(makeRandomStamps(previewStampGroup, previewOrnamentDensity === "low" ? 6 : previewOrnamentDensity === "medium" ? 10 : 14, 2)); setPreviewStampEditor(true) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">توزيع عشوائي من المجموعة</button>
+                    <button type="button" onClick={() => { setPreviewStampEditor(value => !value); setPendingStamp(null) }} className={`rounded-lg px-3 py-2 text-xs font-bold ${previewStampEditor ? "bg-indigo-600 text-white" : "border bg-white dark:bg-gray-900"}`}>{previewStampEditor ? "إنهاء التحريك" : "التوزيع اليدوي"}</button>
+                    <button type="button" onClick={() => { setPendingStamp(null); setPreviewStamps(makeRandomStamps(previewStampGroup, previewOrnamentDensity === "low" ? 6 : previewOrnamentDensity === "medium" ? 10 : 14, 2).map(stamp => ({ ...stamp, size: stampToolSize, opacity: stampToolOpacity }))); setPreviewStampEditor(true) }} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white">توزيع عشوائي من المجموعة</button>
                     <button type="button" onClick={() => { setPreviewStamps([]); setSelectedStampId(null) }} className="rounded-lg border border-red-300 bg-white px-3 py-2 text-xs font-bold text-red-600 dark:bg-gray-900">مسح الرموز</button>
                   </div>
                 </div>
                 <ScienceStampPicker
                   group={previewStampGroup}
                   onGroup={setPreviewStampGroup}
-                  onAdd={symbolId => {
-                    setPendingStampSymbolId(symbolId)
+                  customSymbols={customStampSymbols}
+                  onCustomSymbols={setCustomStampSymbols}
+                  onAdd={(symbolId, glyph) => {
+                    setPendingStamp({ symbolId, glyph })
                     setSelectedStampId(null)
                     setPreviewStampEditor(true)
                   }}
                 />
-                {pendingStampSymbolId && <div className="flex items-center justify-between gap-2 rounded-lg border border-indigo-300 bg-indigo-100 px-3 py-2 text-xs font-bold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
+                <div className="flex flex-wrap items-center gap-3 rounded-lg bg-white p-2 text-xs dark:bg-gray-900">
+                  <label className="flex items-center gap-1 font-bold">حجم الرموز الجديدة
+                    <input type="range" min="18" max="90" value={stampToolSize} onChange={event => setStampToolSize(Number(event.target.value))} className="w-28" />
+                    <span>{stampToolSize}px</span>
+                  </label>
+                  <label className="flex items-center gap-1 font-bold">شفافية الرموز الجديدة
+                    <input type="range" min="0" max="90" value={(1 - stampToolOpacity) * 100} onChange={event => setStampToolOpacity(1 - Number(event.target.value) / 100)} className="w-28" />
+                    <span>{Math.round((1 - stampToolOpacity) * 100)}%</span>
+                  </label>
+                  {pendingStamp && <button type="button" onClick={() => setPendingStamp(null)} className="rounded-lg border border-red-300 px-3 py-1.5 font-bold text-red-600">إلغاء اختيار الرمز</button>}
+                </div>
+                {pendingStamp && <div className="flex items-center justify-between gap-2 rounded-lg border border-indigo-300 bg-indigo-100 px-3 py-2 text-xs font-bold text-indigo-900 dark:bg-indigo-950 dark:text-indigo-100">
                   <span>الرمز جاهز — اضغط في أي مكان داخل الصفحة الأولى أو الثانية لوضعه.</span>
-                  <button type="button" onClick={() => setPendingStampSymbolId(null)} className="rounded bg-white px-2 py-1 text-gray-700 dark:bg-gray-900 dark:text-gray-200">إلغاء</button>
+                  <button type="button" onClick={() => setPendingStamp(null)} className="rounded bg-white px-2 py-1 text-gray-700 dark:bg-gray-900 dark:text-gray-200">إلغاء</button>
                 </div>}
                 {selectedStampId && (() => {
                   const selected = previewStamps.find(stamp => stamp.id === selectedStampId)
@@ -2987,13 +3032,12 @@ export default function ExamsPage() {
                   scienceStamps={previewStamps}
                   stampEditor={previewStampEditor}
                   selectedStampId={selectedStampId}
-                  pendingStampSymbolId={pendingStampSymbolId}
+                  pendingStampSymbolId={pendingStamp?.symbolId || null}
                   onStampPlace={(page, x, y) => {
-                    if (!pendingStampSymbolId) return
-                    const stamp: PlacedScienceStamp = { id: `manual-${Date.now()}`, symbolId: pendingStampSymbolId, page, x, y, size: previewOrnamentSize, rotation: 0, opacity: Math.max(0.2, previewOrnamentOpacity) }
+                    if (!pendingStamp) return
+                    const stamp: PlacedScienceStamp = { id: `manual-${Date.now()}-${Math.random()}`, symbolId: pendingStamp.symbolId, glyph: pendingStamp.glyph, page, x, y, size: stampToolSize, rotation: 0, opacity: stampToolOpacity }
                     setPreviewStamps(items => [...items, stamp])
                     setSelectedStampId(stamp.id)
-                    setPendingStampSymbolId(null)
                   }}
                   onStampSelect={setSelectedStampId}
                   onStampChange={changed => setPreviewStamps(items => items.map(stamp => stamp.id === changed.id ? changed : stamp))}

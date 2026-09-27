@@ -317,6 +317,10 @@ export interface SubQuestion {
   correctAnswer?: string
   /** العبارة صحيحة؟ (النوع 3 — صح وخطأ) */
   isTrue?: boolean
+  /** معادلة علمية مستقلة باتجاه يسار-إلى-يمين لضمان عدم انقلابها داخل العربية */
+  equation?: string
+  /** شرط/عامل يُعرض فوق سهم التفاعل، مثل Δ أو MnO₂ أو حرارة */
+  equationAboveArrow?: string
 }
 
 /**
