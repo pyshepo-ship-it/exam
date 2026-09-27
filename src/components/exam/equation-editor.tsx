@@ -3,9 +3,10 @@
 import React, { useEffect, useRef, useState } from "react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
+import { PERIODIC_ELEMENTS } from "@/lib/periodic-elements"
 
 const GROUPS = [
-  { name: "العناصر", tokens: ["H","O","N","C","Na","Cl","Ca","K","Mg","Fe","Al","Zn","Cu","Ag","S","P","F","Br","I","Si"] },
+  { name: "العناصر الأكثر استخدامًا", tokens: ["H","O","N","C","Na","Cl","Ca","K","Mg","Fe","Al","Zn","Cu","Ag","S","P","F","Br","I","Si"] },
   { name: "الأرقام السفلية", tokens: ["₀","₁","₂","₃","₄","₅","₆","₇","₈","₉"] },
   { name: "الشحنات العلوية", tokens: ["⁰","¹","²","³","⁴","⁵","⁶","⁷","⁸","⁹","⁺","⁻","²⁺","²⁻","³⁺","³⁻"] },
   { name: "التفاعل والحالات", tokens: [" + "," ⟶ "," ⇌ "," ↑"," ↓","(s)","(l)","(g)","(aq)","Δ","hν","cat.","·","(",")","[","]"] },
@@ -37,6 +38,8 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
 }) {
   const [equation, setEquation] = useState("")
   const [aboveArrow, setAboveArrow] = useState("")
+  const [elementSearch, setElementSearch] = useState("")
+  const [showAllElements, setShowAllElements] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   useEffect(() => { if (open) { setEquation(initialEquation || ""); setAboveArrow(initialAboveArrow || "") } }, [open, initialEquation, initialAboveArrow])
   const insert = (token: string) => {
@@ -61,6 +64,28 @@ export function EquationEditor({ open, initialEquation, initialAboveArrow, onClo
         <input value={aboveArrow} onChange={event => setAboveArrow(event.target.value)} placeholder="مثال: Δ أو حرارة أو MnO₂" dir="ltr" className="mt-1 w-full rounded-lg border bg-transparent px-3 py-2 text-left" maxLength={30} />
       </label>
       <div className="flex flex-wrap gap-1.5">{["Δ","حرارة","ضوء","MnO₂","Pt","Ni","ضغط","تحليل كهربائي"].map(token => <button key={token} type="button" onClick={() => setAboveArrow(token)} className="rounded-lg border px-2.5 py-1.5 text-xs font-bold">{token}</button>)}</div>
+      <div className="rounded-xl border border-indigo-200 p-2 dark:border-indigo-900">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-bold">الجدول الدوري الكامل — 118 عنصرًا</p>
+            <p className="text-[10px] text-gray-500">اضغط على العنصر لإدراجه عند موضع المؤشر</p>
+          </div>
+          <button type="button" onClick={() => setShowAllElements(value => !value)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white">{showAllElements ? "إخفاء الجدول" : "عرض كل العناصر"}</button>
+        </div>
+        {showAllElements && <>
+          <input value={elementSearch} onChange={event => setElementSearch(event.target.value)} placeholder="ابحث بالرمز أو الاسم العربي أو العدد الذري…" className="mb-2 w-full rounded-lg border bg-transparent px-3 py-2 text-sm" />
+          <div className="grid max-h-64 grid-cols-4 gap-1.5 overflow-y-auto p-1 sm:grid-cols-7 md:grid-cols-10" dir="ltr">
+            {PERIODIC_ELEMENTS.filter(element => {
+              const query = elementSearch.trim().toLocaleLowerCase("ar")
+              return !query || element.symbol.toLowerCase().includes(query) || element.nameAr.includes(query) || String(element.atomicNumber) === query
+            }).map(element => <button key={element.atomicNumber} type="button" onClick={() => insert(element.symbol)} title={`${element.nameAr} — العدد الذري ${element.atomicNumber}`} className="relative min-h-14 rounded-lg border border-indigo-200 bg-indigo-50 px-1 pt-2 text-center hover:border-indigo-500 active:scale-95 dark:bg-indigo-950/40">
+              <span className="absolute left-1 top-0.5 text-[8px] text-gray-500">{element.atomicNumber}</span>
+              <b className="block text-base leading-none">{element.symbol}</b>
+              <span className="mt-1 block truncate text-[8px] text-gray-600 dark:text-gray-300" dir="rtl">{element.nameAr}</span>
+            </button>)}
+          </div>
+        </>}
+      </div>
       {GROUPS.map(group => <div key={group.name}><p className="mb-1 text-xs font-bold">{group.name}</p><div className="flex flex-wrap gap-1.5" dir="ltr">{group.tokens.map(token => <button key={token} type="button" onClick={() => insert(token)} className="min-h-10 min-w-10 rounded-lg border bg-white px-2 text-base font-bold active:scale-95 dark:bg-gray-900">{token}</button>)}</div></div>)}
       <div><p className="mb-1 text-xs font-bold">قوالب جاهزة</p><div className="grid gap-1.5">{TEMPLATES.map(template => <button key={template} type="button" onClick={() => setEquation(template)} dir="ltr" className="rounded-lg border bg-white px-3 py-2 text-left text-sm dark:bg-gray-900">{template}</button>)}</div></div>
       <div className="sticky bottom-0 flex gap-2 border-t bg-white pt-3 dark:bg-gray-950">
