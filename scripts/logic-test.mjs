@@ -665,6 +665,14 @@ t("ورقة الاختبار لا تضيف إطاراً خارجياً حول ا
   eq(cssRaw.includes("border: 0 !important"), true, "الطباعة المباشرة قد تعيد إطار الصفحة الخارجي")
 })
 
+t("معاينة الاختبار تفتح على خيار صفحتين فقط افتراضياً مع إمكانية إلغائه", () => {
+  eq(/\[previewCompact,\s*setPreviewCompact\]\s*=\s*useState\(true\)/.test(examsPageRaw), true, "خيار الصفحتين ليس مفعلاً افتراضياً")
+  eq(/\[previewMaxPages,\s*setPreviewMaxPages\]\s*=\s*useState<number \| undefined>\(2\)/.test(examsPageRaw), true, "حد الصفحتين ليس مضبوطاً افتراضياً")
+  eq(examsPageRaw.includes("setPreviewCompact(true)"), true, "فتح المعاينة لا يعيد تفعيل خيار الصفحتين")
+  eq(examsPageRaw.includes("setPreviewMaxPages(2)"), true, "فتح المعاينة لا يضبط حد الصفحتين")
+  eq(examsPageRaw.includes("setPreviewMaxPages(e.target.checked ? 2 : undefined)"), true, "لا يمكن إلغاء خيار الصفحتين يدوياً")
+})
+
 t("تصدير PDF للامتحان يستخدم عرضاً موحداً لكل الصفحات", () => {
   eq(pdfRaw.includes("const renderedPages"), true, "لا يتم رسم كل الصفحات قبل حساب القياس")
   eq(pdfRaw.includes("const commonWidth = usableWidth"), true, "لا يوجد عرض PDF كامل وموحد للصفحات")
