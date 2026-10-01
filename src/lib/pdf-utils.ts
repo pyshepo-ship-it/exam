@@ -17,7 +17,7 @@ const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: n
 // الحقيقي دائماً، بصرف النظر عن عرض الجهاز الذي بدأ منه التنزيل.
 const CSS_PX_PER_MM = 96 / 25.4
 const EXAM_PAPER_EXPORT_WIDTH = Math.round(190 * CSS_PX_PER_MM) // 190mm تقريباً عند 96dpi
-const EXAM_PAPER_EXPORT_MIN_HEIGHT = Math.round(270 * CSS_PX_PER_MM) // ارتفاع المعاينة القياسي للصفحة
+const EXAM_PAPER_EXPORT_HEIGHT = Math.round(270 * CSS_PX_PER_MM) // ارتفاع صفحة الامتحان القياسي في التصدير
 
 const nextPaint = () => new Promise<void>(resolve => {
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
@@ -73,38 +73,83 @@ const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<st
       "top:0",
       "left:-30000px",
       `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
+      `height:${EXAM_PAPER_EXPORT_HEIGHT}px`,
       "overflow:hidden",
       "background:#fff",
       "pointer-events:none",
     ].join(";")
 
+    const frame = document.createElement("div")
+    frame.style.cssText = [
+      `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
+      `height:${EXAM_PAPER_EXPORT_HEIGHT}px`,
+      "overflow:hidden",
+      "background:#fff",
+      "position:relative",
+    ].join(";")
+
     const clone = element.cloneNode(true) as HTMLElement
-    clone.style.width = `${EXAM_PAPER_EXPORT_WIDTH}px`
-    clone.style.minWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
-    clone.style.maxWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
-    clone.style.minHeight = `${EXAM_PAPER_EXPORT_MIN_HEIGHT}px`
+    const setCloneWidth = (width: number) => {
+      clone.style.width = `${width}px`
+      clone.style.minWidth = `${width}px`
+      clone.style.maxWidth = `${width}px`
+    }
+    const setCloneMinHeight = (height: number) => {
+      clone.style.minHeight = `${height}px`
+      clone.style.height = `${height}px`
+    }
+    const measuredCloneHeight = () => Math.ceil(Math.max(
+      clone.getBoundingClientRect().height,
+      clone.offsetHeight,
+      clone.scrollHeight,
+      EXAM_PAPER_EXPORT_HEIGHT
+    ))
+
+    setCloneWidth(EXAM_PAPER_EXPORT_WIDTH)
+    setCloneMinHeight(EXAM_PAPER_EXPORT_HEIGHT)
     clone.style.margin = "0"
     clone.style.boxSizing = "border-box"
     clone.style.transform = "none"
+    clone.style.transformOrigin = "top left"
     applyDesktopExamStyles(clone)
-    wrapper.appendChild(clone)
+    frame.appendChild(clone)
+    wrapper.appendChild(frame)
     document.body.appendChild(wrapper)
-    target = clone
+    target = frame
 
     // امنح المتصفح فرصة لإعادة توزيع السطور وفق عرض A4 قبل أخذ الصورة.
     await nextPaint()
 
+    /*
+     * إن كانت الصفحة الأولى أطول بسبب الترويسة/عدد الأسئلة، لا نصغّرها داخل
+     * PDF فينشأ هامش جانبي كبير. بدلاً من ذلك نبقي إطار الصورة بقياس A4 ثابتاً
+     * ونضغط محتوى النسخة المخفية فقط بالقدر اللازم، مع توسيع عرض التخطيط قبل
+     * التحجيم حتى يظل العرض المرئي للورقة كاملاً بلا هوامش فارغة.
+     */
+    let naturalHeight = measuredCloneHeight()
+    let fitScale = Math.min(1, EXAM_PAPER_EXPORT_HEIGHT / naturalHeight)
+    if (fitScale < 1) {
+      for (let i = 0; i < 3; i++) {
+        setCloneWidth(Math.ceil(EXAM_PAPER_EXPORT_WIDTH / fitScale))
+        setCloneMinHeight(Math.ceil(EXAM_PAPER_EXPORT_HEIGHT / fitScale))
+        clone.style.transform = "none"
+        await nextPaint()
+        naturalHeight = measuredCloneHeight()
+        const nextScale = Math.min(1, EXAM_PAPER_EXPORT_HEIGHT / naturalHeight)
+        if (Math.abs(nextScale - fitScale) < 0.005) {
+          fitScale = nextScale
+          break
+        }
+        fitScale = nextScale
+      }
+      setCloneWidth(Math.ceil(EXAM_PAPER_EXPORT_WIDTH / fitScale))
+      setCloneMinHeight(Math.ceil(EXAM_PAPER_EXPORT_HEIGHT / fitScale))
+      clone.style.transform = `scale(${fitScale})`
+      await nextPaint()
+    }
+
     forcedWidth = EXAM_PAPER_EXPORT_WIDTH
-    forcedHeight = Math.ceil(Math.max(
-      clone.getBoundingClientRect().height,
-      clone.offsetHeight,
-      clone.scrollHeight,
-      EXAM_PAPER_EXPORT_MIN_HEIGHT
-    ))
-    clone.style.minHeight = `${forcedHeight}px`
-    clone.style.height = `${forcedHeight}px`
-    wrapper.style.height = `${forcedHeight}px`
-    await nextPaint()
+    forcedHeight = EXAM_PAPER_EXPORT_HEIGHT
   }
 
   try {
