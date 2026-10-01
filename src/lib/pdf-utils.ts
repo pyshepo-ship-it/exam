@@ -15,7 +15,9 @@ const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: n
 // 320px فقط. رسم ذلك العرض ثم تمديده إلى A4 يجعل النص ضبابياً، كما أن التفاف
 // السطور يزيد الارتفاع فتُضغط الصورة رأسياً. نرسم نسخة خارج الشاشة بعرض الورقة
 // الحقيقي دائماً، بصرف النظر عن عرض الجهاز الذي بدأ منه التنزيل.
-const EXAM_PAPER_EXPORT_WIDTH = 718 // 190mm تقريباً عند 96dpi
+const CSS_PX_PER_MM = 96 / 25.4
+const EXAM_PAPER_EXPORT_WIDTH = Math.round(190 * CSS_PX_PER_MM) // 190mm تقريباً عند 96dpi
+const EXAM_PAPER_EXPORT_MIN_HEIGHT = Math.round(270 * CSS_PX_PER_MM) // ارتفاع المعاينة القياسي للصفحة
 
 const nextPaint = () => new Promise<void>(resolve => {
   requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
@@ -60,6 +62,8 @@ const applyDesktopExamStyles = (root: HTMLElement) => {
 const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<string> => {
   let target = element
   let wrapper: HTMLDivElement | null = null
+  let forcedWidth: number | undefined
+  let forcedHeight: number | undefined
 
   if (element.classList.contains("exam-paper")) {
     wrapper = document.createElement("div")
@@ -69,7 +73,7 @@ const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<st
       "top:0",
       "left:-30000px",
       `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
-      "overflow:visible",
+      "overflow:hidden",
       "background:#fff",
       "pointer-events:none",
     ].join(";")
@@ -78,13 +82,28 @@ const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<st
     clone.style.width = `${EXAM_PAPER_EXPORT_WIDTH}px`
     clone.style.minWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
     clone.style.maxWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.minHeight = `${EXAM_PAPER_EXPORT_MIN_HEIGHT}px`
     clone.style.margin = "0"
+    clone.style.boxSizing = "border-box"
+    clone.style.transform = "none"
     applyDesktopExamStyles(clone)
     wrapper.appendChild(clone)
     document.body.appendChild(wrapper)
     target = clone
 
     // امنح المتصفح فرصة لإعادة توزيع السطور وفق عرض A4 قبل أخذ الصورة.
+    await nextPaint()
+
+    forcedWidth = EXAM_PAPER_EXPORT_WIDTH
+    forcedHeight = Math.ceil(Math.max(
+      clone.getBoundingClientRect().height,
+      clone.offsetHeight,
+      clone.scrollHeight,
+      EXAM_PAPER_EXPORT_MIN_HEIGHT
+    ))
+    clone.style.minHeight = `${forcedHeight}px`
+    clone.style.height = `${forcedHeight}px`
+    wrapper.style.height = `${forcedHeight}px`
     await nextPaint()
   }
 
@@ -94,27 +113,11 @@ const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<st
       pixelRatio,
       backgroundColor: "#ffffff",
       skipAutoScale: true,
+      ...(forcedWidth ? { width: forcedWidth } : {}),
+      ...(forcedHeight ? { height: forcedHeight } : {}),
     })
   } finally {
     wrapper?.remove()
-  }
-}
-
-const fittedImageBox = (
-  image: { width: number; height: number },
-  maxWidth: number,
-  maxHeight: number,
-  margin: number
-) => {
-  // لا نقصّ أحد المحورين ولا نضغطه منفرداً: النسبة واحدة دائماً.
-  const ratio = Math.min(maxWidth / image.width, maxHeight / image.height)
-  const width = image.width * ratio
-  const height = image.height * ratio
-  return {
-    x: margin + (maxWidth - width) / 2,
-    y: margin + (maxHeight - height) / 2,
-    width,
-    height,
   }
 }
 
@@ -157,18 +160,30 @@ export const exportToPDF = async (
     const pages = element.querySelectorAll<HTMLElement>(".exam-page")
 
     if (pages.length > 0) {
-      // تصدير الصفحات المحددة (صفحة 1 وصفحة 2) بدون أي تجاوز أو صفحة ثالثة
-      for (let i = 0; i < pages.length; i++) {
+      // تصدير صفحات الامتحان بمقياس واحد ثابت. سابقاً كان كل صفحة تُلائم
+      // ارتفاعها منفردة؛ فإذا كانت الصفحة الأولى أطول قليلاً (بسبب الترويسة)
+      // صغرت عرضاً عن الصفحة الثانية. نرسم كل الصفحات أولاً ثم نستخدم نفس
+      // معامل التصغير للجميع حتى يتطابق عرض الصفحة الأولى والثانية في PDF.
+      const renderedPages = [] as { dataUrl: string; dims: { width: number; height: number } }[]
+      for (const pageEl of Array.from(pages)) {
+        const dataUrl = await renderToPng(pageEl, pixelRatio)
+        renderedPages.push({ dataUrl, dims: await getImageDimensions(dataUrl) })
+      }
+
+      const referenceWidth = Math.max(...renderedPages.map(page => page.dims.width))
+      const maxHeightAtReferenceWidth = Math.max(
+        ...renderedPages.map(page => page.dims.height * (referenceWidth / page.dims.width))
+      )
+      const commonWidth = Math.min(usableWidth, usableHeight * (referenceWidth / maxHeightAtReferenceWidth))
+      const x = margin + (usableWidth - commonWidth) / 2
+
+      renderedPages.forEach((page, i) => {
         if (i > 0) {
           pdf.addPage()
         }
-        const pageEl = pages[i]
-
-        const imgData = await renderToPng(pageEl, pixelRatio)
-        const dims = await getImageDimensions(imgData)
-        const box = fittedImageBox(dims, usableWidth, usableHeight, margin)
-        pdf.addImage(imgData, "PNG", box.x, box.y, box.width, box.height)
-      }
+        const height = page.dims.height * (commonWidth / page.dims.width)
+        pdf.addImage(page.dataUrl, "PNG", x, margin, commonWidth, height)
+      })
     } else {
       const imgData = await renderToPng(element, pixelRatio)
 

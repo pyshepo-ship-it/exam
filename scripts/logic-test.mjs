@@ -620,6 +620,7 @@ console.log("\n\x1b[1mسيناريو 15: ثوابت الزخارف (لا تغط�
 
 const ornRaw = readFileSync("src/components/exam/science-ornaments.tsx", "utf8")
 const examsPageRaw = readFileSync("src/app/dashboard/exams/page.tsx", "utf8")
+const examPaperRaw = readFileSync("src/components/exam/exam-paper.tsx", "utf8")
 
 t("طبقة الزخارف بلا تفاعل وخلف النص دائماً (zIndex صفري + pointer-events-none)", () => {
   const layers = ornRaw.match(/className="exam-ornaments[^"]*"/g) || []
@@ -650,6 +651,18 @@ t("بطاقات الاختبارات لا تقتص عنوان الاختبار (
     eq(/line-clamp/.test(titleBlock[0]), false, "العنوان مُقتطع بـ line-clamp — تفاصيل مخفية")
     eq(titleBlock[0].includes("min-h-"), true, "لا مساحة محجوزة للعنوان — البطاقات لن تصطف")
   }
+})
+
+t("معاينة ورقة الاختبار تتجاوب مع عرض الجوال دون ارتفاع mm ثابت", () => {
+  eq(examPaperRaw.includes("aspectRatio"), true, "لا يوجد aspectRatio للصفحة في المعاينة")
+  eq(examPaperRaw.includes("min-h-[270mm]"), false, "بقي ارتفاع 270mm ثابت في معاينة الصفحة")
+  eq(cssRaw.includes("overflow-wrap: break-word"), true, "لا توجد حماية من تمدد الكلمات الطويلة أفقياً")
+})
+
+t("تصدير PDF للامتحان يستخدم عرضاً موحداً لكل الصفحات", () => {
+  eq(pdfRaw.includes("const renderedPages"), true, "لا يتم رسم كل الصفحات قبل حساب القياس")
+  eq(pdfRaw.includes("const commonWidth"), true, "لا يوجد عرض PDF موحد للصفحات")
+  eq(/pdf\.addImage\(page\.dataUrl,\s*"PNG",\s*x,\s*margin,\s*commonWidth,\s*height\)/.test(pdfRaw), true, "لا تُضاف صفحات الامتحان بالعرض الموحد نفسه")
 })
 
 // ============================================================

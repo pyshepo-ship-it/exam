@@ -733,10 +733,19 @@ export function ExamPaper({
               : page.isLastPage
               ? "exam-page-last"
               : "exam-page-middle"
-          } relative font-arabic print:shadow-none flex flex-col justify-between w-full max-w-full box-border mx-auto ${visualCompact ? "min-h-[250mm]" : "min-h-[270mm]"}`}
+          } relative font-arabic print:shadow-none flex flex-col justify-between w-full box-border mx-auto`}
           dir="rtl"
           lang="ar"
-          style={{ ...shellBase, fontFamily, width: "100%", maxWidth: "100%", boxSizing: "border-box" }}
+          style={{
+            ...shellBase,
+            fontFamily,
+            width: "100%",
+            boxSizing: "border-box",
+            // في المعاينة يجب أن يتقلّص ارتفاع الورقة مع عرضها على الجوال،
+            // بدلاً من بقاء 270mm ثابتة فتبدو الصفحة غير مناسبة للشاشة.
+            // في الطباعة/التصدير نعيد تثبيت المقاس عبر CSS الطباعة وناسخ PDF.
+            aspectRatio: visualCompact ? "190 / 250" : "190 / 270",
+          }}
         >
           <ScienceStampLayer
             stamps={scienceStamps}

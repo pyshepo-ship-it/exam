@@ -195,12 +195,13 @@
    يجب أن يطابق EXAM_PAPER_FONT في src/lib/exam-templates.ts — يفحصه الاختبار. */
 .exam-paper {
   font-family: 'Noto Kufi Arabic', 'Tajawal', 'Cairo', sans-serif;
-  width: 100%;
+  width: min(100%, 190mm);
   max-width: 190mm;
   margin-inline: auto;
   direction: rtl;
   text-align: right;
   box-sizing: border-box;
+  overflow-wrap: break-word;
 }
 .exam-paper h1, .exam-paper h3 {
   font-family: inherit;
