@@ -620,6 +620,7 @@ console.log("\n\x1b[1mسيناريو 15: ثوابت الزخارف (لا تغط�
 
 const ornRaw = readFileSync("src/components/exam/science-ornaments.tsx", "utf8")
 const examsPageRaw = readFileSync("src/app/dashboard/exams/page.tsx", "utf8")
+const examPaperRaw = readFileSync("src/components/exam/exam-paper.tsx", "utf8")
 
 t("طبقة الزخارف بلا تفاعل وخلف النص دائماً (zIndex صفري + pointer-events-none)", () => {
   const layers = ornRaw.match(/className="exam-ornaments[^"]*"/g) || []
@@ -650,6 +651,34 @@ t("بطاقات الاختبارات لا تقتص عنوان الاختبار (
     eq(/line-clamp/.test(titleBlock[0]), false, "العنوان مُقتطع بـ line-clamp — تفاصيل مخفية")
     eq(titleBlock[0].includes("min-h-"), true, "لا مساحة محجوزة للعنوان — البطاقات لن تصطف")
   }
+})
+
+t("معاينة ورقة الاختبار تتجاوب مع عرض الجوال دون ارتفاع mm ثابت", () => {
+  eq(examPaperRaw.includes("aspectRatio"), true, "لا يوجد aspectRatio للصفحة في المعاينة")
+  eq(examPaperRaw.includes("min-h-[270mm]"), false, "بقي ارتفاع 270mm ثابت في معاينة الصفحة")
+  eq(cssRaw.includes("overflow-wrap: break-word"), true, "لا توجد حماية من تمدد الكلمات الطويلة أفقياً")
+})
+
+t("ورقة الاختبار لا تضيف إطاراً خارجياً حول الصفحة", () => {
+  eq(examPaperRaw.includes('border: "0"'), true, "لا يوجد إلغاء صريح لإطار صفحة الامتحان الخارجي")
+  eq(examPaperRaw.includes('boxShadow: "none"'), true, "لا يوجد إلغاء صريح لظل/إطار صفحة الامتحان الخارجي")
+  eq(cssRaw.includes("border: 0 !important"), true, "الطباعة المباشرة قد تعيد إطار الصفحة الخارجي")
+})
+
+t("معاينة الاختبار تفتح على خيار صفحتين فقط افتراضياً مع إمكانية إلغائه", () => {
+  eq(/\[previewCompact,\s*setPreviewCompact\]\s*=\s*useState\(true\)/.test(examsPageRaw), true, "خيار الصفحتين ليس مفعلاً افتراضياً")
+  eq(/\[previewMaxPages,\s*setPreviewMaxPages\]\s*=\s*useState<number \| undefined>\(2\)/.test(examsPageRaw), true, "حد الصفحتين ليس مضبوطاً افتراضياً")
+  eq(examsPageRaw.includes("setPreviewCompact(true)"), true, "فتح المعاينة لا يعيد تفعيل خيار الصفحتين")
+  eq(examsPageRaw.includes("setPreviewMaxPages(2)"), true, "فتح المعاينة لا يضبط حد الصفحتين")
+  eq(examsPageRaw.includes("setPreviewMaxPages(e.target.checked ? 2 : undefined)"), true, "لا يمكن إلغاء خيار الصفحتين يدوياً")
+})
+
+t("تصدير PDF للامتحان يستخدم عرضاً موحداً لكل الصفحات", () => {
+  eq(pdfRaw.includes("const renderedPages"), true, "لا يتم رسم كل الصفحات قبل حساب القياس")
+  eq(pdfRaw.includes("const commonWidth = usableWidth"), true, "لا يوجد عرض PDF كامل وموحد للصفحات")
+  eq(pdfRaw.includes("EXAM_PAPER_EXPORT_HEIGHT"), true, "لا يوجد ارتفاع تصدير قياسي لصفحة الامتحان")
+  eq(pdfRaw.includes("Math.min(proportionalHeight, usableHeight)"), true, "لا يتم منع تصغير العرض عند زيادة ارتفاع الصفحة")
+  eq(/pdf\.addImage\(page\.dataUrl,\s*"PNG",\s*x,\s*margin,\s*commonWidth,\s*height\)/.test(pdfRaw), true, "لا تُضاف صفحات الامتحان بالعرض الموحد نفسه")
 })
 
 // ============================================================

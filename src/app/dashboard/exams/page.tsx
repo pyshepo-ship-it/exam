@@ -250,8 +250,8 @@ export default function ExamsPage() {
 
   const [previewTemplate, setPreviewTemplate] = useState<ExamTemplateId>("classic")
   const [previewDecorations, setPreviewDecorations] = useState(true)
-  const [previewCompact, setPreviewCompact] = useState(false)
-  const [previewMaxPages, setPreviewMaxPages] = useState<number | undefined>(undefined)
+  const [previewCompact, setPreviewCompact] = useState(true)
+  const [previewMaxPages, setPreviewMaxPages] = useState<number | undefined>(2)
   const [previewOrnamentSize, setPreviewOrnamentSize] = useState(32)
   const [previewOrnamentDensity, setPreviewOrnamentDensity] = useState<OrnamentDensity>("medium")
   const [previewOrnamentOpacity, setPreviewOrnamentOpacity] = useState<number>(ORNAMENT_OPACITY_CHOICES[1].value)
@@ -1172,8 +1172,9 @@ export default function ExamsPage() {
     setPreviewOrnamentOpacity(
       exam.ornamentOpacity ?? getOrnamentPreset(exam.templateId || "classic").opacity
     )
-    setPreviewCompact(false)
-    setPreviewMaxPages(undefined)
+    // افتراضياً تُفتح المعاينة على «صفحتان فقط»، مع بقاء إمكانية إلغائها يدوياً من نفس الخيار.
+    setPreviewCompact(true)
+    setPreviewMaxPages(2)
     setPreviewDialogOpen(true)
   }
 
