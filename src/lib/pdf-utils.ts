@@ -11,6 +11,113 @@ const getImageDimensions = (dataUrl: string): Promise<{ width: number; height: n
   })
 }
 
+// ورقة الامتحان معروضة داخل نافذة متجاوبة؛ لذلك يكون عرضها على iPhone نحو
+// 320px فقط. رسم ذلك العرض ثم تمديده إلى A4 يجعل النص ضبابياً، كما أن التفاف
+// السطور يزيد الارتفاع فتُضغط الصورة رأسياً. نرسم نسخة خارج الشاشة بعرض الورقة
+// الحقيقي دائماً، بصرف النظر عن عرض الجهاز الذي بدأ منه التنزيل.
+const EXAM_PAPER_EXPORT_WIDTH = 718 // 190mm تقريباً عند 96dpi
+
+const nextPaint = () => new Promise<void>(resolve => {
+  requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+})
+
+/** طبّق قيم breakpoint ‏sm المستخدمة في ورقة الامتحان حتى يتطابق iPhone مع اللابتوب. */
+const applyDesktopExamStyles = (root: HTMLElement) => {
+  const nodes = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
+  for (const node of nodes) {
+    const classes = node.classList
+    if (classes.contains("sm:min-w-[6rem]")) node.style.minWidth = "6rem"
+    if (classes.contains("sm:min-w-[8rem]")) node.style.minWidth = "8rem"
+    if (classes.contains("sm:min-w-[10rem]")) node.style.minWidth = "10rem"
+    if (classes.contains("sm:gap-x-12")) node.style.columnGap = "3rem"
+    if (classes.contains("sm:p-3")) node.style.padding = "0.75rem"
+
+    if (classes.contains("sm:text-[14px]")) {
+      node.style.fontSize = "14px"
+      node.style.lineHeight = "20px"
+    }
+    if (classes.contains("sm:text-[14.5px]")) node.style.fontSize = "14.5px"
+    if (classes.contains("sm:text-[15px]")) node.style.fontSize = "15px"
+    if (classes.contains("sm:text-sm")) {
+      node.style.fontSize = "0.875rem"
+      node.style.lineHeight = "1.25rem"
+    }
+    if (classes.contains("sm:text-base")) {
+      node.style.fontSize = "1rem"
+      node.style.lineHeight = "1.5rem"
+    }
+    if (classes.contains("sm:text-lg")) {
+      node.style.fontSize = "1.125rem"
+      node.style.lineHeight = "1.75rem"
+    }
+    if (classes.contains("sm:text-xl")) {
+      node.style.fontSize = "1.25rem"
+      node.style.lineHeight = "1.75rem"
+    }
+  }
+}
+
+const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<string> => {
+  let target = element
+  let wrapper: HTMLDivElement | null = null
+
+  if (element.classList.contains("exam-paper")) {
+    wrapper = document.createElement("div")
+    wrapper.setAttribute("aria-hidden", "true")
+    wrapper.style.cssText = [
+      "position:fixed",
+      "top:0",
+      "left:-30000px",
+      `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
+      "overflow:visible",
+      "background:#fff",
+      "pointer-events:none",
+    ].join(";")
+
+    const clone = element.cloneNode(true) as HTMLElement
+    clone.style.width = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.minWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.maxWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.margin = "0"
+    applyDesktopExamStyles(clone)
+    wrapper.appendChild(clone)
+    document.body.appendChild(wrapper)
+    target = clone
+
+    // امنح المتصفح فرصة لإعادة توزيع السطور وفق عرض A4 قبل أخذ الصورة.
+    await nextPaint()
+  }
+
+  try {
+    return await toPng(target, {
+      quality: 0.98,
+      pixelRatio,
+      backgroundColor: "#ffffff",
+      skipAutoScale: true,
+    })
+  } finally {
+    wrapper?.remove()
+  }
+}
+
+const fittedImageBox = (
+  image: { width: number; height: number },
+  maxWidth: number,
+  maxHeight: number,
+  margin: number
+) => {
+  // لا نقصّ أحد المحورين ولا نضغطه منفرداً: النسبة واحدة دائماً.
+  const ratio = Math.min(maxWidth / image.width, maxHeight / image.height)
+  const width = image.width * ratio
+  const height = image.height * ratio
+  return {
+    x: margin + (maxWidth - width) / 2,
+    y: margin + (maxHeight - height) / 2,
+    width,
+    height,
+  }
+}
+
 // تصدير عنصر HTML كـ PDF — يدعم ألوان Tailwind v4 (oklab / oklch) والخطوط العربية بدون أخطاء
 export const exportToPDF = async (
   elementId: string,
@@ -26,7 +133,8 @@ export const exportToPDF = async (
     throw new Error("Element not found")
   }
 
-  const { orientation = "portrait", margin = 6 } = options || {}
+  const { orientation = "portrait", margin = 6, scale = 2 } = options || {}
+  const pixelRatio = Math.max(1, Math.min(scale, 3))
 
   try {
     try {
@@ -56,25 +164,13 @@ export const exportToPDF = async (
         }
         const pageEl = pages[i]
 
-        const imgData = await toPng(pageEl, {
-          quality: 0.98,
-          pixelRatio: 2,
-          backgroundColor: "#ffffff",
-          skipAutoScale: true,
-        })
-
+        const imgData = await renderToPng(pageEl, pixelRatio)
         const dims = await getImageDimensions(imgData)
-        const imgHeightMm = (dims.height * usableWidth) / dims.width
-        const renderHeight = Math.min(imgHeightMm, usableHeight)
-        pdf.addImage(imgData, "PNG", margin, margin, usableWidth, renderHeight)
+        const box = fittedImageBox(dims, usableWidth, usableHeight, margin)
+        pdf.addImage(imgData, "PNG", box.x, box.y, box.width, box.height)
       }
     } else {
-      const imgData = await toPng(element, {
-        quality: 0.98,
-        pixelRatio: 2,
-        backgroundColor: "#ffffff",
-        skipAutoScale: true,
-      })
+      const imgData = await renderToPng(element, pixelRatio)
 
       const dims = await getImageDimensions(imgData)
       const imgHeightMm = (dims.height * usableWidth) / dims.width
