@@ -219,7 +219,7 @@
   
   .exam-page {
     box-shadow: none !important;
-    border-width: 2px !important;
+    border: 0 !important;
     max-width: 190mm !important;
     width: 100% !important;
     min-height: 275mm !important;

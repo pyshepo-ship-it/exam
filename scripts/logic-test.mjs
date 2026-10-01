@@ -659,6 +659,12 @@ t("معاينة ورقة الاختبار تتجاوب مع عرض الجوال 
   eq(cssRaw.includes("overflow-wrap: break-word"), true, "لا توجد حماية من تمدد الكلمات الطويلة أفقياً")
 })
 
+t("ورقة الاختبار لا تضيف إطاراً خارجياً حول الصفحة", () => {
+  eq(examPaperRaw.includes('border: "0"'), true, "لا يوجد إلغاء صريح لإطار صفحة الامتحان الخارجي")
+  eq(examPaperRaw.includes('boxShadow: "none"'), true, "لا يوجد إلغاء صريح لظل/إطار صفحة الامتحان الخارجي")
+  eq(cssRaw.includes("border: 0 !important"), true, "الطباعة المباشرة قد تعيد إطار الصفحة الخارجي")
+})
+
 t("تصدير PDF للامتحان يستخدم عرضاً موحداً لكل الصفحات", () => {
   eq(pdfRaw.includes("const renderedPages"), true, "لا يتم رسم كل الصفحات قبل حساب القياس")
   eq(pdfRaw.includes("const commonWidth = usableWidth"), true, "لا يوجد عرض PDF كامل وموحد للصفحات")
