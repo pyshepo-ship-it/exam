@@ -661,9 +661,9 @@ t("معاينة ورقة الاختبار تتجاوب مع عرض الجوال 
 
 t("تصدير PDF للامتحان يستخدم عرضاً موحداً لكل الصفحات", () => {
   eq(pdfRaw.includes("const renderedPages"), true, "لا يتم رسم كل الصفحات قبل حساب القياس")
-  eq(pdfRaw.includes("const commonWidth"), true, "لا يوجد عرض PDF موحد للصفحات")
-  eq(pdfRaw.includes("EXAM_PAPER_EXPORT_HEIGHT"), true, "لا يوجد إطار تصدير ثابت الارتفاع يمنع الهوامش الجانبية الكبيرة")
-  eq(pdfRaw.includes("target = frame"), true, "لا يتم التقاط إطار A4 ثابت بدلاً من ارتفاع الصفحة الطبيعي")
+  eq(pdfRaw.includes("const commonWidth = usableWidth"), true, "لا يوجد عرض PDF كامل وموحد للصفحات")
+  eq(pdfRaw.includes("EXAM_PAPER_EXPORT_HEIGHT"), true, "لا يوجد ارتفاع تصدير قياسي لصفحة الامتحان")
+  eq(pdfRaw.includes("Math.min(proportionalHeight, usableHeight)"), true, "لا يتم منع تصغير العرض عند زيادة ارتفاع الصفحة")
   eq(/pdf\.addImage\(page\.dataUrl,\s*"PNG",\s*x,\s*margin,\s*commonWidth,\s*height\)/.test(pdfRaw), true, "لا تُضاف صفحات الامتحان بالعرض الموحد نفسه")
 })
 

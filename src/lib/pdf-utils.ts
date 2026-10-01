@@ -73,83 +73,37 @@ const renderToPng = async (element: HTMLElement, pixelRatio: number): Promise<st
       "top:0",
       "left:-30000px",
       `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
-      `height:${EXAM_PAPER_EXPORT_HEIGHT}px`,
-      "overflow:hidden",
+      "overflow:visible",
       "background:#fff",
       "pointer-events:none",
     ].join(";")
 
-    const frame = document.createElement("div")
-    frame.style.cssText = [
-      `width:${EXAM_PAPER_EXPORT_WIDTH}px`,
-      `height:${EXAM_PAPER_EXPORT_HEIGHT}px`,
-      "overflow:hidden",
-      "background:#fff",
-      "position:relative",
-    ].join(";")
-
     const clone = element.cloneNode(true) as HTMLElement
-    const setCloneWidth = (width: number) => {
-      clone.style.width = `${width}px`
-      clone.style.minWidth = `${width}px`
-      clone.style.maxWidth = `${width}px`
-    }
-    const setCloneMinHeight = (height: number) => {
-      clone.style.minHeight = `${height}px`
-      clone.style.height = `${height}px`
-    }
-    const measuredCloneHeight = () => Math.ceil(Math.max(
+    clone.style.width = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.minWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.maxWidth = `${EXAM_PAPER_EXPORT_WIDTH}px`
+    clone.style.minHeight = `${EXAM_PAPER_EXPORT_HEIGHT}px`
+    clone.style.margin = "0"
+    clone.style.boxSizing = "border-box"
+    clone.style.transform = "none"
+    applyDesktopExamStyles(clone)
+    wrapper.appendChild(clone)
+    document.body.appendChild(wrapper)
+    target = clone
+
+    // امنح المتصفح فرصة لإعادة توزيع السطور وفق عرض A4 قبل أخذ الصورة.
+    await nextPaint()
+
+    forcedWidth = EXAM_PAPER_EXPORT_WIDTH
+    forcedHeight = Math.ceil(Math.max(
       clone.getBoundingClientRect().height,
       clone.offsetHeight,
       clone.scrollHeight,
       EXAM_PAPER_EXPORT_HEIGHT
     ))
-
-    setCloneWidth(EXAM_PAPER_EXPORT_WIDTH)
-    setCloneMinHeight(EXAM_PAPER_EXPORT_HEIGHT)
-    clone.style.margin = "0"
-    clone.style.boxSizing = "border-box"
-    clone.style.transform = "none"
-    clone.style.transformOrigin = "top left"
-    applyDesktopExamStyles(clone)
-    frame.appendChild(clone)
-    wrapper.appendChild(frame)
-    document.body.appendChild(wrapper)
-    target = frame
-
-    // امنح المتصفح فرصة لإعادة توزيع السطور وفق عرض A4 قبل أخذ الصورة.
+    clone.style.minHeight = `${forcedHeight}px`
+    wrapper.style.height = `${forcedHeight}px`
     await nextPaint()
-
-    /*
-     * إن كانت الصفحة الأولى أطول بسبب الترويسة/عدد الأسئلة، لا نصغّرها داخل
-     * PDF فينشأ هامش جانبي كبير. بدلاً من ذلك نبقي إطار الصورة بقياس A4 ثابتاً
-     * ونضغط محتوى النسخة المخفية فقط بالقدر اللازم، مع توسيع عرض التخطيط قبل
-     * التحجيم حتى يظل العرض المرئي للورقة كاملاً بلا هوامش فارغة.
-     */
-    let naturalHeight = measuredCloneHeight()
-    let fitScale = Math.min(1, EXAM_PAPER_EXPORT_HEIGHT / naturalHeight)
-    if (fitScale < 1) {
-      for (let i = 0; i < 3; i++) {
-        setCloneWidth(Math.ceil(EXAM_PAPER_EXPORT_WIDTH / fitScale))
-        setCloneMinHeight(Math.ceil(EXAM_PAPER_EXPORT_HEIGHT / fitScale))
-        clone.style.transform = "none"
-        await nextPaint()
-        naturalHeight = measuredCloneHeight()
-        const nextScale = Math.min(1, EXAM_PAPER_EXPORT_HEIGHT / naturalHeight)
-        if (Math.abs(nextScale - fitScale) < 0.005) {
-          fitScale = nextScale
-          break
-        }
-        fitScale = nextScale
-      }
-      setCloneWidth(Math.ceil(EXAM_PAPER_EXPORT_WIDTH / fitScale))
-      setCloneMinHeight(Math.ceil(EXAM_PAPER_EXPORT_HEIGHT / fitScale))
-      clone.style.transform = `scale(${fitScale})`
-      await nextPaint()
-    }
-
-    forcedWidth = EXAM_PAPER_EXPORT_WIDTH
-    forcedHeight = EXAM_PAPER_EXPORT_HEIGHT
   }
 
   try {
@@ -215,18 +169,18 @@ export const exportToPDF = async (
         renderedPages.push({ dataUrl, dims: await getImageDimensions(dataUrl) })
       }
 
-      const referenceWidth = Math.max(...renderedPages.map(page => page.dims.width))
-      const maxHeightAtReferenceWidth = Math.max(
-        ...renderedPages.map(page => page.dims.height * (referenceWidth / page.dims.width))
-      )
-      const commonWidth = Math.min(usableWidth, usableHeight * (referenceWidth / maxHeightAtReferenceWidth))
-      const x = margin + (usableWidth - commonWidth) / 2
+      const commonWidth = usableWidth
+      const x = margin
 
       renderedPages.forEach((page, i) => {
         if (i > 0) {
           pdf.addPage()
         }
-        const height = page.dims.height * (commonWidth / page.dims.width)
+        const proportionalHeight = page.dims.height * (commonWidth / page.dims.width)
+        // لا نُصغّر العرض بسبب صفحة أطول؛ هذا كان سبب الهوامش الجانبية الضخمة.
+        // إن زاد ارتفاع صورة صفحة الامتحان عن A4 نضغطها رأسياً فقط داخل الصفحة،
+        // ويبقى عرض الصفحة الأولى والثانية كاملاً وموحداً.
+        const height = Math.min(proportionalHeight, usableHeight)
         pdf.addImage(page.dataUrl, "PNG", x, margin, commonWidth, height)
       })
     } else {
